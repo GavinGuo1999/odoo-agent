@@ -57,6 +57,14 @@ def langfuse_is_configured() -> bool:
     )
 
 
+def get_current_trace_id() -> str | None:
+    """Return the active trace ID without initializing an unconfigured client."""
+
+    if not langfuse_is_configured():
+        return None
+    return get_client().get_current_trace_id()
+
+
 def _redact_string(value: str) -> str:
     redacted = value
     for pattern in _SECRET_PATTERNS:

@@ -26,6 +26,18 @@ Set-Location D:\odoo19e\odoo-agent
 
 模型密钥只从 Windows 环境变量读取，不写入项目文件。
 
+推荐使用隐藏输入的配置脚本，它会自动发送一条短请求验证模型和 Langfuse：
+
+```powershell
+.\configure-model.ps1 -Provider deepseek
+```
+
+切换到硅基流动：
+
+```powershell
+.\configure-model.ps1 -Provider siliconflow
+```
+
 ```text
 LLM_PROVIDER=deepseek 或 siliconflow
 DEEPSEEK_API_KEY
@@ -39,4 +51,3 @@ SILICONFLOW_MODEL=deepseek-ai/DeepSeek-V3.1-Terminus
 - 第一阶段只读，不执行 INSERT、UPDATE、DELETE 或 DDL。
 - `/api/chat` 当前仅验证模型调用，明确标记 `data_accessed=false`。
 - 下一阶段接入 Odoo 只读账号、销售语义层和 SQL 校验器。
-

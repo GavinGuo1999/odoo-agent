@@ -23,6 +23,6 @@ class ChatResponse(BaseModel):
     provider: str
     model: str
     usage: TokenUsage
+    trace_id: str | None = None
     data_accessed: bool = False
     phase: str = "model-connectivity"
-

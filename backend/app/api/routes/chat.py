@@ -6,7 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.config import Settings, get_settings
 from app.llm import LLMGateway, ProviderNotConfiguredError
-from app.observability import trace_chat_turn, update_observation
+from app.observability import (
+    get_current_trace_id,
+    trace_chat_turn,
+    update_observation,
+)
 from app.schemas import ChatRequest, ChatResponse, TokenUsage
 
 
@@ -51,11 +55,27 @@ async def chat(
                 },
             )
         except ProviderNotConfiguredError as exc:
+            update_observation(
+                turn,
+                output={
+                    "status": "error",
+                    "stage": "model-call",
+                    "error_type": type(exc).__name__,
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=str(exc),
             ) from exc
         except Exception as exc:
+            update_observation(
+                turn,
+                output={
+                    "status": "error",
+                    "stage": "model-call",
+                    "error_type": type(exc).__name__,
+                },
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Model request failed: {type(exc).__name__}",
@@ -71,6 +91,7 @@ async def chat(
                 output_tokens=result.output_tokens,
                 total_tokens=result.total_tokens,
             ),
+            trace_id=get_current_trace_id(),
         )
         update_observation(
             turn,
@@ -82,4 +103,3 @@ async def chat(
             },
         )
         return response
-

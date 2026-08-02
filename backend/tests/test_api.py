@@ -104,6 +104,37 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(payload["data_accessed"])
         self.assertEqual(payload["phase"], "model-connectivity")
         self.assertEqual(payload["usage"]["total_tokens"], 22)
+        self.assertIsNone(payload["trace_id"])
+
+    async def test_chat_masks_provider_error_details(self) -> None:
+        environment = dict(self.environment)
+        environment["DEEPSEEK_API_KEY"] = "sensitive-value"
+
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch(
+                "app.api.routes.chat.LLMGateway.complete",
+                new=AsyncMock(side_effect=RuntimeError("sensitive provider detail")),
+            ),
+        ):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/chat",
+                    json={"question": "测试错误处理"},
+                )
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(
+            response.json()["detail"],
+            "Model request failed: RuntimeError",
+        )
+        self.assertNotIn("sensitive provider detail", response.text)
+
 
 
 

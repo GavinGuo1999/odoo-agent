@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -15,7 +17,12 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
-async def main() -> int:
+async def main(*, with_model: bool) -> int:
+    logging.getLogger("langfuse").setLevel(logging.CRITICAL)
+    logging.getLogger("openai").setLevel(logging.CRITICAL)
+    if with_model:
+        logging.disable(logging.CRITICAL)
+
     port = 8090
     server = uvicorn.Server(
         uvicorn.Config(
@@ -56,6 +63,30 @@ async def main() -> int:
                 "odoo_access_mode="
                 f"{payload['services']['odoo_database']['access_mode']}"
             )
+
+            if with_model:
+                chat = await client.post(
+                    "/api/chat",
+                    json={
+                        "question": (
+                            "请用一句话确认模型连接正常，并明确说明尚未查询 "
+                            "Odoo 数据。"
+                        )
+                    },
+                    timeout=120,
+                )
+                if chat.status_code != 200:
+                    error_type = chat.json().get("detail", "unknown-error")
+                    print(f"chat_status={chat.status_code}")
+                    print(f"chat_error={error_type}")
+                    return 2
+                chat_payload = chat.json()
+                print(f"chat_status={chat.status_code}")
+                print(f"chat_provider={chat_payload['provider']}")
+                print(f"chat_model={chat_payload['model']}")
+                print(f"chat_data_accessed={chat_payload['data_accessed']}")
+                print(f"chat_total_tokens={chat_payload['usage']['total_tokens']}")
+                print(f"chat_trace_id={chat_payload['trace_id']}")
             return 0
     finally:
         server.should_exit = True
@@ -63,4 +94,7 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--with-model", action="store_true")
+    arguments = parser.parse_args()
+    raise SystemExit(asyncio.run(main(with_model=arguments.with_model)))
