@@ -6,7 +6,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from app.api.router import api_router
 from app.config import get_settings
@@ -61,14 +61,13 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
         return FileResponse(_PROJECT_DIRECTORY / filename)
 
-    @application.get("/", tags=["system"])
-    async def root() -> dict[str, str]:
-        return {
-            "name": settings.app_name,
-            "version": settings.app_version,
-            "docs": "/docs",
-            "health": f"{settings.api_prefix}/health",
-        }
+    @application.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        return RedirectResponse(url="/ui/index.html")
+
+    @application.get("/favicon.ico", include_in_schema=False)
+    async def favicon() -> Response:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return application
 

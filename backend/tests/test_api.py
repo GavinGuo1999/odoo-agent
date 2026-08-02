@@ -230,6 +230,22 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Langfuse 可观测性", settings_page.text)
         self.assertEqual(private_path.status_code, 404)
 
+    async def test_root_redirects_to_the_application(self) -> None:
+        with patch.dict(os.environ, self.environment, clear=True):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+                follow_redirects=False,
+            ) as client:
+                root = await client.get("/")
+                favicon = await client.get("/favicon.ico")
+
+        self.assertEqual(root.status_code, 307)
+        self.assertEqual(root.headers["location"], "/ui/index.html")
+        self.assertEqual(favicon.status_code, 204)
+
 
 
 
