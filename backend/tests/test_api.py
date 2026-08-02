@@ -135,6 +135,50 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("sensitive provider detail", response.text)
 
+    async def test_chat_supports_general_questions_and_conversation_history(
+        self,
+    ) -> None:
+        environment = dict(self.environment)
+        environment["DEEPSEEK_API_KEY"] = "sensitive-value"
+        result = LLMResult(
+            content="今天是 8 月 2 日。",
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            input_tokens=24,
+            output_tokens=8,
+            total_tokens=32,
+        )
+        completion = AsyncMock(return_value=result)
+
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch("app.api.routes.chat.LLMGateway.complete", new=completion),
+        ):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                response = await client.post(
+                    "/api/chat",
+                    json={
+                        "question": "今天呢？",
+                        "history": [
+                            {"role": "user", "content": "你知道日期吗？"},
+                            {"role": "assistant", "content": "知道。"},
+                        ],
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        messages = completion.await_args.kwargs["messages"]
+        self.assertIn("普通问题", messages[0]["content"])
+        self.assertIn("不要强行生成 BI", messages[0]["content"])
+        self.assertEqual(messages[1], {"role": "user", "content": "你知道日期吗？"})
+        self.assertEqual(messages[2], {"role": "assistant", "content": "知道。"})
+        self.assertEqual(messages[3], {"role": "user", "content": "今天呢？"})
+
     async def test_settings_never_returns_saved_secrets(self) -> None:
         environment = dict(self.environment)
         environment.update(

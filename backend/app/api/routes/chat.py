@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,10 +17,17 @@ from app.schemas import ChatRequest, ChatResponse, TokenUsage
 
 router = APIRouter(tags=["chat"])
 
-_SYSTEM_PROMPT = """你是 Odoo 销售数据分析助手。
-当前系统只完成了模型连接，尚未连接 Odoo 数据库。
-回答用户时必须明确说明没有查询真实业务数据，不得编造销售数字或订单情况。
-用简洁中文回答。"""
+def _system_prompt(*, provider_name: str, model: str) -> str:
+    local_now = datetime.now().astimezone()
+    return f"""你是 Odoo Agent，既是通用中文助手，也是 Odoo 业务数据分析助手。
+当前服务器本地时间：{local_now.strftime('%Y-%m-%d %H:%M:%S %Z')}。
+当前模型服务商：{provider_name}；配置的模型：{model}。
+
+工作规则：
+1. 普通问题（日期、模型、概念解释、方案讨论等）直接正常回答，不要强行生成 BI、SQL 或图表，也不要无关地提及数据库状态。
+2. 只有当用户询问 Odoo 业务数据时，才进入数据分析语境。当前尚未连接 Odoo 数据库，必须明确说明没有查询真实数据，绝不能编造销售额、订单、客户或产品数字。
+3. 当前不能声称已经执行 SQL、完成查询或生成了真实业务结论，但可以帮助解释指标、设计分析方法和准备查询口径。
+4. 默认用简洁、自然的中文回答。"""
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -45,7 +53,17 @@ async def chat(
         try:
             result = await gateway.complete(
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {
+                        "role": "system",
+                        "content": _system_prompt(
+                            provider_name=provider.name,
+                            model=provider.model,
+                        ),
+                    },
+                    *[
+                        {"role": message.role, "content": message.content}
+                        for message in payload.history
+                    ],
                     {"role": "user", "content": payload.question},
                 ],
                 generation_name="generate-model-response",

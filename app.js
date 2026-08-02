@@ -358,16 +358,90 @@
   const query = new URLSearchParams(window.location.search).get("q");
   if (query && chatInput) setChatQuestion(query);
 
-  function sendDemoMessage() {
+  let chatSessionId = window.crypto?.randomUUID?.() || `chat-${Date.now()}`;
+  let chatHistory = [];
+  let chatSending = false;
+
+  function appendChatMessage(role, text, metadata = null) {
     if (!chatInput || !chatThread) return;
+    const message = document.createElement("div");
+    message.className = role === "user" ? "message user" : "message";
+
+    const avatar = document.createElement("div");
+    avatar.className = "message-avatar";
+    avatar.textContent = role === "user" ? "我" : "AI";
+
+    const content = document.createElement("div");
+    const bubble = document.createElement("div");
+    bubble.className = "message-bubble";
+    const paragraph = document.createElement("p");
+    paragraph.className = role === "assistant" ? "assistant-answer" : "";
+    paragraph.textContent = text;
+    bubble.appendChild(paragraph);
+    content.appendChild(bubble);
+
+    if (metadata && role === "assistant") {
+      const meta = document.createElement("div");
+      meta.className = "chat-response-meta";
+      const traceLabel = metadata.trace_id ? " · Langfuse Trace 已记录" : "";
+      meta.textContent = `${metadata.provider} · ${metadata.model}${traceLabel}`;
+      content.appendChild(meta);
+    }
+
+    message.appendChild(avatar);
+    message.appendChild(content);
+    chatThread.appendChild(message);
+    chatThread.scrollTop = chatThread.scrollHeight;
+    return message;
+  }
+
+  function appendWelcomeMessage() {
+    appendChatMessage(
+      "assistant",
+      "新会话已开始。普通问题可以直接问；涉及 Odoo 实时数据时，我会如实说明当前是否已经连接数据源。"
+    );
+  }
+
+  function friendlyChatError(error) {
+    const message = error?.message || "未知错误";
+    if (message.includes("API key is not configured")) {
+      return "当前模型还没有配置 API Key。请先到“数据与模型”页面填写并测试连接。";
+    }
+    if (message.includes("Model request failed")) {
+      return "模型调用失败。请到“数据与模型”页面检查 API Key、模型名称和连接地址。";
+    }
+    if (message.includes("Failed to fetch")) {
+      return "无法连接本机后端，请确认应用仍在运行。";
+    }
+    return `请求失败：${message}`;
+  }
+
+  async function loadChatProviderStatus() {
+    const statusElement = document.querySelector("[data-chat-provider-status]");
+    if (!statusElement) return;
+    try {
+      const data = await apiRequest("/settings");
+      const selected = data.selected_provider;
+      const provider = data.providers[selected];
+      const label = selected === "deepseek" ? "DeepSeek" : "硅基流动";
+      statusElement.innerHTML = "";
+      const dot = document.createElement("span");
+      dot.className = "status-dot";
+      statusElement.appendChild(dot);
+      statusElement.append(`${label} ${provider.configured ? "已配置" : "未配置"}`);
+    } catch (_error) {
+      statusElement.textContent = "后端未连接";
+    }
+  }
+
+  async function sendChatMessage() {
+    if (!chatInput || !chatThread || chatSending) return;
     const question = chatInput.value.trim();
     if (!question) return;
 
-    const userMessage = document.createElement("div");
-    userMessage.className = "message user";
-    userMessage.innerHTML = `<div class="message-avatar">我</div><div class="message-bubble"><p></p></div>`;
-    userMessage.querySelector("p").textContent = question;
-    chatThread.appendChild(userMessage);
+    const priorHistory = chatHistory.slice(-12);
+    chatHistory.push({ role: "user", content: question });
+    appendChatMessage("user", question);
     chatInput.value = "";
 
     const thinking = document.createElement("div");
@@ -375,44 +449,55 @@
     thinking.innerHTML = `<div class="message-avatar">AI</div><div class="message-bubble"><div class="typing"><span></span><span></span><span></span></div></div>`;
     chatThread.appendChild(thinking);
     chatThread.scrollTop = chatThread.scrollHeight;
+    chatSending = true;
+    if (sendButton) sendButton.disabled = true;
+    chatInput.disabled = true;
 
-    window.setTimeout(() => {
+    try {
+      const result = await apiRequest("/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          question,
+          session_id: chatSessionId,
+          history: priorHistory
+        })
+      });
       thinking.remove();
-      const reply = document.createElement("div");
-      reply.className = "message";
-      reply.innerHTML = `
-        <div class="message-avatar">AI</div>
-        <div>
-          <div class="message-bubble">
-            <div class="analysis-steps">
-              <span class="step-chip done">✓ 已识别销售指标</span>
-              <span class="step-chip done">✓ SQL 校验通过</span>
-              <span class="step-chip done">✓ 查询完成 0.18s</span>
-            </div>
-            <p>演示模式已理解你的问题。实际接入后，这里会根据 Odoo 实时数据生成结论、表格和合适的图表。</p>
-          </div>
-          <div class="answer-card">
-            <div class="answer-summary">
-              <div><div class="answer-summary-label">查询结果示例</div><div class="answer-summary-value">¥ 86,420</div><div class="kpi-note"><span class="delta-up">↑ 12.8%</span> 较上月</div></div>
-              <svg class="mini-chart" viewBox="0 0 170 62" role="img" aria-label="销售额上升趋势"><path d="M4 54 C22 47,34 50,51 38 S82 30,99 35 S131 18,166 7" fill="none" stroke="#714b67" stroke-width="3" stroke-linecap="round"/></svg>
-            </div>
-            <div class="answer-body"><div class="answer-insight">本月已确认订单共 112 张，销售额较上月增加约 ¥9,820。</div><button class="btn btn-soft" type="button" data-new-sql>查看 SQL</button></div>
-          </div>
-        </div>`;
-      chatThread.appendChild(reply);
-      const localButton = reply.querySelector("[data-new-sql]");
-      localButton.addEventListener("click", () => showToast("实际版本将在此展开 SQL"));
-      chatThread.scrollTop = chatThread.scrollHeight;
-    }, 900);
+      appendChatMessage("assistant", result.answer, result);
+      chatHistory.push({ role: "assistant", content: result.answer });
+    } catch (error) {
+      thinking.remove();
+      chatHistory.pop();
+      const errorMessage = appendChatMessage("assistant", friendlyChatError(error));
+      errorMessage?.querySelector(".message-bubble")?.classList.add("error");
+    } finally {
+      chatSending = false;
+      if (sendButton) sendButton.disabled = false;
+      chatInput.disabled = false;
+      chatInput.focus();
+    }
   }
 
-  if (sendButton) sendButton.addEventListener("click", sendDemoMessage);
+  if (sendButton) sendButton.addEventListener("click", sendChatMessage);
   if (chatInput) {
     chatInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
-        sendDemoMessage();
+        sendChatMessage();
       }
+    });
+    loadChatProviderStatus();
+  }
+
+  const newChatButton = document.querySelector("[data-new-chat]");
+  if (newChatButton) {
+    newChatButton.addEventListener("click", () => {
+      chatSessionId = window.crypto?.randomUUID?.() || `chat-${Date.now()}`;
+      chatHistory = [];
+      chatThread.innerHTML = "";
+      appendWelcomeMessage();
+      showToast("已开始新会话");
+      chatInput?.focus();
     });
   }
 })();

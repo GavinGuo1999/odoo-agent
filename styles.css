@@ -1072,6 +1072,22 @@ button {
   margin: 0;
 }
 
+.assistant-answer {
+  white-space: pre-wrap;
+}
+
+.message-bubble.error {
+  border-color: #e6c4c4;
+  color: #8c3030;
+  background: #fff3f3;
+}
+
+.chat-response-meta {
+  margin: 6px 4px 0;
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
 .analysis-steps {
   display: flex;
   flex-wrap: wrap;

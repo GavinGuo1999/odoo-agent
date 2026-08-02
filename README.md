@@ -4,7 +4,7 @@
 
 ## 当前进度
 
-- 静态 HTML 产品原型。
+- FastAPI 托管的网站界面与真实模型聊天。
 - FastAPI 后端骨架。
 - DeepSeek 与硅基流动统一模型接口。
 - Langfuse 全链路观测基础设施。
@@ -57,5 +57,5 @@ SILICONFLOW_MODEL=deepseek-ai/DeepSeek-V3.1-Terminus
 ## 开发边界
 
 - 第一阶段只读，不执行 INSERT、UPDATE、DELETE 或 DDL。
-- `/api/chat` 当前仅验证模型调用，明确标记 `data_accessed=false`。
+- `/api/chat` 支持普通问答和多轮上下文；Odoo 尚未接入时明确标记 `data_accessed=false`，不生成虚假业务数字。
 - 下一阶段接入 Odoo 只读账号、销售语义层和 SQL 校验器。
