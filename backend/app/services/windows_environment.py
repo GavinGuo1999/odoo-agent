@@ -58,4 +58,3 @@ def set_user_environment(updates: Mapping[str, str]) -> None:
     # immediately; secrets are never returned or logged by this service.
     os.environ.update(updates)
     _notify_windows_environment_changed()
-
