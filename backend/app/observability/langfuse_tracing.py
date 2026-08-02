@@ -37,7 +37,14 @@ _REDACTED = "[REDACTED]"
 
 
 def _is_enabled() -> bool:
-    return os.getenv("LANGFUSE_ENABLED", "true").strip().lower() in _TRUE_VALUES
+    custom_enabled = (
+        os.getenv("LANGFUSE_ENABLED", "true").strip().lower() in _TRUE_VALUES
+    )
+    sdk_enabled = (
+        os.getenv("LANGFUSE_TRACING_ENABLED", "true").strip().lower()
+        in _TRUE_VALUES
+    )
+    return custom_enabled and sdk_enabled
 
 
 def langfuse_is_configured() -> bool:

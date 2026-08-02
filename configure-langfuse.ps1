@@ -17,7 +17,8 @@ $variableNames = @(
     'LANGFUSE_PUBLIC_KEY',
     'LANGFUSE_SECRET_KEY',
     'LANGFUSE_BASE_URL',
-    'LANGFUSE_TRACING_ENVIRONMENT'
+    'LANGFUSE_TRACING_ENVIRONMENT',
+    'LANGFUSE_TRACING_ENABLED'
 )
 
 $baseUrls = @{
@@ -100,7 +101,12 @@ function Get-SavedEnvironmentSettings {
     foreach ($name in $Names) {
         $value = [Environment]::GetEnvironmentVariable($name, 'User')
         if ([string]::IsNullOrWhiteSpace($value)) {
-            throw "Missing saved environment variable: $name"
+            if ($name -eq 'LANGFUSE_TRACING_ENABLED') {
+                $value = 'true'
+            }
+            else {
+                throw "Missing saved environment variable: $name"
+            }
         }
 
         $result[$name] = $value
@@ -178,6 +184,7 @@ try {
             LANGFUSE_SECRET_KEY = $secretKey
             LANGFUSE_BASE_URL = $baseUrls[$Region]
             LANGFUSE_TRACING_ENVIRONMENT = 'development'
+            LANGFUSE_TRACING_ENABLED = 'true'
         }
 
         Set-UserEnvironmentSettings -Settings $settings
