@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 数据与模型</title>
-  <link rel="stylesheet" href="styles.css?v=2">
-  <script src="app.js?v=2" defer></script>
+  <link rel="stylesheet" href="styles.css?v=3">
+  <script src="app.js?v=3" defer></script>
 </head>
 <body data-page="settings">
   <div class="app-shell">
@@ -25,29 +25,41 @@
     <main class="main-area">
       <header class="topbar">
         <div class="topbar-left"><button class="btn btn-icon mobile-menu" type="button" data-menu-toggle aria-label="打开导航">☰</button><div><h1 class="page-title">数据与模型</h1><div class="page-subtitle">配置模型、数据源与销售分析口径</div></div></div>
-        <div class="topbar-right"><button class="btn btn-primary" type="button" data-toast-message="设置已保存（静态演示）">保存设置</button><span class="avatar">我</span></div>
+        <div class="topbar-right"><button class="btn btn-primary" type="button" data-settings-save>保存设置</button><span class="avatar">我</span></div>
       </header>
 
       <div class="content">
         <div class="settings-layout">
           <div>
+            <div class="settings-feedback" data-settings-feedback role="status" aria-live="polite">正在读取本机配置…</div>
             <section class="card panel settings-section">
-              <div class="section-heading"><div><h2>模型服务</h2><p>切换 DeepSeek 官方 API 或硅基流动代理服务</p></div><span class="badge">已连接</span></div>
+              <div class="section-heading"><div><h2>模型服务</h2><p>切换 DeepSeek 官方 API 或硅基流动代理服务</p></div><span class="badge neutral" data-model-status>读取中</span></div>
               <div class="provider-grid">
-                <button class="provider-card selected" type="button" data-provider="DeepSeek API" data-url="https://api.deepseek.com" data-model="deepseek-chat">
+                <button class="provider-card selected" type="button" data-provider="deepseek" data-provider-label="DeepSeek API" data-url="https://api.deepseek.com" data-model="deepseek-v4-pro">
                   <span class="provider-check">✓</span><span class="provider-logo">DS</span><span class="provider-title">DeepSeek API</span><span class="provider-desc">官方 OpenAI 兼容接口</span>
                 </button>
-                <button class="provider-card" type="button" data-provider="硅基流动" data-url="https://api.siliconflow.cn/v1" data-model="deepseek-ai/DeepSeek-V3">
+                <button class="provider-card" type="button" data-provider="siliconflow" data-provider-label="硅基流动" data-url="https://api.siliconflow.cn/v1" data-model="deepseek-ai/DeepSeek-V3.1-Terminus">
                   <span class="provider-check">✓</span><span class="provider-logo sf">SF</span><span class="provider-title">硅基流动</span><span class="provider-desc">支持多种 DeepSeek 与 Qwen 模型</span>
                 </button>
               </div>
               <div class="form-grid">
                 <label><span class="label">Base URL</span><input class="input" data-provider-url type="url" value="https://api.deepseek.com"></label>
                 <label><span class="label">模型名称</span><input class="input" data-provider-model type="text" value="deepseek-chat"></label>
-                <label><span class="label">API Key</span><input class="input" type="password" placeholder="在后端环境变量中配置"><span class="help-text">实际版本仅保存在后端环境变量中</span></label>
-                <label><span class="label">Temperature</span><select class="select"><option>0.0（稳定）</option><option>0.2</option><option>0.5</option></select></label>
+                <label><span class="label">API Key</span><input class="input" data-provider-key type="password" autocomplete="new-password" placeholder="请输入 API Key"><span class="help-text" data-provider-key-help>仅保存到当前 Windows 用户环境变量，不会回显</span></label>
+                <label><span class="label">Temperature</span><select class="select" disabled><option>0.0（Text2SQL 稳定优先）</option></select><span class="help-text">第一阶段固定为 0，减少 SQL 随机性</span></label>
               </div>
-              <div class="inline-row" style="margin-top:16px"><button class="btn btn-primary" type="button" data-test-model>测试模型连接</button><span class="help-text">用于 Text2SQL、查询修复和结果解释</span></div>
+              <div class="inline-row" style="margin-top:16px"><button class="btn btn-primary" type="button" data-test-model>保存并测试连接</button><span class="help-text">会发起一次很小的真实模型请求，并生成 Langfuse trace</span></div>
+            </section>
+
+            <section class="card panel settings-section">
+              <div class="section-heading"><div><h2>Langfuse 可观测性</h2><p>记录 Agent、模型调用、耗时、Token 和错误</p></div><span class="badge neutral" data-langfuse-status>读取中</span></div>
+              <div class="form-grid">
+                <label><span class="label">区域</span><select class="select" data-langfuse-region><option value="eu">欧洲区（EU）</option><option value="us">美国区（US）</option><option value="custom">自定义 / 自托管</option></select></label>
+                <label><span class="label">Base URL</span><input class="input" data-langfuse-url type="url" value="https://cloud.langfuse.com"></label>
+                <label><span class="label">Public Key</span><input class="input" data-langfuse-public-key type="password" autocomplete="new-password" placeholder="pk-lf-…"><span class="help-text" data-langfuse-key-help>留空表示保留当前配置</span></label>
+                <label><span class="label">Secret Key</span><input class="input" data-langfuse-secret-key type="password" autocomplete="new-password" placeholder="sk-lf-…"><span class="help-text">密钥不会从后端返回到页面</span></label>
+              </div>
+              <div class="context-item settings-toggle-row"><span><strong>启用 Trace</strong><br><span class="help-text">关闭后保留密钥，但不发送新的可观测数据</span></span><label class="switch"><input type="checkbox" data-langfuse-enabled checked aria-label="启用 Langfuse Trace"><span class="switch-track"></span></label></div>
             </section>
 
             <section class="card panel settings-section">

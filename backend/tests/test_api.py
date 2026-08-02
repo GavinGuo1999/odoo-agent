@@ -135,6 +135,101 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("sensitive provider detail", response.text)
 
+    async def test_settings_never_returns_saved_secrets(self) -> None:
+        environment = dict(self.environment)
+        environment.update(
+            {
+                "DEEPSEEK_API_KEY": "deepseek-secret-marker",
+                "LANGFUSE_PUBLIC_KEY": "pk-lf-public-secret-marker",
+                "LANGFUSE_SECRET_KEY": "sk-lf-private-secret-marker",
+                "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
+            }
+        )
+
+        with patch.dict(os.environ, environment, clear=True):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                response = await client.get("/api/settings")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["providers"]["deepseek"]["configured"])
+        self.assertTrue(response.json()["langfuse"]["configured"])
+        self.assertNotIn("deepseek-secret-marker", response.text)
+        self.assertNotIn("public-secret-marker", response.text)
+        self.assertNotIn("private-secret-marker", response.text)
+        self.assertNotIn("api_key", response.text)
+        self.assertNotIn("secret_key", response.text)
+
+    async def test_settings_update_persists_allowlisted_values_without_echoing_keys(
+        self,
+    ) -> None:
+        saved: dict[str, str] = {}
+
+        def fake_store(updates: dict[str, str]) -> None:
+            saved.update(updates)
+            os.environ.update(updates)
+
+        request = {
+            "selected_provider": "siliconflow",
+            "deepseek": {
+                "api_key": "deepseek-new-secret-marker",
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-pro",
+            },
+            "siliconflow": {
+                "api_key": "siliconflow-new-secret-marker",
+                "base_url": "https://api.siliconflow.cn/v1",
+                "model": "deepseek-ai/DeepSeek-V3.1-Terminus",
+            },
+            "langfuse": {
+                "public_key": "pk-lf-new-public-marker",
+                "secret_key": "sk-lf-new-secret-marker",
+                "base_url": "https://cloud.langfuse.com",
+                "enabled": True,
+            },
+        }
+
+        with (
+            patch.dict(os.environ, self.environment, clear=True),
+            patch(
+                "app.api.routes.settings.set_user_environment",
+                side_effect=fake_store,
+            ),
+        ):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                response = await client.put("/api/settings", json=request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(saved["LLM_PROVIDER"], "siliconflow")
+        self.assertEqual(saved["SILICONFLOW_API_KEY"], "siliconflow-new-secret-marker")
+        self.assertTrue(response.json()["providers"]["siliconflow"]["configured"])
+        self.assertNotIn("new-secret-marker", response.text)
+        self.assertNotIn("new-public-marker", response.text)
+
+    async def test_fastapi_serves_only_allowlisted_ui_files(self) -> None:
+        with patch.dict(os.environ, self.environment, clear=True):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                settings_page = await client.get("/ui/settings.html")
+                private_path = await client.get("/ui/.git/config")
+
+        self.assertEqual(settings_page.status_code, 200)
+        self.assertIn("Langfuse 可观测性", settings_page.text)
+        self.assertEqual(private_path.status_code, 404)
+
 
 
 

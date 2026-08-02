@@ -788,6 +788,38 @@ button {
   margin-top: 18px;
 }
 
+.settings-feedback {
+  display: none;
+  margin-bottom: 14px;
+  padding: 11px 13px;
+  border: 1px solid #c8ded2;
+  border-radius: 10px;
+  color: #22603f;
+  background: #eff8f3;
+  font-size: 12px;
+}
+
+.settings-feedback.show {
+  display: block;
+}
+
+.settings-feedback.error {
+  border-color: #e6c4c4;
+  color: #8c3030;
+  background: #fff3f3;
+}
+
+.settings-feedback.warning {
+  border-color: #ead8ad;
+  color: #7b5a13;
+  background: #fff9e9;
+}
+
+.settings-toggle-row {
+  margin-top: 16px;
+  border-top: 1px solid var(--border-light);
+}
+
 .provider-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

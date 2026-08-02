@@ -25,6 +25,25 @@
     toastTimer = window.setTimeout(() => toast.classList.remove("show"), 2200);
   }
 
+  const apiBase = window.location.protocol === "file:"
+    ? "http://127.0.0.1:8090/api"
+    : "/api";
+
+  async function apiRequest(path, options = {}) {
+    const response = await window.fetch(`${apiBase}${path}`, {
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const message = typeof payload.detail === "string"
+        ? payload.detail
+        : `请求失败（HTTP ${response.status}）`;
+      throw new Error(message);
+    }
+    return payload;
+  }
+
   document.querySelectorAll("[data-toast-message]").forEach((button) => {
     button.addEventListener("click", () => showToast(button.dataset.toastMessage));
   });
@@ -72,30 +91,243 @@
   });
 
   const providerCards = document.querySelectorAll("[data-provider]");
+  const providerUrlInput = document.querySelector("[data-provider-url]");
+  const providerModelInput = document.querySelector("[data-provider-model]");
+  const providerKeyInput = document.querySelector("[data-provider-key]");
+  const providerKeyHelp = document.querySelector("[data-provider-key-help]");
+  const modelStatus = document.querySelector("[data-model-status]");
+  const settingsFeedback = document.querySelector("[data-settings-feedback]");
+  const settingsSaveButton = document.querySelector("[data-settings-save]");
+  const testModelButton = document.querySelector("[data-test-model]");
+  const langfuseStatus = document.querySelector("[data-langfuse-status]");
+  const langfuseRegion = document.querySelector("[data-langfuse-region]");
+  const langfuseUrlInput = document.querySelector("[data-langfuse-url]");
+  const langfusePublicKeyInput = document.querySelector("[data-langfuse-public-key]");
+  const langfuseSecretKeyInput = document.querySelector("[data-langfuse-secret-key]");
+  const langfuseKeyHelp = document.querySelector("[data-langfuse-key-help]");
+  const langfuseEnabledInput = document.querySelector("[data-langfuse-enabled]");
+
+  const providerDrafts = {
+    deepseek: {
+      base_url: "https://api.deepseek.com",
+      model: "deepseek-v4-pro",
+      configured: false,
+      draftKey: ""
+    },
+    siliconflow: {
+      base_url: "https://api.siliconflow.cn/v1",
+      model: "deepseek-ai/DeepSeek-V3.1-Terminus",
+      configured: false,
+      draftKey: ""
+    }
+  };
+  let activeProvider = "deepseek";
+
+  function showSettingsFeedback(message, tone = "success") {
+    if (!settingsFeedback) return;
+    settingsFeedback.textContent = message;
+    settingsFeedback.classList.add("show");
+    settingsFeedback.classList.toggle("error", tone === "error");
+    settingsFeedback.classList.toggle("warning", tone === "warning");
+  }
+
+  function setStatusBadge(element, label, tone) {
+    if (!element) return;
+    element.textContent = label;
+    element.classList.toggle("neutral", tone === "neutral");
+    element.classList.toggle("warning", tone === "warning");
+  }
+
+  function captureActiveProvider() {
+    if (!providerUrlInput || !providerModelInput || !providerKeyInput) return;
+    const draft = providerDrafts[activeProvider];
+    draft.base_url = providerUrlInput.value.trim();
+    draft.model = providerModelInput.value.trim();
+    draft.draftKey = providerKeyInput.value.trim();
+  }
+
+  function renderActiveProvider() {
+    const draft = providerDrafts[activeProvider];
+    providerCards.forEach((card) => {
+      card.classList.toggle("selected", card.dataset.provider === activeProvider);
+    });
+    if (providerUrlInput) providerUrlInput.value = draft.base_url;
+    if (providerModelInput) providerModelInput.value = draft.model;
+    if (providerKeyInput) {
+      providerKeyInput.value = draft.draftKey;
+      providerKeyInput.placeholder = draft.configured
+        ? "已配置，留空不修改"
+        : "请输入 API Key";
+    }
+    if (providerKeyHelp) {
+      providerKeyHelp.textContent = draft.configured
+        ? "后端已有密钥；页面不会读取或回显，留空即可保留"
+        : "仅保存到当前 Windows 用户环境变量，不会回显";
+    }
+    setStatusBadge(
+      modelStatus,
+      draft.configured ? "已配置" : "未配置",
+      draft.configured ? "success" : "warning"
+    );
+  }
+
+  function langfuseRegionFromUrl(url) {
+    if (url === "https://cloud.langfuse.com") return "eu";
+    if (url === "https://us.cloud.langfuse.com") return "us";
+    return "custom";
+  }
+
+  function renderLangfuseStatus(config) {
+    if (langfuseUrlInput) langfuseUrlInput.value = config.base_url;
+    if (langfuseRegion) langfuseRegion.value = langfuseRegionFromUrl(config.base_url);
+    if (langfuseEnabledInput) langfuseEnabledInput.checked = config.enabled;
+    if (langfusePublicKeyInput) {
+      langfusePublicKeyInput.value = "";
+      langfusePublicKeyInput.placeholder = config.configured
+        ? "已配置，留空不修改"
+        : "pk-lf-…";
+    }
+    if (langfuseSecretKeyInput) {
+      langfuseSecretKeyInput.value = "";
+      langfuseSecretKeyInput.placeholder = config.configured
+        ? "已配置，留空不修改"
+        : "sk-lf-…";
+    }
+    if (langfuseKeyHelp) {
+      langfuseKeyHelp.textContent = config.configured
+        ? "后端已有密钥；留空即可保留"
+        : "Public Key 与 Secret Key 需要同时填写";
+    }
+    const label = !config.enabled ? "已关闭" : (config.configured ? "已配置" : "未配置");
+    const tone = !config.enabled ? "neutral" : (config.configured ? "success" : "warning");
+    setStatusBadge(langfuseStatus, label, tone);
+  }
+
+  async function loadSettings() {
+    if (!settingsSaveButton) return;
+    settingsSaveButton.disabled = true;
+    showSettingsFeedback("正在读取本机配置…");
+    try {
+      const data = await apiRequest("/settings");
+      Object.entries(data.providers).forEach(([name, config]) => {
+        Object.assign(providerDrafts[name], config, { draftKey: "" });
+      });
+      activeProvider = data.selected_provider;
+      renderActiveProvider();
+      renderLangfuseStatus(data.langfuse);
+      showSettingsFeedback("配置已从本机后端读取。密钥只显示状态，不会回显明文。");
+    } catch (error) {
+      showSettingsFeedback(`读取失败：${error.message}。请从 start-odoo-agent.bat 启动应用。`, "error");
+    } finally {
+      settingsSaveButton.disabled = false;
+    }
+  }
+
+  async function saveSettings({ quiet = false } = {}) {
+    captureActiveProvider();
+    const publicKey = langfusePublicKeyInput?.value.trim() || "";
+    const secretKey = langfuseSecretKeyInput?.value.trim() || "";
+    const body = {
+      selected_provider: activeProvider,
+      deepseek: {
+        base_url: providerDrafts.deepseek.base_url,
+        model: providerDrafts.deepseek.model,
+        api_key: providerDrafts.deepseek.draftKey || null
+      },
+      siliconflow: {
+        base_url: providerDrafts.siliconflow.base_url,
+        model: providerDrafts.siliconflow.model,
+        api_key: providerDrafts.siliconflow.draftKey || null
+      },
+      langfuse: {
+        base_url: langfuseUrlInput?.value.trim() || "https://cloud.langfuse.com",
+        enabled: langfuseEnabledInput?.checked ?? true,
+        public_key: publicKey || null,
+        secret_key: secretKey || null
+      }
+    };
+
+    const data = await apiRequest("/settings", {
+      method: "PUT",
+      body: JSON.stringify(body)
+    });
+    Object.entries(data.providers).forEach(([name, config]) => {
+      Object.assign(providerDrafts[name], config, { draftKey: "" });
+    });
+    renderActiveProvider();
+    renderLangfuseStatus(data.langfuse);
+    const message = data.restart_required
+      ? "配置已保存。你更换了 Langfuse 连接信息，请关闭后端窗口并重新双击 BAT。"
+      : "配置已保存，并已对新的模型请求生效。";
+    showSettingsFeedback(message, data.restart_required ? "warning" : "success");
+    if (!quiet) showToast("设置已安全保存到本机");
+    return data;
+  }
+
   providerCards.forEach((card) => {
     card.addEventListener("click", () => {
-      providerCards.forEach((item) => item.classList.remove("selected"));
-      card.classList.add("selected");
-      const baseUrl = document.querySelector("[data-provider-url]");
-      const model = document.querySelector("[data-provider-model]");
-      if (baseUrl) baseUrl.value = card.dataset.url;
-      if (model) model.value = card.dataset.model;
-      showToast(`已选择 ${card.dataset.provider}`);
+      captureActiveProvider();
+      activeProvider = card.dataset.provider;
+      renderActiveProvider();
+      showToast(`已选择 ${card.dataset.providerLabel}`);
     });
   });
 
-  const testModelButton = document.querySelector("[data-test-model]");
+  if (langfuseRegion) {
+    langfuseRegion.addEventListener("change", () => {
+      if (!langfuseUrlInput) return;
+      if (langfuseRegion.value === "eu") langfuseUrlInput.value = "https://cloud.langfuse.com";
+      if (langfuseRegion.value === "us") langfuseUrlInput.value = "https://us.cloud.langfuse.com";
+    });
+  }
+
+  if (langfuseUrlInput) {
+    langfuseUrlInput.addEventListener("input", () => {
+      if (langfuseRegion) langfuseRegion.value = langfuseRegionFromUrl(langfuseUrlInput.value.trim().replace(/\/$/, ""));
+    });
+  }
+
+  if (settingsSaveButton) {
+    settingsSaveButton.addEventListener("click", async () => {
+      settingsSaveButton.disabled = true;
+      settingsSaveButton.textContent = "保存中…";
+      try {
+        await saveSettings();
+      } catch (error) {
+        showSettingsFeedback(`保存失败：${error.message}`, "error");
+        showToast("设置保存失败");
+      } finally {
+        settingsSaveButton.disabled = false;
+        settingsSaveButton.textContent = "保存设置";
+      }
+    });
+    loadSettings();
+  }
+
   if (testModelButton) {
-    testModelButton.addEventListener("click", () => {
+    testModelButton.addEventListener("click", async () => {
       const original = testModelButton.textContent;
       testModelButton.disabled = true;
-      testModelButton.textContent = "正在测试…";
-      window.setTimeout(() => {
+      testModelButton.textContent = "正在保存并测试…";
+      try {
+        await saveSettings({ quiet: true });
+        const result = await apiRequest("/chat", {
+          method: "POST",
+          body: JSON.stringify({
+            question: "这是模型连接测试。请只回复：模型连接正常。不要生成业务数据。",
+            provider: activeProvider
+          })
+        });
+        const traceNote = result.trace_id ? ` Trace ID：${result.trace_id}` : "";
+        showSettingsFeedback(`连接成功：${result.provider} / ${result.model}。${traceNote}`);
+        showToast("模型连接测试通过");
+      } catch (error) {
+        showSettingsFeedback(`模型测试失败：${error.message}`, "error");
+        showToast("模型连接测试失败");
+      } finally {
         testModelButton.disabled = false;
-        testModelButton.textContent = "✓ 连接正常";
-        showToast("模型连接测试通过（静态演示）");
-        window.setTimeout(() => { testModelButton.textContent = original; }, 1800);
-      }, 850);
+        testModelButton.textContent = original;
+      }
     });
   }
 

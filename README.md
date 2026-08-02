@@ -10,7 +10,15 @@
 - Langfuse 全链路观测基础设施。
 - Odoo 数据库尚未接入，当前接口不会查询或修改业务数据。
 
-## 启动后端
+## 双击启动
+
+直接双击项目根目录的 `start-odoo-agent.bat`。它会启动本机 FastAPI、等待服务就绪，然后自动打开网站。
+
+应用地址：<http://127.0.0.1:8090/ui/index.html>
+
+在“数据与模型”页面可以填写 DeepSeek、硅基流动与 Langfuse 配置。密钥只写入当前 Windows 用户环境变量，接口只返回“已配置/未配置”，不会把明文密钥发回网页。
+
+## 开发方式启动后端
 
 ```powershell
 Set-Location D:\odoo19e\odoo-agent
@@ -24,9 +32,9 @@ Set-Location D:\odoo19e\odoo-agent
 
 ## 模型配置
 
-模型密钥只从 Windows 环境变量读取，不写入项目文件。
+推荐直接在网站的“数据与模型”页面填写。模型密钥只从 Windows 用户环境变量读取，不写入项目文件。
 
-推荐使用隐藏输入的配置脚本，它会自动发送一条短请求验证模型和 Langfuse：
+命令行配置脚本保留作为备用方式，它会使用隐藏输入并自动发送一条短请求验证模型和 Langfuse：
 
 ```powershell
 .\configure-model.ps1 -Provider deepseek

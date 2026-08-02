@@ -1,14 +1,27 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, RedirectResponse
 
 from app.api.router import api_router
 from app.config import get_settings
 from app.observability import langfuse_is_configured
+
+
+_PROJECT_DIRECTORY = Path(__file__).resolve().parents[2]
+_UI_FILES = {
+    "app.js",
+    "chat.html",
+    "dashboard.html",
+    "index.html",
+    "settings.html",
+    "styles.css",
+}
 
 
 @asynccontextmanager
@@ -38,6 +51,16 @@ def create_app() -> FastAPI:
     )
     application.include_router(api_router, prefix=settings.api_prefix)
 
+    @application.get("/ui", include_in_schema=False)
+    async def ui_root() -> RedirectResponse:
+        return RedirectResponse(url="/ui/index.html")
+
+    @application.get("/ui/{filename:path}", include_in_schema=False)
+    async def ui_file(filename: str) -> FileResponse:
+        if filename not in _UI_FILES:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        return FileResponse(_PROJECT_DIRECTORY / filename)
+
     @application.get("/", tags=["system"])
     async def root() -> dict[str, str]:
         return {
@@ -51,4 +74,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
