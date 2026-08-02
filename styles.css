@@ -820,6 +820,15 @@ button {
   border-top: 1px solid var(--border-light);
 }
 
+.model-actions {
+  flex-wrap: wrap;
+}
+
+#model-settings:target {
+  outline: 3px solid rgba(113, 75, 103, 0.12);
+  outline-offset: 3px;
+}
+
 .provider-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

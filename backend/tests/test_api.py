@@ -4,7 +4,8 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -207,6 +208,46 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("private-secret-marker", response.text)
         self.assertNotIn("api_key", response.text)
         self.assertNotIn("secret_key", response.text)
+
+    async def test_settings_reads_provider_model_catalog_without_exposing_key(
+        self,
+    ) -> None:
+        environment = dict(self.environment)
+        environment["SILICONFLOW_API_KEY"] = "siliconflow-secret-marker"
+        model_client = MagicMock()
+        model_client.models.list = AsyncMock(
+            return_value=SimpleNamespace(
+                data=[
+                    SimpleNamespace(id="vendor/model-b"),
+                    SimpleNamespace(id="vendor/model-a"),
+                ]
+            )
+        )
+        model_client.close = AsyncMock()
+
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch(
+                "app.api.routes.settings.AsyncOpenAI",
+                return_value=model_client,
+            ),
+        ):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://test",
+            ) as client:
+                response = await client.get("/api/settings/models/siliconflow")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["provider"], "siliconflow")
+        self.assertIn("vendor/model-a", payload["models"])
+        self.assertIn(payload["current_model"], payload["models"])
+        self.assertNotIn("siliconflow-secret-marker", response.text)
+        model_client.models.list.assert_awaited_once()
+        model_client.close.assert_awaited_once()
 
     async def test_settings_update_persists_allowlisted_values_without_echoing_keys(
         self,

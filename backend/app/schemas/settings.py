@@ -41,6 +41,12 @@ class ProviderSettingsView(BaseModel):
     model: str
 
 
+class ProviderModelsView(BaseModel):
+    provider: ProviderName
+    current_model: str
+    models: list[str]
+
+
 class LangfuseSettingsView(BaseModel):
     configured: bool
     base_url: str

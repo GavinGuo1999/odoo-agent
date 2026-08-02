@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 数据与模型</title>
-  <link rel="stylesheet" href="styles.css?v=3">
-  <script src="app.js?v=3" defer></script>
+  <link rel="stylesheet" href="styles.css?v=5">
+  <script src="app.js?v=5" defer></script>
 </head>
 <body data-page="settings">
   <div class="app-shell">
@@ -32,7 +32,7 @@
         <div class="settings-layout">
           <div>
             <div class="settings-feedback" data-settings-feedback role="status" aria-live="polite">正在读取本机配置…</div>
-            <section class="card panel settings-section">
+            <section class="card panel settings-section" id="model-settings">
               <div class="section-heading"><div><h2>模型服务</h2><p>切换 DeepSeek 官方 API 或硅基流动代理服务</p></div><span class="badge neutral" data-model-status>读取中</span></div>
               <div class="provider-grid">
                 <button class="provider-card selected" type="button" data-provider="deepseek" data-provider-label="DeepSeek API" data-url="https://api.deepseek.com" data-model="deepseek-v4-pro">
@@ -44,11 +44,11 @@
               </div>
               <div class="form-grid">
                 <label><span class="label">Base URL</span><input class="input" data-provider-url type="url" value="https://api.deepseek.com"></label>
-                <label><span class="label">模型名称</span><input class="input" data-provider-model type="text" value="deepseek-chat"></label>
+                <label><span class="label">模型</span><input class="input" data-provider-model type="text" list="provider-model-options" value="deepseek-chat" autocomplete="off"><datalist id="provider-model-options" data-provider-model-options></datalist><span class="help-text" data-provider-model-help>可从供应商列表选择，也可输入自定义 Model ID</span></label>
                 <label><span class="label">API Key</span><input class="input" data-provider-key type="password" autocomplete="new-password" placeholder="请输入 API Key"><span class="help-text" data-provider-key-help>仅保存到当前 Windows 用户环境变量，不会回显</span></label>
                 <label><span class="label">Temperature</span><select class="select" disabled><option>0.0（Text2SQL 稳定优先）</option></select><span class="help-text">第一阶段固定为 0，减少 SQL 随机性</span></label>
               </div>
-              <div class="inline-row" style="margin-top:16px"><button class="btn btn-primary" type="button" data-test-model>保存并测试连接</button><span class="help-text">会发起一次很小的真实模型请求，并生成 Langfuse trace</span></div>
+              <div class="inline-row model-actions" style="margin-top:16px"><button class="btn" type="button" data-refresh-models>刷新模型列表</button><button class="btn btn-primary" type="button" data-test-model>保存并测试连接</button><span class="help-text">保存后，新的聊天立即使用所选供应商和模型</span></div>
             </section>
 
             <section class="card panel settings-section">

@@ -3,11 +3,13 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, HTTPException, status
+from openai import AsyncOpenAI
 
 from app.config import get_settings
 from app.observability import langfuse_is_configured
 from app.schemas.settings import (
     LangfuseSettingsView,
+    ProviderModelsView,
     ProviderSettingsView,
     SettingsUpdateRequest,
     SettingsView,
@@ -66,6 +68,54 @@ async def read_settings() -> SettingsView:
     """Return safe configuration metadata without returning any credential."""
 
     return _settings_view()
+
+
+@router.get("/models/{provider}", response_model=ProviderModelsView)
+async def read_provider_models(provider: str) -> ProviderModelsView:
+    """Read the provider's current model catalog without exposing its key."""
+
+    if provider not in {"deepseek", "siliconflow"}:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="不支持的模型供应商。",
+        )
+
+    config = get_settings().provider(provider)  # type: ignore[arg-type]
+    if not config.configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="请先保存该供应商的 API Key。",
+        )
+
+    client = AsyncOpenAI(
+        api_key=config.api_key,
+        base_url=config.base_url,
+        timeout=min(config.timeout_seconds, 30.0),
+    )
+    try:
+        catalog = await client.models.list()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"读取模型列表失败：{type(exc).__name__}",
+        ) from exc
+    finally:
+        await client.close()
+
+    model_ids = sorted(
+        {
+            item.id.strip()
+            for item in catalog.data
+            if isinstance(item.id, str) and item.id.strip()
+        }
+    )[:500]
+    if config.model not in model_ids:
+        model_ids.insert(0, config.model)
+    return ProviderModelsView(
+        provider=config.name,
+        current_model=config.model,
+        models=model_ids,
+    )
 
 
 @router.put("", response_model=SettingsView)

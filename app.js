@@ -93,6 +93,9 @@
   const providerCards = document.querySelectorAll("[data-provider]");
   const providerUrlInput = document.querySelector("[data-provider-url]");
   const providerModelInput = document.querySelector("[data-provider-model]");
+  const providerModelOptions = document.querySelector("[data-provider-model-options]");
+  const providerModelHelp = document.querySelector("[data-provider-model-help]");
+  const refreshModelsButton = document.querySelector("[data-refresh-models]");
   const providerKeyInput = document.querySelector("[data-provider-key]");
   const providerKeyHelp = document.querySelector("[data-provider-key-help]");
   const modelStatus = document.querySelector("[data-model-status]");
@@ -112,12 +115,14 @@
       base_url: "https://api.deepseek.com",
       model: "deepseek-v4-pro",
       configured: false,
+      models: [],
       draftKey: ""
     },
     siliconflow: {
       base_url: "https://api.siliconflow.cn/v1",
       model: "deepseek-ai/DeepSeek-V3.1-Terminus",
       configured: false,
+      models: [],
       draftKey: ""
     }
   };
@@ -153,6 +158,21 @@
     });
     if (providerUrlInput) providerUrlInput.value = draft.base_url;
     if (providerModelInput) providerModelInput.value = draft.model;
+    if (providerModelOptions) {
+      providerModelOptions.innerHTML = "";
+      draft.models.forEach((modelId) => {
+        const option = document.createElement("option");
+        option.value = modelId;
+        providerModelOptions.appendChild(option);
+      });
+    }
+    if (providerModelHelp) {
+      providerModelHelp.textContent = draft.models.length
+        ? `已读取 ${draft.models.length} 个模型；可选择或输入自定义 Model ID`
+        : (draft.configured
+          ? "点击“刷新模型列表”从供应商读取可用模型"
+          : "先保存该供应商的 API Key，再读取模型列表");
+    }
     if (providerKeyInput) {
       providerKeyInput.value = draft.draftKey;
       providerKeyInput.placeholder = draft.configured
@@ -169,6 +189,34 @@
       draft.configured ? "已配置" : "未配置",
       draft.configured ? "success" : "warning"
     );
+  }
+
+  async function loadProviderModels({ quiet = false } = {}) {
+    if (!providerModelInput || !refreshModelsButton) return;
+    captureActiveProvider();
+    const providerAtRequest = activeProvider;
+    const draft = providerDrafts[providerAtRequest];
+    if (!draft.configured) {
+      if (providerModelHelp) providerModelHelp.textContent = "请先保存该供应商的 API Key。";
+      return;
+    }
+
+    refreshModelsButton.disabled = true;
+    refreshModelsButton.textContent = "读取中…";
+    try {
+      const data = await apiRequest(`/settings/models/${providerAtRequest}`);
+      providerDrafts[providerAtRequest].models = data.models;
+      if (activeProvider === providerAtRequest) renderActiveProvider();
+      if (!quiet) showToast(`已读取 ${data.models.length} 个可用模型`);
+    } catch (error) {
+      if (activeProvider === providerAtRequest && providerModelHelp) {
+        providerModelHelp.textContent = `${error.message}。仍可手工输入 Model ID。`;
+      }
+      if (!quiet) showToast("模型列表读取失败");
+    } finally {
+      refreshModelsButton.disabled = false;
+      refreshModelsButton.textContent = "刷新模型列表";
+    }
   }
 
   function langfuseRegionFromUrl(url) {
@@ -216,6 +264,7 @@
       renderActiveProvider();
       renderLangfuseStatus(data.langfuse);
       showSettingsFeedback("配置已从本机后端读取。密钥只显示状态，不会回显明文。");
+      loadProviderModels({ quiet: true });
     } catch (error) {
       showSettingsFeedback(`读取失败：${error.message}。请从 start-odoo-agent.bat 启动应用。`, "error");
     } finally {
@@ -270,8 +319,13 @@
       activeProvider = card.dataset.provider;
       renderActiveProvider();
       showToast(`已选择 ${card.dataset.providerLabel}`);
+      loadProviderModels({ quiet: true });
     });
   });
+
+  if (refreshModelsButton) {
+    refreshModelsButton.addEventListener("click", () => loadProviderModels());
+  }
 
   if (langfuseRegion) {
     langfuseRegion.addEventListener("change", () => {
@@ -428,7 +482,11 @@
       const dot = document.createElement("span");
       dot.className = "status-dot";
       statusElement.appendChild(dot);
-      statusElement.append(`${label} ${provider.configured ? "已配置" : "未配置"}`);
+      const modelLabel = provider.configured ? provider.model : "未配置";
+      statusElement.append(`${label} · ${modelLabel}`);
+      statusElement.title = provider.configured
+        ? `当前供应商：${label}；当前模型：${provider.model}`
+        : `${label} 尚未配置 API Key`;
     } catch (_error) {
       statusElement.textContent = "后端未连接";
     }
