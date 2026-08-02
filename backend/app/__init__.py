@@ -1,0 +1,2 @@
+"""Odoo Agent backend package."""
+
