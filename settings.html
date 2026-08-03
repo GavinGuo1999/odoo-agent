@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 数据与模型</title>
-  <link rel="stylesheet" href="styles.css?v=5">
-  <script src="app.js?v=5" defer></script>
+  <link rel="stylesheet" href="styles.css?v=6">
+  <script src="app.js?v=6" defer></script>
 </head>
 <body data-page="settings">
   <div class="app-shell">
@@ -19,7 +19,7 @@
       </nav>
       <div class="nav-label">系统</div>
       <nav class="nav-list" aria-label="系统导航"><a class="nav-link" data-nav="settings" href="settings.html"><span class="nav-icon">⚙</span><span>数据与模型</span></a></nav>
-      <div class="sidebar-footer"><div class="db-mini-status"><span class="status-dot"></span><span>Odoo 19 · 数据库待接入</span></div></div>
+      <div class="sidebar-footer"><div class="db-mini-status" data-db-mini-status><span class="status-dot"></span><span>Odoo 19 · 正在检查数据库</span></div></div>
     </aside>
 
     <main class="main-area">
@@ -80,13 +80,20 @@
 
           <aside>
             <section class="card connection-card settings-section">
-              <div class="section-heading"><div><h2>Odoo 数据源</h2><p>PostgreSQL 只读连接</p></div><span class="badge warning">待接入</span></div>
-              <div class="connection-row"><span class="connection-label">版本</span><span class="connection-value">Odoo 19 Enterprise</span></div>
-              <div class="connection-row"><span class="connection-label">数据库</span><span class="connection-value">odoo19_dev</span></div>
-              <div class="connection-row"><span class="connection-label">地址</span><span class="connection-value">127.0.0.1:55432</span></div>
-              <div class="connection-row"><span class="connection-label">模式</span><span class="connection-value">只读 · 实时查询</span></div>
-              <div class="connection-row"><span class="connection-label">最近响应</span><span class="connection-value">尚未连接</span></div>
-              <button class="btn" type="button" style="width:100%;margin-top:14px" data-toast-message="Odoo 只读连接将在下一步接入">测试数据库连接</button>
+              <div class="section-heading"><div><h2>Odoo 数据源</h2><p>PostgreSQL 只读连接</p></div><span class="badge warning" data-database-status>读取中</span></div>
+              <div class="database-form">
+                <label><span class="label">地址</span><input class="input" data-db-host value="127.0.0.1"></label>
+                <label><span class="label">端口</span><input class="input" data-db-port type="number" min="1" max="65535" value="55432"></label>
+                <label><span class="label">数据库</span><input class="input" data-db-name value="odoo19_dev"></label>
+                <label><span class="label">只读用户</span><input class="input" data-db-user value="codex_readonly"></label>
+                <label><span class="label">数据库密码</span><input class="input" data-db-password type="password" autocomplete="new-password" placeholder="本机免密时可留空"></label>
+                <label><span class="label">公司 ID</span><input class="input" data-db-company-id type="number" min="1" value="1"></label>
+                <label><span class="label">最大返回行数</span><input class="input" data-db-max-rows type="number" min="1" max="5000" value="500"></label>
+                <label><span class="label">查询超时（毫秒）</span><input class="input" data-db-timeout type="number" min="1000" max="120000" value="15000"></label>
+              </div>
+              <div class="connection-row"><span class="connection-label">安全模式</span><span class="connection-value">强制只读 · 单条 SELECT</span></div>
+              <div class="connection-row"><span class="connection-label">最近响应</span><span class="connection-value" data-db-response>正在检查…</span></div>
+              <button class="btn" type="button" style="width:100%;margin-top:14px" data-test-database>保存并测试数据库连接</button>
             </section>
 
             <section class="card side-panel settings-section">

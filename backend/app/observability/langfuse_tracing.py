@@ -148,11 +148,11 @@ def trace_chat_turn(
     question: str,
     provider: str,
 ) -> Iterator[Any | None]:
-    """Create one root trace for one ChatBI user turn."""
+    """Create one root trace for one assistant turn."""
 
     with _observation(
         as_type="agent",
-        name="answer-sales-question",
+        name="answer-user-question",
         input_data={"question": question},
     ) as observation:
         if observation is None:
@@ -166,6 +166,18 @@ def trace_chat_turn(
             version="0.1.0",
         ):
             yield observation
+
+
+@contextmanager
+def trace_agent(*, name: str, input_data: Any) -> Iterator[Any | None]:
+    """Trace an agent or graph subtree with a stable semantic name."""
+
+    with _observation(
+        as_type="agent",
+        name=name,
+        input_data=input_data,
+    ) as observation:
+        yield observation
 
 
 @contextmanager

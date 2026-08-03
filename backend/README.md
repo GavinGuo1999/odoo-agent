@@ -34,9 +34,9 @@ Set-Location D:\odoo19e\odoo-agent
 
 ## 后端接入约定
 
-- 每次用户提问创建一个 `answer-sales-question` 根 trace。
+- 每次用户提问创建一个 `answer-user-question` 根 trace，并在内部记录 LangGraph Agent。
 - 同一聊天的多轮提问使用相同 `session_id`。
-- Text-to-SQL 和答案生成使用 `generation`。
+- 普通回答、Text-to-SQL、SQL 修复和答案生成使用 `generation`。
 - Odoo 元数据、指标口径和示例检索使用 `retriever`。
 - 只读 SQL 执行使用 `tool`。
 - 调用结束时使用 `update_observation(...)` 更新 `output`；模型调用同时记录实际 token usage。

@@ -1,0 +1,126 @@
+{
+  "version": "2026-08-03.v1",
+  "timezone": "Asia/Shanghai",
+  "default_states": ["sale", "done"],
+  "tables": {
+    "sale_order": {
+      "description": "销售订单主表；一行代表一张报价单或销售订单。",
+      "columns": ["id", "name", "state", "company_id", "partner_id", "user_id", "currency_id", "amount_untaxed", "amount_tax", "amount_total", "date_order", "commitment_date", "effective_date", "delivery_status", "invoice_status"]
+    },
+    "sale_order_line": {
+      "description": "销售订单明细；分析产品、数量、交付和开票时使用，排除 display_type 非空的展示行。",
+      "columns": ["id", "order_id", "company_id", "order_partner_id", "salesman_id", "product_id", "product_uom_id", "state", "display_type", "product_uom_qty", "price_unit", "discount", "price_subtotal", "price_total", "qty_delivered", "qty_invoiced", "qty_to_invoice", "is_downpayment", "is_delivery"]
+    },
+    "res_partner": {
+      "description": "客户和联系人；销售客户通常通过 sale_order.partner_id 关联。",
+      "columns": ["id", "name", "commercial_partner_id", "customer_rank", "active", "is_company"]
+    },
+    "product_product": {
+      "description": "产品规格；通过 product_tmpl_id 连接产品模板。",
+      "columns": ["id", "product_tmpl_id", "default_code", "active"]
+    },
+    "product_template": {
+      "description": "产品模板；name 是 JSONB 翻译字段，中文名称优先取 name->>'zh_CN'，再取 en_US。",
+      "columns": ["id", "name", "categ_id", "uom_id", "company_id", "list_price", "sale_ok", "active", "type"]
+    },
+    "res_users": {
+      "description": "Odoo 用户；销售员名称需通过 partner_id 连接 res_partner，不开放登录和密码字段。",
+      "columns": ["id", "partner_id", "company_id", "active", "share"]
+    },
+    "res_company": {
+      "description": "公司；所有事实查询必须限制为配置的 company_id。",
+      "columns": ["id", "name", "currency_id"]
+    },
+    "res_currency": {
+      "description": "币种定义。",
+      "columns": ["id", "name", "symbol", "position", "rounding"]
+    },
+    "uom_uom": {
+      "description": "计量单位；name 是 JSONB 翻译字段。",
+      "columns": ["id", "name", "relative_factor", "factor", "active"]
+    }
+  },
+  "relations": [
+    "sale_order.partner_id = res_partner.id",
+    "sale_order.user_id = res_users.id",
+    "res_users.partner_id = res_partner.id",
+    "sale_order.company_id = res_company.id",
+    "sale_order.currency_id = res_currency.id",
+    "sale_order_line.order_id = sale_order.id",
+    "sale_order_line.product_id = product_product.id",
+    "product_product.product_tmpl_id = product_template.id",
+    "sale_order_line.product_uom_id = uom_uom.id"
+  ],
+  "metrics": {
+    "sales_amount": {
+      "name": "销售额",
+      "description": "已确认销售订单的未税金额。",
+      "expression": "SUM(sale_order.amount_untaxed)",
+      "states": ["sale", "done"],
+      "date_field": "sale_order.date_order",
+      "keywords": ["销售额", "销售收入", "业绩", "成交金额"]
+    },
+    "tax_included_sales": {
+      "name": "含税销售额",
+      "description": "已确认销售订单的含税总额。",
+      "expression": "SUM(sale_order.amount_total)",
+      "states": ["sale", "done"],
+      "date_field": "sale_order.date_order",
+      "keywords": ["含税销售额", "含税金额", "订单总额"]
+    },
+    "order_count": {
+      "name": "订单数",
+      "description": "已确认销售订单数量。",
+      "expression": "COUNT(DISTINCT sale_order.id)",
+      "states": ["sale", "done"],
+      "date_field": "sale_order.date_order",
+      "keywords": ["订单数", "多少订单", "订单数量"]
+    },
+    "average_order_value": {
+      "name": "平均订单额",
+      "description": "销售额除以订单数。",
+      "expression": "SUM(sale_order.amount_untaxed) / NULLIF(COUNT(DISTINCT sale_order.id), 0)",
+      "states": ["sale", "done"],
+      "date_field": "sale_order.date_order",
+      "keywords": ["平均订单额", "客单价"]
+    },
+    "sales_quantity": {
+      "name": "销售数量",
+      "description": "已确认订单非展示明细的订购数量。",
+      "expression": "SUM(sale_order_line.product_uom_qty)",
+      "states": ["sale", "done"],
+      "date_field": "sale_order.date_order",
+      "keywords": ["销量", "销售数量", "订购数量"]
+    },
+    "delivered_quantity": {
+      "name": "已交付数量",
+      "description": "已确认订单非展示明细的已交付数量。",
+      "expression": "SUM(sale_order_line.qty_delivered)",
+      "states": ["sale", "done"],
+      "date_field": "sale_order.date_order",
+      "keywords": ["已交付", "交付数量", "发货数量"]
+    },
+    "invoiced_quantity": {
+      "name": "已开票数量",
+      "description": "已确认订单非展示明细的已开票数量。",
+      "expression": "SUM(sale_order_line.qty_invoiced)",
+      "states": ["sale", "done"],
+      "date_field": "sale_order.date_order",
+      "keywords": ["已开票", "开票数量"]
+    }
+  },
+  "examples": [
+    {
+      "question": "本月销售额是多少？",
+      "sql": "SELECT COALESCE(SUM(so.amount_untaxed), 0) AS sales_amount FROM sale_order AS so WHERE so.company_id = {company_id} AND so.state IN ('sale', 'done') AND so.date_order >= date_trunc('month', CURRENT_DATE) AND so.date_order < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'"
+    },
+    {
+      "question": "销售额最高的十个客户是谁？",
+      "sql": "SELECT rp.name AS customer, SUM(so.amount_untaxed) AS sales_amount FROM sale_order AS so JOIN res_partner AS rp ON rp.id = so.partner_id WHERE so.company_id = {company_id} AND so.state IN ('sale', 'done') GROUP BY rp.id, rp.name ORDER BY sales_amount DESC LIMIT 10"
+    },
+    {
+      "question": "今年每个月销售趋势怎么样？",
+      "sql": "SELECT date_trunc('month', so.date_order)::date AS month, SUM(so.amount_untaxed) AS sales_amount FROM sale_order AS so WHERE so.company_id = {company_id} AND so.state IN ('sale', 'done') AND so.date_order >= date_trunc('year', CURRENT_DATE) GROUP BY 1 ORDER BY 1"
+    }
+  ]
+}

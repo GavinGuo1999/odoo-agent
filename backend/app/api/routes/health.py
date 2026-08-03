@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 
 from app.config import Settings, get_settings
+from app.database import OdooDatabase
 from app.observability import langfuse_is_configured
 
 
@@ -21,6 +22,7 @@ async def health(settings: Settings = Depends(get_settings)) -> dict[str, object
         }
 
     selected = settings.provider()
+    database_health = await OdooDatabase(settings.database()).healthcheck()
     return {
         "status": "ok",
         "app": settings.app_name,
@@ -32,10 +34,15 @@ async def health(settings: Settings = Depends(get_settings)) -> dict[str, object
             "langfuse": {"configured": langfuse_is_configured()},
             "providers": providers,
             "odoo_database": {
-                "configured": False,
+                "configured": settings.database().configured,
                 "access_mode": "read-only",
-                "status": "not-connected",
+                "status": "connected" if database_health.connected else "not-connected",
+                "read_only": database_health.read_only,
+                "company_id": database_health.company_id,
+                "company_name": database_health.company_name,
+                "currency": database_health.currency,
+                "order_count": database_health.order_count,
+                "response_ms": database_health.response_ms,
             },
         },
     }
-

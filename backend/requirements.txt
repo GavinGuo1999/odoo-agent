@@ -1,7 +1,9 @@
 # Runtime dependencies are pinned so local behavior is reproducible.
 fastapi==0.141.1
 langfuse==4.14.2
+langgraph==1.2.10
 openai==2.52.0
+psycopg[binary]==3.3.4
 pydantic-settings==2.14.2
+sqlglot==30.14.0
 uvicorn==0.52.1
-

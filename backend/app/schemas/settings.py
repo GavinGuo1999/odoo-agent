@@ -28,11 +28,23 @@ class LangfuseSettingsUpdate(BaseModel):
     enabled: bool = True
 
 
+class DatabaseSettingsUpdate(BaseModel):
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(ge=1, le=65535)
+    database: str = Field(min_length=1, max_length=128)
+    user: str = Field(min_length=1, max_length=128)
+    password: SecretStr | None = None
+    company_id: int = Field(ge=1)
+    statement_timeout_ms: int = Field(ge=1_000, le=120_000)
+    max_rows: int = Field(ge=1, le=5_000)
+
+
 class SettingsUpdateRequest(BaseModel):
     selected_provider: ProviderName
     deepseek: ProviderSettingsUpdate
     siliconflow: ProviderSettingsUpdate
     langfuse: LangfuseSettingsUpdate
+    database: DatabaseSettingsUpdate
 
 
 class ProviderSettingsView(BaseModel):
@@ -53,9 +65,22 @@ class LangfuseSettingsView(BaseModel):
     enabled: bool
 
 
+class DatabaseSettingsView(BaseModel):
+    configured: bool
+    password_configured: bool
+    host: str
+    port: int
+    database: str
+    user: str
+    company_id: int
+    statement_timeout_ms: int
+    max_rows: int
+
+
 class SettingsView(BaseModel):
     selected_provider: ProviderName
     providers: dict[ProviderName, ProviderSettingsView]
     langfuse: LangfuseSettingsView
+    database: DatabaseSettingsView
     persistence: Literal["windows-user-environment"] = "windows-user-environment"
     restart_required: bool = False

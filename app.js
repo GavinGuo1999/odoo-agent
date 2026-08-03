@@ -109,6 +109,17 @@
   const langfuseSecretKeyInput = document.querySelector("[data-langfuse-secret-key]");
   const langfuseKeyHelp = document.querySelector("[data-langfuse-key-help]");
   const langfuseEnabledInput = document.querySelector("[data-langfuse-enabled]");
+  const databaseStatus = document.querySelector("[data-database-status]");
+  const databaseHostInput = document.querySelector("[data-db-host]");
+  const databasePortInput = document.querySelector("[data-db-port]");
+  const databaseNameInput = document.querySelector("[data-db-name]");
+  const databaseUserInput = document.querySelector("[data-db-user]");
+  const databasePasswordInput = document.querySelector("[data-db-password]");
+  const databaseCompanyInput = document.querySelector("[data-db-company-id]");
+  const databaseMaxRowsInput = document.querySelector("[data-db-max-rows]");
+  const databaseTimeoutInput = document.querySelector("[data-db-timeout]");
+  const databaseResponse = document.querySelector("[data-db-response]");
+  const testDatabaseButton = document.querySelector("[data-test-database]");
 
   const providerDrafts = {
     deepseek: {
@@ -251,6 +262,37 @@
     setStatusBadge(langfuseStatus, label, tone);
   }
 
+  function renderDatabaseSettings(config) {
+    if (!config) return;
+    if (databaseHostInput) databaseHostInput.value = config.host;
+    if (databasePortInput) databasePortInput.value = config.port;
+    if (databaseNameInput) databaseNameInput.value = config.database;
+    if (databaseUserInput) databaseUserInput.value = config.user;
+    if (databaseCompanyInput) databaseCompanyInput.value = config.company_id;
+    if (databaseMaxRowsInput) databaseMaxRowsInput.value = config.max_rows;
+    if (databaseTimeoutInput) databaseTimeoutInput.value = config.statement_timeout_ms;
+    if (databasePasswordInput) {
+      databasePasswordInput.value = "";
+      databasePasswordInput.placeholder = config.password_configured
+        ? "已配置，留空不修改"
+        : "本机免密时可留空";
+    }
+    setStatusBadge(databaseStatus, config.configured ? "已配置" : "未配置", config.configured ? "success" : "warning");
+  }
+
+  function databasePayload() {
+    return {
+      host: databaseHostInput?.value.trim() || "127.0.0.1",
+      port: Number(databasePortInput?.value || 55432),
+      database: databaseNameInput?.value.trim() || "odoo19_dev",
+      user: databaseUserInput?.value.trim() || "codex_readonly",
+      password: databasePasswordInput?.value.trim() || null,
+      company_id: Number(databaseCompanyInput?.value || 1),
+      max_rows: Number(databaseMaxRowsInput?.value || 500),
+      statement_timeout_ms: Number(databaseTimeoutInput?.value || 15000)
+    };
+  }
+
   async function loadSettings() {
     if (!settingsSaveButton) return;
     settingsSaveButton.disabled = true;
@@ -263,8 +305,10 @@
       activeProvider = data.selected_provider;
       renderActiveProvider();
       renderLangfuseStatus(data.langfuse);
+      renderDatabaseSettings(data.database);
       showSettingsFeedback("配置已从本机后端读取。密钥只显示状态，不会回显明文。");
       loadProviderModels({ quiet: true });
+      refreshDatabaseStatus();
     } catch (error) {
       showSettingsFeedback(`读取失败：${error.message}。请从 start-odoo-agent.bat 启动应用。`, "error");
     } finally {
@@ -293,7 +337,8 @@
         enabled: langfuseEnabledInput?.checked ?? true,
         public_key: publicKey || null,
         secret_key: secretKey || null
-      }
+      },
+      database: databasePayload()
     };
 
     const data = await apiRequest("/settings", {
@@ -305,6 +350,7 @@
     });
     renderActiveProvider();
     renderLangfuseStatus(data.langfuse);
+    renderDatabaseSettings(data.database);
     const message = data.restart_required
       ? "配置已保存。你更换了 Langfuse 连接信息，请关闭后端窗口并重新双击 BAT。"
       : "配置已保存，并已对新的模型请求生效。";
@@ -385,15 +431,64 @@
     });
   }
 
-  const sqlToggle = document.querySelector("[data-sql-toggle]");
-  if (sqlToggle) {
-    sqlToggle.addEventListener("click", () => {
-      const sqlBlock = document.querySelector("[data-sql-block]");
-      if (!sqlBlock) return;
-      sqlBlock.classList.toggle("show");
-      sqlToggle.textContent = sqlBlock.classList.contains("show") ? "收起 SQL" : "查看 SQL";
+  if (testDatabaseButton) {
+    testDatabaseButton.addEventListener("click", async () => {
+      const original = testDatabaseButton.textContent;
+      testDatabaseButton.disabled = true;
+      testDatabaseButton.textContent = "正在保存并测试…";
+      try {
+        await saveSettings({ quiet: true });
+        const health = await apiRequest("/database/status");
+        if (!health.connected || !health.read_only) throw new Error("数据库未进入只读连接状态");
+        if (databaseResponse) {
+          databaseResponse.textContent = `${health.response_ms} ms · ${health.company_name || `公司 ${health.company_id}`} · ${health.order_count} 张订单`;
+        }
+        setStatusBadge(databaseStatus, "只读已连接", "success");
+        showSettingsFeedback(`数据库连接成功：${health.database} / ${health.user}，已确认只读。`);
+        showToast("Odoo 只读连接测试通过");
+        refreshDatabaseStatus();
+      } catch (error) {
+        if (databaseResponse) databaseResponse.textContent = error.message;
+        setStatusBadge(databaseStatus, "连接失败", "warning");
+        showSettingsFeedback(`数据库测试失败：${error.message}`, "error");
+        showToast("数据库连接测试失败");
+      } finally {
+        testDatabaseButton.disabled = false;
+        testDatabaseButton.textContent = original;
+      }
     });
   }
+
+  async function refreshDatabaseStatus() {
+    const miniStatuses = document.querySelectorAll("[data-db-mini-status]");
+    const contextDatabase = document.querySelector("[data-context-database]");
+    const contextCurrency = document.querySelector("[data-context-currency]");
+    const contextCompany = document.querySelector("[data-context-company]");
+    if (!miniStatuses.length && !contextDatabase && !databaseResponse) return;
+    try {
+      const health = await apiRequest("/database/status");
+      const label = health.connected && health.read_only
+        ? `Odoo 19 · ${health.database} · 只读`
+        : "Odoo 19 · 数据库未连接";
+      miniStatuses.forEach((element) => {
+        const text = element.querySelector("span:last-child");
+        if (text) text.textContent = label;
+        element.classList.toggle("offline", !health.connected);
+      });
+      if (contextDatabase) contextDatabase.textContent = health.connected ? `${health.database} · 只读` : "未连接";
+      if (contextCurrency) contextCurrency.textContent = health.currency || "—";
+      if (contextCompany) contextCompany.textContent = health.company_name || `公司 ${health.company_id}`;
+      if (databaseResponse && health.connected) {
+        databaseResponse.textContent = `${health.response_ms} ms · ${health.company_name || `公司 ${health.company_id}`} · ${health.order_count} 张订单`;
+      }
+      if (databaseStatus && health.connected) setStatusBadge(databaseStatus, "只读已连接", "success");
+    } catch (_error) {
+      miniStatuses.forEach((element) => element.classList.add("offline"));
+      if (contextDatabase) contextDatabase.textContent = "后端未连接";
+    }
+  }
+
+  refreshDatabaseStatus();
 
   const chatInput = document.querySelector("[data-chat-input]");
   const chatThread = document.querySelector("[data-chat-thread]");
@@ -416,6 +511,159 @@
   let chatHistory = [];
   let chatSending = false;
 
+  function displayValue(value) {
+    if (value === null || value === undefined || value === "") return "—";
+    if (typeof value === "number") {
+      return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value);
+    }
+    if (typeof value === "object") return JSON.stringify(value);
+    return String(value);
+  }
+
+  function chartOption(spec, rows) {
+    const xField = spec.x_field;
+    const yFields = spec.y_fields || [];
+    const palette = ["#714b67", "#017e84", "#e28b46", "#6c63a8"];
+    if (spec.type === "pie") {
+      const yField = yFields[0];
+      return {
+        tooltip: { trigger: "item" },
+        legend: { bottom: 0 },
+        series: [{
+          name: yField,
+          type: "pie",
+          radius: ["42%", "70%"],
+          data: rows.map((row) => ({ name: displayValue(row[xField]), value: row[yField] })),
+          itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 }
+        }],
+        color: palette
+      };
+    }
+    return {
+      tooltip: { trigger: "axis" },
+      legend: { bottom: 0 },
+      grid: { left: 18, right: 20, top: 24, bottom: 48, containLabel: true },
+      xAxis: { type: "category", data: rows.map((row) => displayValue(row[xField])), axisLabel: { color: "#6f6672" } },
+      yAxis: { type: "value", axisLabel: { color: "#6f6672" }, splitLine: { lineStyle: { color: "#eee9ed" } } },
+      series: yFields.map((field, index) => ({
+        name: field,
+        type: spec.type,
+        data: rows.map((row) => row[field]),
+        smooth: spec.type === "line",
+        symbolSize: 7,
+        itemStyle: { color: palette[index % palette.length] },
+        lineStyle: { width: 3 }
+      }))
+    };
+  }
+
+  function appendResultCard(container, metadata) {
+    const rows = metadata.rows || [];
+    const columns = metadata.columns || [];
+    if (!metadata.sql && !rows.length && !(metadata.warnings || []).length) return;
+
+    const card = document.createElement("section");
+    card.className = "agent-result-card";
+
+    const summary = document.createElement("div");
+    summary.className = "agent-result-summary";
+    const summaryTitle = document.createElement("strong");
+    summaryTitle.textContent = "Odoo 实时结果";
+    const metricChips = document.createElement("div");
+    metricChips.className = "result-chips";
+    (metadata.metrics || []).forEach((metric) => {
+      const chip = document.createElement("span");
+      chip.textContent = metric;
+      metricChips.appendChild(chip);
+    });
+    summary.append(summaryTitle, metricChips);
+    const timing = document.createElement("small");
+    timing.textContent = `${rows.length} 行${metadata.query_ms !== null && metadata.query_ms !== undefined ? ` · ${metadata.query_ms} ms` : ""}${metadata.truncated ? " · 已截断" : ""}`;
+    summary.appendChild(timing);
+    card.appendChild(summary);
+
+    if (metadata.chart?.type === "kpi" && rows.length) {
+      const kpis = document.createElement("div");
+      kpis.className = "result-kpis";
+      metadata.chart.y_fields.forEach((field) => {
+        const item = document.createElement("div");
+        const label = document.createElement("span");
+        label.textContent = field;
+        const value = document.createElement("strong");
+        value.textContent = displayValue(rows[0][field]);
+        item.append(label, value);
+        kpis.appendChild(item);
+      });
+      card.appendChild(kpis);
+    } else if (metadata.chart && metadata.chart.type !== "none" && rows.length) {
+      const chart = document.createElement("div");
+      chart.className = "agent-echart";
+      card.appendChild(chart);
+      window.requestAnimationFrame(() => {
+        if (!window.echarts) {
+          chart.textContent = "图表组件未加载，表格结果仍可正常查看。";
+          chart.classList.add("chart-fallback");
+          return;
+        }
+        const instance = window.echarts.init(chart);
+        instance.setOption(chartOption(metadata.chart, rows));
+        const observer = new ResizeObserver(() => instance.resize());
+        observer.observe(chart);
+      });
+    }
+
+    if (rows.length && columns.length) {
+      const wrap = document.createElement("div");
+      wrap.className = "agent-table-wrap";
+      const table = document.createElement("table");
+      table.className = "agent-result-table";
+      const head = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      columns.forEach((column) => {
+        const cell = document.createElement("th");
+        cell.textContent = column;
+        headRow.appendChild(cell);
+      });
+      head.appendChild(headRow);
+      const body = document.createElement("tbody");
+      rows.slice(0, 100).forEach((row) => {
+        const tableRow = document.createElement("tr");
+        columns.forEach((column) => {
+          const cell = document.createElement("td");
+          cell.textContent = displayValue(row[column]);
+          tableRow.appendChild(cell);
+        });
+        body.appendChild(tableRow);
+      });
+      table.append(head, body);
+      wrap.appendChild(table);
+      card.appendChild(wrap);
+    }
+
+    if (metadata.sql) {
+      const toggle = document.createElement("button");
+      toggle.className = "btn result-sql-toggle";
+      toggle.type = "button";
+      toggle.textContent = "查看 SQL";
+      const block = document.createElement("pre");
+      block.className = "sql-block result-sql";
+      block.textContent = metadata.sql;
+      toggle.addEventListener("click", () => {
+        block.classList.toggle("show");
+        toggle.textContent = block.classList.contains("show") ? "收起 SQL" : "查看 SQL";
+      });
+      card.append(toggle, block);
+    }
+
+    (metadata.warnings || []).forEach((warning) => {
+      const note = document.createElement("div");
+      note.className = "result-warning";
+      note.textContent = warning;
+      card.appendChild(note);
+    });
+    container.appendChild(card);
+  }
+
   function appendChatMessage(role, text, metadata = null) {
     if (!chatInput || !chatThread) return;
     const message = document.createElement("div");
@@ -435,10 +683,12 @@
     content.appendChild(bubble);
 
     if (metadata && role === "assistant") {
+      appendResultCard(content, metadata);
       const meta = document.createElement("div");
       meta.className = "chat-response-meta";
       const traceLabel = metadata.trace_id ? " · Langfuse Trace 已记录" : "";
-      meta.textContent = `${metadata.provider} · ${metadata.model}${traceLabel}`;
+      const phaseLabel = { "general-chat": "普通问答", "semantic-layer": "指标口径", "text2sql": "Odoo 只读查询" }[metadata.phase] || "智能回答";
+      meta.textContent = `${phaseLabel} · ${metadata.provider} · ${metadata.model}${traceLabel}`;
       content.appendChild(meta);
     }
 
@@ -452,7 +702,7 @@
   function appendWelcomeMessage() {
     appendChatMessage(
       "assistant",
-      "新会话已开始。普通问题可以直接问；涉及 Odoo 实时数据时，我会如实说明当前是否已经连接数据源。"
+      "新会话已开始。你可以普通聊天、询问销售指标口径，或直接查询 Odoo 实时销售数据。"
     );
   }
 
@@ -461,7 +711,7 @@
     if (message.includes("API key is not configured")) {
       return "当前模型还没有配置 API Key。请先到“数据与模型”页面填写并测试连接。";
     }
-    if (message.includes("Model request failed")) {
+    if (message.includes("Model request failed") || message.includes("Agent request failed")) {
       return "模型调用失败。请到“数据与模型”页面检查 API Key、模型名称和连接地址。";
     }
     if (message.includes("Failed to fetch")) {

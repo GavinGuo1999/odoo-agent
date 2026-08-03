@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 智能助手</title>
-  <link rel="stylesheet" href="styles.css?v=5">
-  <script src="app.js?v=5" defer></script>
+  <link rel="stylesheet" href="styles.css?v=6">
+  <script src="echarts.min.js?v=6.1.0" defer></script>
+  <script src="app.js?v=6" defer></script>
 </head>
 <body data-page="chat">
   <div class="app-shell">
@@ -19,7 +20,7 @@
       </nav>
       <div class="nav-label">系统</div>
       <nav class="nav-list" aria-label="系统导航"><a class="nav-link" data-nav="settings" href="settings.html"><span class="nav-icon">⚙</span><span>数据与模型</span></a></nav>
-      <div class="sidebar-footer"><div class="db-mini-status"><span class="status-dot"></span><span>Odoo 19 · 数据库待接入</span></div></div>
+      <div class="sidebar-footer"><div class="db-mini-status" data-db-mini-status><span class="status-dot"></span><span>Odoo 19 · 正在检查数据库</span></div></div>
     </aside>
 
     <main class="main-area">
@@ -39,7 +40,7 @@
             <div class="chat-thread" data-chat-thread aria-live="polite">
               <div class="message">
                 <div class="message-avatar">AI</div>
-                <div class="message-bubble"><p class="assistant-answer">你好，我既可以正常聊天、解释业务问题，也可以分析 Odoo 数据。当前 Odoo 数据库还没有接入，因此数据类问题不会编造结果；普通问题可以直接问我。</p></div>
+                <div class="message-bubble"><p class="assistant-answer">你好，我可以正常聊天、解释指标口径，也可以查询 Odoo 的实时销售数据。数据查询会经过只读安全校验，并展示结果表格、图表和 SQL。</p></div>
               </div>
             </div>
 
@@ -64,15 +65,16 @@
             <section class="card side-panel">
               <h3>当前查询上下文</h3>
               <div class="context-list">
-                <div class="context-item"><span class="context-key">数据库</span><span class="context-value">待接入</span></div>
+                <div class="context-item"><span class="context-key">数据库</span><span class="context-value" data-context-database>正在检查</span></div>
+                <div class="context-item"><span class="context-key">公司</span><span class="context-value" data-context-company>正在检查</span></div>
                 <div class="context-item"><span class="context-key">销售额口径</span><span class="context-value">已确认订单 · 未税</span></div>
                 <div class="context-item"><span class="context-key">默认时间</span><span class="context-value">本月</span></div>
                 <div class="context-item"><span class="context-key">时区</span><span class="context-value">Asia/Shanghai</span></div>
-                <div class="context-item"><span class="context-key">货币</span><span class="context-value">CNY</span></div>
+                <div class="context-item"><span class="context-key">货币</span><span class="context-value" data-context-currency>正在检查</span></div>
               </div>
             </section>
 
-            <div class="empty-note">普通问题直接由模型回答。数据问题在 Odoo 接入后会执行经过检查的只读查询，并显示口径与 SQL。</div>
+            <div class="empty-note">普通问题直接由模型回答；指标问题使用固定销售口径；数据问题执行经过检查的只读查询，并显示表格、ECharts 与 SQL。</div>
           </aside>
         </section>
       </div>

@@ -18,6 +18,7 @@ _UI_FILES = {
     "app.js",
     "chat.html",
     "dashboard.html",
+    "echarts.min.js",
     "index.html",
     "settings.html",
     "styles.css",

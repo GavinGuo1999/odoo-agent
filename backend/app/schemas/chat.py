@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,13 @@ class TokenUsage(BaseModel):
     total_tokens: int | None = None
 
 
+class ChartSpec(BaseModel):
+    type: Literal["none", "kpi", "line", "bar", "pie"] = "none"
+    title: str = ""
+    x_field: str | None = None
+    y_fields: list[str] = Field(default_factory=list)
+
+
 class ChatResponse(BaseModel):
     answer: str
     session_id: str
@@ -33,4 +40,13 @@ class ChatResponse(BaseModel):
     usage: TokenUsage
     trace_id: str | None = None
     data_accessed: bool = False
-    phase: str = "model-connectivity"
+    phase: Literal["general-chat", "semantic-layer", "text2sql"] = "general-chat"
+    intent: Literal["general", "semantic", "data"] = "general"
+    sql: str | None = None
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    chart: ChartSpec | None = None
+    metrics: list[str] = Field(default_factory=list)
+    query_ms: float | None = None
+    truncated: bool = False
+    warnings: list[str] = Field(default_factory=list)

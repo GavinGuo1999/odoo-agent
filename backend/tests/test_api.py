@@ -15,6 +15,7 @@ if str(BACKEND_DIR) not in sys.path:
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 
 from app.config import get_settings  # noqa: E402
+from app.database import DatabaseHealth  # noqa: E402
 from app.llm import LLMResult  # noqa: E402
 from app.main import create_app  # noqa: E402
 
@@ -26,6 +27,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             for key, value in os.environ.items()
             if key not in {"DEEPSEEK_API_KEY", "SILICONFLOW_API_KEY"}
         }
+        self.environment["LLM_PROVIDER"] = "deepseek"
         self.environment["LANGFUSE_ENABLED"] = "false"
         self.environment["LANGFUSE_TRACING_ENABLED"] = "false"
 
@@ -33,7 +35,25 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         get_settings.cache_clear()
 
     async def test_health_reports_unconfigured_model_provider(self) -> None:
-        with patch.dict(os.environ, self.environment, clear=True):
+        disconnected = DatabaseHealth(
+            connected=False,
+            user="codex_readonly",
+            database="odoo19_dev",
+            read_only=False,
+            company_id=1,
+            company_name=None,
+            currency=None,
+            order_count=0,
+            response_ms=1.0,
+            error_type="ConnectionError",
+        )
+        with (
+            patch.dict(os.environ, self.environment, clear=True),
+            patch(
+                "app.api.routes.health.OdooDatabase.healthcheck",
+                new=AsyncMock(return_value=disconnected),
+            ),
+        ):
             get_settings.cache_clear()
             transport = ASGITransport(app=create_app())
             async with AsyncClient(
@@ -85,7 +105,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.dict(os.environ, environment, clear=True),
             patch(
-                "app.api.routes.chat.LLMGateway.complete",
+                "app.bi.agent.LLMGateway.complete",
                 new=AsyncMock(return_value=result),
             ),
         ):
@@ -97,13 +117,14 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             ) as client:
                 response = await client.post(
                     "/api/chat",
-                    json={"question": "本月销售额是多少？"},
+                    json={"question": "你好，请简单介绍你自己。"},
                 )
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertFalse(payload["data_accessed"])
-        self.assertEqual(payload["phase"], "model-connectivity")
+        self.assertEqual(payload["phase"], "general-chat")
+        self.assertEqual(payload["intent"], "general")
         self.assertEqual(payload["usage"]["total_tokens"], 22)
         self.assertIsNone(payload["trace_id"])
 
@@ -114,7 +135,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.dict(os.environ, environment, clear=True),
             patch(
-                "app.api.routes.chat.LLMGateway.complete",
+                "app.bi.agent.LLMGateway.complete",
                 new=AsyncMock(side_effect=RuntimeError("sensitive provider detail")),
             ),
         ):
@@ -132,7 +153,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 502)
         self.assertEqual(
             response.json()["detail"],
-            "Model request failed: RuntimeError",
+            "Agent request failed: RuntimeError",
         )
         self.assertNotIn("sensitive provider detail", response.text)
 
@@ -153,7 +174,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.dict(os.environ, environment, clear=True),
-            patch("app.api.routes.chat.LLMGateway.complete", new=completion),
+            patch("app.bi.agent.LLMGateway.complete", new=completion),
         ):
             get_settings.cache_clear()
             transport = ASGITransport(app=create_app())
@@ -174,8 +195,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         messages = completion.await_args.kwargs["messages"]
-        self.assertIn("普通问题", messages[0]["content"])
-        self.assertIn("不要强行生成 BI", messages[0]["content"])
+        self.assertIn("普通对话", messages[0]["content"])
+        self.assertIn("不要生成 SQL", messages[0]["content"])
         self.assertEqual(messages[1], {"role": "user", "content": "你知道日期吗？"})
         self.assertEqual(messages[2], {"role": "assistant", "content": "知道。"})
         self.assertEqual(messages[3], {"role": "user", "content": "今天呢？"})
@@ -276,6 +297,16 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 "base_url": "https://cloud.langfuse.com",
                 "enabled": True,
             },
+            "database": {
+                "host": "127.0.0.1",
+                "port": 55432,
+                "database": "odoo19_dev",
+                "user": "codex_readonly",
+                "password": None,
+                "company_id": 1,
+                "statement_timeout_ms": 15000,
+                "max_rows": 500,
+            },
         }
 
         with (
@@ -296,6 +327,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(saved["LLM_PROVIDER"], "siliconflow")
         self.assertEqual(saved["SILICONFLOW_API_KEY"], "siliconflow-new-secret-marker")
+        self.assertEqual(saved["ODOO_DB_USER"], "codex_readonly")
+        self.assertEqual(saved["ODOO_COMPANY_ID"], "1")
         self.assertTrue(response.json()["providers"]["siliconflow"]["configured"])
         self.assertNotIn("new-secret-marker", response.text)
         self.assertNotIn("new-public-marker", response.text)
@@ -309,10 +342,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 base_url="http://test",
             ) as client:
                 settings_page = await client.get("/ui/settings.html")
+                chart_library = await client.get("/ui/echarts.min.js")
                 private_path = await client.get("/ui/.git/config")
 
         self.assertEqual(settings_page.status_code, 200)
         self.assertIn("Langfuse 可观测性", settings_page.text)
+        self.assertEqual(chart_library.status_code, 200)
+        self.assertGreater(len(chart_library.content), 1_000_000)
         self.assertEqual(private_path.status_code, 404)
 
     async def test_root_redirects_to_the_application(self) -> None:

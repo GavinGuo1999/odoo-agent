@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.observability import langfuse_is_configured
 from app.schemas.settings import (
     LangfuseSettingsView,
+    DatabaseSettingsView,
     ProviderModelsView,
     ProviderSettingsView,
     SettingsUpdateRequest,
@@ -58,6 +59,17 @@ def _settings_view(*, restart_required: bool = False) -> SettingsView:
                 "https://cloud.langfuse.com",
             ).rstrip("/"),
             enabled=langfuse_enabled,
+        ),
+        database=DatabaseSettingsView(
+            configured=settings.database().configured,
+            password_configured=bool(settings.odoo_db_password),
+            host=settings.odoo_db_host,
+            port=settings.odoo_db_port,
+            database=settings.odoo_db_name,
+            user=settings.odoo_db_user,
+            company_id=settings.odoo_company_id,
+            statement_timeout_ms=settings.odoo_statement_timeout_ms,
+            max_rows=settings.odoo_max_rows,
         ),
         restart_required=restart_required,
     )
@@ -126,6 +138,7 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
     siliconflow_key = _secret_value(payload.siliconflow.api_key)
     langfuse_public_key = _secret_value(payload.langfuse.public_key)
     langfuse_secret_key = _secret_value(payload.langfuse.secret_key)
+    database_password = _secret_value(payload.database.password)
 
     if bool(langfuse_public_key) != bool(langfuse_secret_key):
         raise HTTPException(
@@ -167,6 +180,13 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
         "LANGFUSE_BASE_URL": new_langfuse_base_url,
         "LANGFUSE_ENABLED": str(payload.langfuse.enabled).lower(),
         "LANGFUSE_TRACING_ENABLED": str(payload.langfuse.enabled).lower(),
+        "ODOO_DB_HOST": payload.database.host.strip(),
+        "ODOO_DB_PORT": str(payload.database.port),
+        "ODOO_DB_NAME": payload.database.database.strip(),
+        "ODOO_DB_USER": payload.database.user.strip(),
+        "ODOO_COMPANY_ID": str(payload.database.company_id),
+        "ODOO_STATEMENT_TIMEOUT_MS": str(payload.database.statement_timeout_ms),
+        "ODOO_MAX_ROWS": str(payload.database.max_rows),
     }
     if deepseek_key:
         updates["DEEPSEEK_API_KEY"] = deepseek_key
@@ -175,6 +195,8 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
     if langfuse_public_key and langfuse_secret_key:
         updates["LANGFUSE_PUBLIC_KEY"] = langfuse_public_key
         updates["LANGFUSE_SECRET_KEY"] = langfuse_secret_key
+    if database_password:
+        updates["ODOO_DB_PASSWORD"] = database_password
 
     try:
         set_user_environment(updates)

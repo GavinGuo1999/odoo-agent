@@ -40,6 +40,7 @@ class LLMGateway:
         messages: list[dict[str, str]],
         generation_name: str,
         metadata: dict[str, Any] | None = None,
+        json_mode: bool = False,
     ) -> LLMResult:
         if not self._config.configured:
             raise ProviderNotConfiguredError(
@@ -52,6 +53,10 @@ class LLMGateway:
             timeout=self._config.timeout_seconds,
         )
 
+        request_options: dict[str, Any] = {}
+        if json_mode:
+            request_options["response_format"] = {"type": "json_object"}
+
         try:
             completion = await client.chat.completions.create(
                 model=self._config.model,
@@ -63,6 +68,7 @@ class LLMGateway:
                     "provider": self._config.name,
                     **(metadata or {}),
                 },
+                **request_options,
             )
         finally:
             await client.close()
@@ -80,4 +86,3 @@ class LLMGateway:
             output_tokens=usage.completion_tokens if usage else None,
             total_tokens=usage.total_tokens if usage else None,
         )
-
