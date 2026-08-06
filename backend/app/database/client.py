@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -155,14 +156,22 @@ class OdooDatabase:
             response_ms=round((perf_counter() - started) * 1000, 2),
         )
 
-    async def execute_readonly(self, sql: str) -> QueryResult:
-        return await asyncio.to_thread(self._execute_readonly_sync, sql)
+    async def execute_readonly(
+        self,
+        sql: str,
+        params: Sequence[Any] | None = None,
+    ) -> QueryResult:
+        return await asyncio.to_thread(self._execute_readonly_sync, sql, params)
 
-    def _execute_readonly_sync(self, sql: str) -> QueryResult:
+    def _execute_readonly_sync(
+        self,
+        sql: str,
+        params: Sequence[Any] | None = None,
+    ) -> QueryResult:
         started = perf_counter()
         try:
             with self._connect() as connection:
-                cursor = connection.execute(sql)
+                cursor = connection.execute(sql, params)
                 raw_rows = cursor.fetchmany(self._config.max_rows + 1)
                 columns = [column.name for column in (cursor.description or [])]
         except Exception as exc:

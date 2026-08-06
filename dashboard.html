@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 销售看板</title>
-  <link rel="stylesheet" href="styles.css?v=6">
-  <script src="app.js?v=6" defer></script>
+  <link rel="stylesheet" href="styles.css?v=8">
+  <script src="echarts.min.js?v=6.1.0" defer></script>
+  <script src="app.js?v=8" defer></script>
 </head>
 <body data-page="dashboard">
   <div class="app-shell">
@@ -25,7 +26,7 @@
     <main class="main-area">
       <header class="topbar">
         <div class="topbar-left"><button class="btn btn-icon mobile-menu" type="button" data-menu-toggle aria-label="打开导航">☰</button><div><h1 class="page-title">销售看板</h1><div class="page-subtitle">销售订单实时经营概览</div></div></div>
-        <div class="topbar-right"><span class="top-status"><span class="status-dot"></span>刚刚更新</span><span class="avatar">我</span></div>
+        <div class="topbar-right"><span class="top-status"><span class="status-dot"></span><span data-dashboard-updated>正在读取</span></span><span class="avatar">我</span></div>
       </header>
 
       <div class="content">
@@ -36,77 +37,45 @@
               <button class="segment-btn active" type="button" data-period="month">本月</button>
               <button class="segment-btn" type="button" data-period="quarter">本季度</button>
             </div>
-            <select class="select" aria-label="销售员" style="width: 142px"><option>全部销售员</option><option>管理员</option></select>
+            <select class="select" data-salesperson-filter aria-label="销售员" style="width: 160px"><option value="">全部销售员</option></select>
           </div>
-          <div class="filter-group"><span class="page-subtitle">口径：已确认订单 · 未税金额</span><button class="btn" type="button" data-toast-message="看板数据已刷新（静态演示）">↻ 刷新</button></div>
+          <div class="filter-group"><span class="page-subtitle" data-dashboard-range>口径：已确认订单 · 未税金额</span><button class="btn" type="button" data-dashboard-refresh>↻ 刷新</button></div>
         </section>
 
         <section class="kpi-grid" aria-label="销售关键指标">
-          <article class="card kpi-card"><div class="kpi-top"><span class="kpi-label">销售额</span><span class="kpi-icon">¥</span></div><div class="kpi-value" data-kpi-value>¥ 86,420</div><div class="kpi-note" data-kpi-note>较上月 +12.8%</div></article>
-          <article class="card kpi-card"><div class="kpi-top"><span class="kpi-label">订单数</span><span class="kpi-icon orange">▤</span></div><div class="kpi-value" data-kpi-value>112</div><div class="kpi-note" data-kpi-note>较上月 +9</div></article>
-          <article class="card kpi-card"><div class="kpi-top"><span class="kpi-label">平均订单额</span><span class="kpi-icon green">◎</span></div><div class="kpi-value" data-kpi-value>¥ 772</div><div class="kpi-note" data-kpi-note>较上月 +4.1%</div></article>
-          <article class="card kpi-card"><div class="kpi-top"><span class="kpi-label">活跃客户</span><span class="kpi-icon blue">♙</span></div><div class="kpi-value" data-kpi-value>28</div><div class="kpi-note" data-kpi-note>6 张待交付</div></article>
+          <article class="card kpi-card"><div class="kpi-top"><span class="kpi-label">销售额</span><span class="kpi-icon" data-currency-icon>¤</span></div><div class="kpi-value" data-dashboard-kpi="sales_amount">—</div><div class="kpi-note" data-dashboard-note="sales_amount">正在读取…</div></article>
+          <article class="card kpi-card"><div class="kpi-top"><span class="kpi-label">订单数</span><span class="kpi-icon orange">▤</span></div><div class="kpi-value" data-dashboard-kpi="order_count">—</div><div class="kpi-note" data-dashboard-note="order_count">正在读取…</div></article>
+          <article class="card kpi-card"><div class="kpi-top"><span class="kpi-label">平均订单额</span><span class="kpi-icon green">◎</span></div><div class="kpi-value" data-dashboard-kpi="average_order_value">—</div><div class="kpi-note" data-dashboard-note="average_order_value">正在读取…</div></article>
+          <article class="card kpi-card"><div class="kpi-top"><span class="kpi-label">活跃客户</span><span class="kpi-icon blue">♙</span></div><div class="kpi-value" data-dashboard-kpi="active_customers">—</div><div class="kpi-note" data-dashboard-note="active_customers">正在读取…</div></article>
         </section>
 
         <section class="dashboard-grid">
           <article class="card panel">
-            <div class="section-heading"><div><h2>销售趋势</h2><p>按天累计销售额</p></div><span class="badge">环比 +12.8%</span></div>
-            <div class="chart-wrap">
-              <svg class="chart-svg" viewBox="0 0 570 245" role="img" aria-label="本月销售额趋势图">
-                <defs><linearGradient id="areaGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#714b67" stop-opacity=".23"/><stop offset="1" stop-color="#714b67" stop-opacity="0"/></linearGradient></defs>
-                <line class="chart-grid-line" x1="35" y1="35" x2="530" y2="35"/><line class="chart-grid-line" x1="35" y1="84" x2="530" y2="84"/><line class="chart-grid-line" x1="35" y1="133" x2="530" y2="133"/><line class="chart-grid-line" x1="35" y1="182" x2="530" y2="182"/>
-                <path d="M35 168 C78 154,103 160,140 126 S203 102,245 115 S311 73,354 87 S424 45,475 59 S505 43,525 32 L525 202 L35 202 Z" class="chart-area"/>
-                <path data-sales-path d="M35 168 C78 154,103 160,140 126 S203 102,245 115 S311 73,354 87 S424 45,475 59 S505 43,525 32" class="chart-line" style="transition: d .25s ease"/>
-                <circle class="chart-point" cx="525" cy="32" r="5"/><text x="472" y="20" fill="#5f3e57" font-size="12" font-weight="700">¥86,420</text>
-                <text data-axis-label class="chart-axis-label" x="30" y="226">第1周</text><text data-axis-label class="chart-axis-label" x="126" y="226">第2周</text><text data-axis-label class="chart-axis-label" x="225" y="226">第3周</text><text data-axis-label class="chart-axis-label" x="324" y="226">第4周</text><text data-axis-label class="chart-axis-label" x="430" y="226">本周</text><text data-axis-label class="chart-axis-label" x="500" y="226"></text><text data-axis-label class="chart-axis-label" x="525" y="226"></text>
-              </svg>
-            </div>
+            <div class="section-heading"><div><h2>销售趋势</h2><p data-trend-subtitle>已确认订单 · 未税金额</p></div><span class="badge" data-trend-change>正在读取</span></div>
+            <div class="chart-wrap"><div class="dashboard-echart" data-dashboard-trend role="img" aria-label="真实销售额趋势"></div></div>
           </article>
 
           <article class="card panel">
-            <div class="section-heading"><div><h2>订单状态</h2><p>本月订单金额分布</p></div></div>
-            <svg class="chart-svg" viewBox="0 0 320 245" role="img" aria-label="订单状态金额分布环形图">
-              <circle cx="128" cy="112" r="70" fill="none" stroke="#eee9ef" stroke-width="23"/>
-              <circle cx="128" cy="112" r="70" fill="none" stroke="#714b67" stroke-width="23" stroke-dasharray="285 440" stroke-linecap="round" transform="rotate(-90 128 112)"/>
-              <circle cx="128" cy="112" r="70" fill="none" stroke="#ef7c55" stroke-width="23" stroke-dasharray="90 440" stroke-dashoffset="-298" stroke-linecap="round" transform="rotate(-90 128 112)"/>
-              <text x="128" y="107" text-anchor="middle" fill="#28222d" font-size="12">总金额</text><text x="128" y="129" text-anchor="middle" fill="#28222d" font-size="19" font-weight="700">¥86.4k</text>
-              <rect x="225" y="72" width="10" height="10" rx="3" fill="#714b67"/><text class="chart-axis-label" x="242" y="81">销售订单 72%</text>
-              <rect x="225" y="102" width="10" height="10" rx="3" fill="#ef7c55"/><text class="chart-axis-label" x="242" y="111">报价已发送 21%</text>
-              <rect x="225" y="132" width="10" height="10" rx="3" fill="#d9d2db"/><text class="chart-axis-label" x="242" y="141">草稿 7%</text>
-            </svg>
+            <div class="section-heading"><div><h2>订单状态</h2><p data-dashboard-status-subtitle>本月订单金额分布</p></div></div>
+            <div class="dashboard-echart" data-dashboard-status role="img" aria-label="真实订单状态金额分布"></div>
           </article>
         </section>
 
         <section class="dashboard-grid" style="margin-top:18px">
           <article class="card panel">
-            <div class="section-heading"><div><h2>客户销售排行</h2><p>按未税销售额排序</p></div><a href="chat.html?q=分析一下本月销售额最高的客户" class="btn btn-soft">让 AI 分析</a></div>
-            <svg class="chart-svg" viewBox="0 0 600 300" role="img" aria-label="前五名客户销售额横向柱状图">
-              <text class="chart-axis-label" x="8" y="45">上海明远科技</text><rect class="chart-bar" x="125" y="27" width="405" height="24" rx="7"/><text x="540" y="44" fill="#28222d" font-size="11" font-weight="700">¥22.8k</text>
-              <text class="chart-axis-label" x="8" y="96">苏州启程制造</text><rect class="chart-bar" x="125" y="78" width="322" height="24" rx="7"/><text x="457" y="95" fill="#28222d" font-size="11" font-weight="700">¥18.1k</text>
-              <text class="chart-axis-label" x="8" y="147">杭州云栖贸易</text><rect class="chart-bar-soft" x="125" y="129" width="254" height="24" rx="7"/><text x="389" y="146" fill="#28222d" font-size="11" font-weight="700">¥14.3k</text>
-              <text class="chart-axis-label" x="8" y="198">南京新锐信息</text><rect class="chart-bar-soft" x="125" y="180" width="194" height="24" rx="7"/><text x="329" y="197" fill="#28222d" font-size="11" font-weight="700">¥10.9k</text>
-              <text class="chart-axis-label" x="8" y="249">宁波优联商贸</text><rect class="chart-bar-soft" x="125" y="231" width="144" height="24" rx="7"/><text x="279" y="248" fill="#28222d" font-size="11" font-weight="700">¥8.1k</text>
-            </svg>
+            <div class="section-heading"><div><h2>客户销售排行</h2><p>按未税销售额排序</p></div><a href="chat.html?q=分析一下本月销售额最高的客户" class="btn btn-soft" data-dashboard-customer-ai>让 AI 分析</a></div>
+            <div class="dashboard-echart customer-ranking-chart" data-dashboard-customers role="img" aria-label="真实客户销售排行"></div>
           </article>
 
           <article class="card panel">
             <div class="section-heading"><div><h2>交付与开票</h2><p>需要关注的订单</p></div></div>
-            <div class="quick-list">
-              <a class="quick-item" href="chat.html?q=哪些订单已经确认但还没有完全交付？"><span class="quick-item-icon">↗</span><span class="quick-item-copy"><span class="quick-item-title">待完成交付</span><span class="quick-item-desc">6 张订单 · ¥12,650</span></span><span class="badge warning">6</span></a>
-              <a class="quick-item" href="chat.html?q=哪些订单已交付但还没有完全开票？"><span class="quick-item-icon">▤</span><span class="quick-item-copy"><span class="quick-item-title">已交付待开票</span><span class="quick-item-desc">3 张订单 · ¥7,820</span></span><span class="badge warning">3</span></a>
-              <a class="quick-item" href="chat.html?q=哪些报价单超过七天没有确认？"><span class="quick-item-icon">⌛</span><span class="quick-item-copy"><span class="quick-item-title">长期未确认报价</span><span class="quick-item-desc">4 张报价 · ¥9,400</span></span><span class="badge neutral">4</span></a>
-            </div>
+            <div class="quick-list" data-dashboard-attention><div class="table-empty">正在读取待办订单…</div></div>
           </article>
         </section>
 
         <section class="card table-card">
-          <div class="table-header"><div><h3>产品销售排行</h3><div class="page-subtitle">按销售数量与金额综合查看</div></div><button class="btn" type="button" data-toast-message="已导出表格（静态演示）">导出</button></div>
-          <div class="data-table-wrap"><table class="data-table"><thead><tr><th>排名</th><th>产品</th><th class="number">销售数量</th><th class="number">销售额</th><th class="number">占比</th><th>趋势</th></tr></thead><tbody>
-            <tr><td>1</td><td><strong>定制办公桌</strong></td><td class="number">48</td><td class="number">¥24,680</td><td class="number">28.6%</td><td><span class="delta-up">↑ 18%</span></td></tr>
-            <tr><td>2</td><td><strong>人体工学椅</strong></td><td class="number">65</td><td class="number">¥19,420</td><td class="number">22.5%</td><td><span class="delta-up">↑ 7%</span></td></tr>
-            <tr><td>3</td><td><strong>会议桌</strong></td><td class="number">16</td><td class="number">¥15,300</td><td class="number">17.7%</td><td><span class="delta-down">↓ 3%</span></td></tr>
-            <tr><td>4</td><td><strong>储物柜</strong></td><td class="number">38</td><td class="number">¥11,760</td><td class="number">13.6%</td><td><span class="delta-up">↑ 12%</span></td></tr>
-          </tbody></table></div>
+          <div class="table-header"><div><h3>产品销售排行</h3><div class="page-subtitle">按已确认订单明细的未税金额排序</div></div><button class="btn" type="button" data-dashboard-export>导出 CSV</button></div>
+          <div class="data-table-wrap"><table class="data-table"><thead><tr><th>排名</th><th>产品</th><th class="number">销售数量</th><th class="number">销售额</th><th class="number">占比</th></tr></thead><tbody data-product-ranking><tr><td colspan="5" class="table-empty">正在读取产品销售数据…</td></tr></tbody></table></div>
         </section>
       </div>
     </main>

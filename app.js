@@ -48,47 +48,359 @@
     button.addEventListener("click", () => showToast(button.dataset.toastMessage));
   });
 
-  const dashboardPeriods = {
-    week: {
-      values: ["¥ 18,420", "23", "¥ 801", "7"],
-      deltas: ["较上周 +6.4%", "较上周 +2", "较上周 -1.2%", "2 张待交付"],
-      path: "M35 178 C72 157,94 168,126 138 S187 111,221 127 S279 76,319 92 S377 62,420 48 S476 73,525 36",
-      labels: ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
-    },
-    month: {
-      values: ["¥ 86,420", "112", "¥ 772", "28"],
-      deltas: ["较上月 +12.8%", "较上月 +9", "较上月 +4.1%", "6 张待交付"],
-      path: "M35 168 C78 154,103 160,140 126 S203 102,245 115 S311 73,354 87 S424 45,475 59 S505 43,525 32",
-      labels: ["第1周", "第2周", "第3周", "第4周", "本周", "", ""]
-    },
-    quarter: {
-      values: ["¥ 238,760", "307", "¥ 778", "73"],
-      deltas: ["同比 +18.6%", "同比 +31", "同比 +2.4%", "12 张待交付"],
-      path: "M35 184 C76 176,102 139,141 145 S205 117,246 124 S307 94,351 80 S417 91,469 50 S504 57,525 34",
-      labels: ["4月", "5月", "6月", "", "", "", ""]
+  function formatNumber(value, maximumFractionDigits = 2) {
+    return new Intl.NumberFormat("zh-CN", { maximumFractionDigits }).format(Number(value || 0));
+  }
+
+  function formatMoney(value, currency) {
+    const amount = formatNumber(value, 2);
+    const symbol = currency?.symbol || currency?.code || "";
+    return currency?.position === "after" ? `${amount} ${symbol}` : `${symbol} ${amount}`.trim();
+  }
+
+  function setComparisonNote(element, comparison, label) {
+    if (!element) return;
+    element.innerHTML = "";
+    const change = comparison?.change_pct;
+    if (change === null || change === undefined) {
+      element.textContent = `${label}为 0，暂无百分比`;
+      return;
     }
-  };
+    const marker = document.createElement("span");
+    marker.className = change > 0 ? "delta-up" : (change < 0 ? "delta-down" : "");
+    marker.textContent = change > 0 ? `↑ ${formatNumber(change)}%` : (change < 0 ? `↓ ${formatNumber(Math.abs(change))}%` : "持平");
+    element.append(marker, ` ${label}`);
+  }
+
+  function emptyChartOption(message) {
+    return {
+      animation: false,
+      graphic: [{
+        type: "text",
+        left: "center",
+        top: "middle",
+        style: { text: message, fill: "#837985", fontSize: 13 }
+      }]
+    };
+  }
+
+  function renderDashboardChart(element, option) {
+    if (!element) return;
+    if (!window.echarts) {
+      element.textContent = "图表组件没有加载，数据表仍可正常使用。";
+      element.classList.add("chart-fallback");
+      return;
+    }
+    element.classList.remove("chart-fallback");
+    element.textContent = "";
+    const existingChart = window.echarts.getInstanceByDom(element);
+    if (existingChart) existingChart.dispose();
+    const chart = window.echarts.init(element, null, { renderer: "svg" });
+    chart.setOption(option);
+    if (!element.dataset.resizeBound) {
+      new ResizeObserver(() => window.echarts.getInstanceByDom(element)?.resize()).observe(element);
+      element.dataset.resizeBound = "true";
+    }
+  }
+
+  function salesLineOption(points, currency) {
+    if (!points.some((point) => Number(point.sales_amount) !== 0)) {
+      return emptyChartOption("所选期间暂无已确认销售订单");
+    }
+    return {
+      animation: false,
+      tooltip: {
+        trigger: "axis",
+        valueFormatter: (value) => formatMoney(value, currency)
+      },
+      grid: { left: 22, right: 24, top: 28, bottom: 34, containLabel: true },
+      xAxis: { type: "category", boundaryGap: false, data: points.map((point) => point.label), axisLabel: { color: "#746b77" } },
+      yAxis: { type: "value", axisLabel: { color: "#746b77" }, splitLine: { lineStyle: { color: "#eee9ef" } } },
+      series: [{
+        name: "销售额",
+        type: "line",
+        smooth: true,
+        symbolSize: 7,
+        data: points.map((point) => point.sales_amount),
+        lineStyle: { color: "#714b67", width: 3 },
+        itemStyle: { color: "#714b67" },
+        areaStyle: {
+          color: {
+            type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: "rgba(113,75,103,.28)" }, { offset: 1, color: "rgba(113,75,103,0)" }]
+          }
+        }
+      }]
+    };
+  }
+
+  function statusPieOption(items, currency) {
+    if (!items.length) return emptyChartOption("所选期间暂无销售订单");
+    return {
+      animation: false,
+      tooltip: { trigger: "item", formatter: (params) => `${params.name}<br>${formatMoney(params.value, currency)} · ${params.percent}%` },
+      legend: { bottom: 2, type: "scroll" },
+      color: ["#714b67", "#ef7c55", "#017e84", "#8f86bd", "#b7adb8"],
+      series: [{
+        type: "pie",
+        radius: ["42%", "68%"],
+        center: ["50%", "44%"],
+        label: { formatter: "{b}\n{d}%" },
+        data: items.map((item) => ({ name: `${item.label}（${item.order_count}）`, value: item.sales_amount }))
+      }]
+    };
+  }
+
+  function customerBarOption(items, currency) {
+    if (!items.length) return emptyChartOption("所选期间暂无客户销售数据");
+    const selected = items.slice(0, 7);
+    return {
+      animation: false,
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, valueFormatter: (value) => formatMoney(value, currency) },
+      grid: { left: 16, right: 30, top: 18, bottom: 18, containLabel: true },
+      xAxis: { type: "value", axisLabel: { color: "#746b77" }, splitLine: { lineStyle: { color: "#eee9ef" } } },
+      yAxis: { type: "category", inverse: true, data: selected.map((item) => item.customer), axisLabel: { color: "#4f4651", width: 120, overflow: "truncate" } },
+      series: [{ type: "bar", data: selected.map((item) => item.sales_amount), barMaxWidth: 24, itemStyle: { color: "#714b67", borderRadius: [0, 7, 7, 0] } }]
+    };
+  }
+
+  function stateBadgeClass(state) {
+    if (state === "draft" || state === "cancel") return "badge neutral";
+    if (state === "sent") return "badge warning";
+    return "badge";
+  }
+
+  async function loadHomeData() {
+    const trendElement = document.querySelector("[data-home-trend]");
+    if (!trendElement) return;
+    const refreshButton = document.querySelector("[data-home-refresh]");
+    if (refreshButton) refreshButton.disabled = true;
+    try {
+      const [data, settings] = await Promise.all([
+        apiRequest("/sales/dashboard?period=month"),
+        apiRequest("/settings")
+      ]);
+      const dateElement = document.querySelector("[data-current-date]");
+      if (dateElement) {
+        dateElement.textContent = `${new Intl.DateTimeFormat("zh-CN", { dateStyle: "long" }).format(new Date(data.generated_at))} · 销售数据概览`;
+      }
+      const selectedProvider = settings.providers[settings.selected_provider];
+      const modelElement = document.querySelector("[data-home-model]");
+      if (modelElement) modelElement.textContent = `${settings.selected_provider === "deepseek" ? "DeepSeek" : "硅基流动"} · ${selectedProvider.model}`;
+      const sourceElement = document.querySelector("[data-home-source]");
+      if (sourceElement) sourceElement.textContent = `${settings.database.database} · ${data.company_name}`;
+      document.querySelectorAll("[data-currency-icon]").forEach((item) => { item.textContent = data.currency.symbol || data.currency.code; });
+
+      const kpis = data.kpis;
+      document.querySelector('[data-home-kpi="sales_amount"]').textContent = formatMoney(kpis.sales_amount.current, data.currency);
+      document.querySelector('[data-home-kpi="order_count"]').textContent = formatNumber(kpis.order_count.current, 0);
+      document.querySelector('[data-home-kpi="average_order_value"]').textContent = formatMoney(kpis.average_order_value.current, data.currency);
+      setComparisonNote(document.querySelector('[data-home-note="sales_amount"]'), kpis.sales_amount, data.date_range.comparison_label);
+      setComparisonNote(document.querySelector('[data-home-note="order_count"]'), kpis.order_count, data.date_range.comparison_label);
+      setComparisonNote(document.querySelector('[data-home-note="average_order_value"]'), kpis.average_order_value, data.date_range.comparison_label);
+      const pending = data.attention.find((item) => item.key === "pending_delivery");
+      document.querySelector('[data-home-kpi="pending_delivery"]').textContent = formatNumber(pending?.order_count || 0, 0);
+      document.querySelector('[data-home-note="pending_delivery"]').textContent = `${formatMoney(pending?.sales_amount || 0, data.currency)} 尚待交付`;
+      renderDashboardChart(trendElement, salesLineOption(data.monthly_trend, data.currency));
+
+      const tbody = document.querySelector("[data-recent-orders]");
+      tbody.innerHTML = "";
+      if (!data.recent_orders.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="table-empty">Odoo 中暂无销售订单</td></tr>';
+      } else {
+        data.recent_orders.forEach((order) => {
+          const row = document.createElement("tr");
+          const values = [order.order_name, order.customer, order.salesperson, String(order.order_date).slice(0, 10)];
+          values.forEach((value, index) => {
+            const cell = document.createElement("td");
+            if (index === 0) {
+              const strong = document.createElement("strong");
+              strong.textContent = value;
+              cell.appendChild(strong);
+            } else cell.textContent = value;
+            row.appendChild(cell);
+          });
+          const statusCell = document.createElement("td");
+          const badge = document.createElement("span");
+          badge.className = stateBadgeClass(order.state);
+          badge.textContent = order.state_label;
+          statusCell.appendChild(badge);
+          const amountCell = document.createElement("td");
+          amountCell.className = "number";
+          amountCell.textContent = formatMoney(order.amount_untaxed, data.currency);
+          row.append(statusCell, amountCell);
+          tbody.appendChild(row);
+        });
+      }
+      const updated = document.querySelector("[data-home-updated]");
+      if (updated) updated.textContent = `来自 Odoo · ${new Date(data.generated_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} 更新`;
+    } catch (error) {
+      trendElement.textContent = `真实数据读取失败：${error.message}`;
+      const tbody = document.querySelector("[data-recent-orders]");
+      if (tbody) {
+        const row = document.createElement("tr");
+        const cell = document.createElement("td");
+        cell.colSpan = 6;
+        cell.className = "table-empty";
+        cell.textContent = `真实数据读取失败：${error.message}`;
+        row.appendChild(cell);
+        tbody.replaceChildren(row);
+      }
+    } finally {
+      if (refreshButton) refreshButton.disabled = false;
+    }
+  }
+
+  let dashboardDataCache = null;
+  let dashboardRequestNumber = 0;
+
+  async function loadDashboardData() {
+    const trendElement = document.querySelector("[data-dashboard-trend]");
+    if (!trendElement) return;
+    const requestNumber = ++dashboardRequestNumber;
+    const activePeriod = document.querySelector("[data-period].active")?.dataset.period || "month";
+    const salespersonFilter = document.querySelector("[data-salesperson-filter]");
+    const salespersonId = salespersonFilter?.value || "";
+    const refreshButton = document.querySelector("[data-dashboard-refresh]");
+    if (refreshButton) refreshButton.disabled = true;
+    try {
+      const suffix = salespersonId ? `&salesperson_id=${encodeURIComponent(salespersonId)}` : "";
+      const data = await apiRequest(`/sales/dashboard?period=${activePeriod}${suffix}`);
+      if (requestNumber !== dashboardRequestNumber) return;
+      dashboardDataCache = data;
+      document.querySelectorAll("[data-currency-icon]").forEach((item) => { item.textContent = data.currency.symbol || data.currency.code; });
+      const rangeElement = document.querySelector("[data-dashboard-range]");
+      if (rangeElement) rangeElement.textContent = `${data.date_range.start} 至 ${data.date_range.end} · 已确认订单 · 未税金额`;
+      const periodLabel = data.period === "week" ? "本周" : (data.period === "quarter" ? "本季度" : "本月");
+      const statusSubtitle = document.querySelector("[data-dashboard-status-subtitle]");
+      if (statusSubtitle) statusSubtitle.textContent = `${periodLabel}订单金额分布`;
+      const customerAnalysisLink = document.querySelector("[data-dashboard-customer-ai]");
+      if (customerAnalysisLink) customerAnalysisLink.href = `chat.html?q=${encodeURIComponent(`分析一下${periodLabel}销售额最高的客户`)}`;
+      const updatedElement = document.querySelector("[data-dashboard-updated]");
+      if (updatedElement) updatedElement.textContent = `${new Date(data.generated_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} 更新`;
+
+      if (salespersonFilter) {
+        const selected = salespersonFilter.value;
+        salespersonFilter.innerHTML = '<option value="">全部销售员</option>';
+        data.salespeople.forEach((person) => {
+          const option = document.createElement("option");
+          option.value = String(person.user_id);
+          option.textContent = person.name;
+          salespersonFilter.appendChild(option);
+        });
+        salespersonFilter.value = selected;
+      }
+
+      const keys = ["sales_amount", "order_count", "average_order_value", "active_customers"];
+      keys.forEach((key) => {
+        const valueElement = document.querySelector(`[data-dashboard-kpi="${key}"]`);
+        const value = data.kpis[key].current;
+        valueElement.textContent = key === "sales_amount" || key === "average_order_value"
+          ? formatMoney(value, data.currency)
+          : formatNumber(value, 0);
+        setComparisonNote(document.querySelector(`[data-dashboard-note="${key}"]`), data.kpis[key], data.date_range.comparison_label);
+      });
+      const trendChange = document.querySelector("[data-trend-change]");
+      if (trendChange) {
+        const change = data.kpis.sales_amount.change_pct;
+        trendChange.textContent = change === null ? "上期为 0" : `${data.date_range.comparison_label} ${change > 0 ? "+" : ""}${formatNumber(change)}%`;
+        trendChange.classList.toggle("warning", Number(change) < 0);
+      }
+      const trendSubtitle = document.querySelector("[data-trend-subtitle]");
+      if (trendSubtitle) trendSubtitle.textContent = data.period === "quarter" ? "按月销售额" : "按日销售额";
+      renderDashboardChart(trendElement, salesLineOption(data.trend, data.currency));
+      renderDashboardChart(document.querySelector("[data-dashboard-status]"), statusPieOption(data.order_statuses, data.currency));
+      renderDashboardChart(document.querySelector("[data-dashboard-customers]"), customerBarOption(data.customers, data.currency));
+
+      const attention = document.querySelector("[data-dashboard-attention]");
+      attention.innerHTML = "";
+      data.attention.forEach((item, index) => {
+        const link = document.createElement("a");
+        link.className = "quick-item";
+        link.href = `chat.html?q=${encodeURIComponent(item.question)}`;
+        const icon = document.createElement("span");
+        icon.className = "quick-item-icon";
+        icon.textContent = ["↗", "▤", "⌛"][index] || "!";
+        const copy = document.createElement("span");
+        copy.className = "quick-item-copy";
+        const title = document.createElement("span");
+        title.className = "quick-item-title";
+        title.textContent = item.label;
+        const description = document.createElement("span");
+        description.className = "quick-item-desc";
+        description.textContent = `${item.order_count} 张订单 · ${formatMoney(item.sales_amount, data.currency)}`;
+        copy.append(title, description);
+        const badge = document.createElement("span");
+        badge.className = item.order_count ? "badge warning" : "badge neutral";
+        badge.textContent = String(item.order_count);
+        link.append(icon, copy, badge);
+        attention.appendChild(link);
+      });
+
+      const products = document.querySelector("[data-product-ranking]");
+      products.innerHTML = "";
+      if (!data.products.length) {
+        products.innerHTML = '<tr><td colspan="5" class="table-empty">所选期间暂无产品销售数据</td></tr>';
+      } else {
+        data.products.forEach((product, index) => {
+          const row = document.createElement("tr");
+          [index + 1, product.product, formatNumber(product.quantity), formatMoney(product.sales_amount, data.currency), `${formatNumber(product.percentage)}%`].forEach((value, cellIndex) => {
+            const cell = document.createElement("td");
+            if (cellIndex >= 2) cell.className = "number";
+            if (cellIndex === 1) {
+              const strong = document.createElement("strong");
+              strong.textContent = String(value);
+              cell.appendChild(strong);
+            } else cell.textContent = String(value);
+            row.appendChild(cell);
+          });
+          products.appendChild(row);
+        });
+      }
+    } catch (error) {
+      trendElement.textContent = `真实数据读取失败：${error.message}`;
+      showToast("销售看板读取失败");
+    } finally {
+      if (requestNumber === dashboardRequestNumber && refreshButton) refreshButton.disabled = false;
+    }
+  }
 
   document.querySelectorAll("[data-period]").forEach((button) => {
     button.addEventListener("click", () => {
-      const period = dashboardPeriods[button.dataset.period];
-      if (!period) return;
       document.querySelectorAll("[data-period]").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
-      document.querySelectorAll("[data-kpi-value]").forEach((item, index) => {
-        item.textContent = period.values[index];
-      });
-      document.querySelectorAll("[data-kpi-note]").forEach((item, index) => {
-        item.textContent = period.deltas[index];
-      });
-      const path = document.querySelector("[data-sales-path]");
-      if (path) path.setAttribute("d", period.path);
-      document.querySelectorAll("[data-axis-label]").forEach((item, index) => {
-        item.textContent = period.labels[index] || "";
-      });
-      showToast("已切换数据周期（演示数据）");
+      loadDashboardData();
     });
   });
+
+  const salespersonFilter = document.querySelector("[data-salesperson-filter]");
+  if (salespersonFilter) salespersonFilter.addEventListener("change", loadDashboardData);
+  const dashboardRefreshButton = document.querySelector("[data-dashboard-refresh]");
+  if (dashboardRefreshButton) dashboardRefreshButton.addEventListener("click", loadDashboardData);
+  const homeRefreshButton = document.querySelector("[data-home-refresh]");
+  if (homeRefreshButton) homeRefreshButton.addEventListener("click", loadHomeData);
+
+  const dashboardExportButton = document.querySelector("[data-dashboard-export]");
+  if (dashboardExportButton) {
+    dashboardExportButton.addEventListener("click", () => {
+      if (!dashboardDataCache) return;
+      const rows = [["排名", "产品", "销售数量", "销售额", "占比"]];
+      dashboardDataCache.products.forEach((product, index) => rows.push([
+        index + 1, product.product, product.quantity, product.sales_amount, product.percentage
+      ]));
+      const csv = `\uFEFF${rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(",")).join("\r\n")}`;
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `odoo-product-sales-${dashboardDataCache.period}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+      showToast("已导出当前真实产品销售数据");
+    });
+  }
+
+  loadHomeData();
+  loadDashboardData();
 
   const providerCards = document.querySelectorAll("[data-provider]");
   const providerUrlInput = document.querySelector("[data-provider-url]");
@@ -120,6 +432,11 @@
   const databaseTimeoutInput = document.querySelector("[data-db-timeout]");
   const databaseResponse = document.querySelector("[data-db-response]");
   const testDatabaseButton = document.querySelector("[data-test-database]");
+  const metricsTable = document.querySelector("[data-metrics-table]");
+  const semanticVersion = document.querySelector("[data-semantic-version]");
+  const schemaList = document.querySelector("[data-schema-list]");
+  const queryMaxRows = document.querySelector("[data-query-max-rows]");
+  const queryTimeout = document.querySelector("[data-query-timeout]");
 
   const providerDrafts = {
     deepseek: {
@@ -271,6 +588,8 @@
     if (databaseCompanyInput) databaseCompanyInput.value = config.company_id;
     if (databaseMaxRowsInput) databaseMaxRowsInput.value = config.max_rows;
     if (databaseTimeoutInput) databaseTimeoutInput.value = config.statement_timeout_ms;
+    if (queryMaxRows) queryMaxRows.textContent = formatNumber(config.max_rows, 0);
+    if (queryTimeout) queryTimeout.textContent = `${formatNumber(config.statement_timeout_ms / 1000)} 秒`;
     if (databasePasswordInput) {
       databasePasswordInput.value = "";
       databasePasswordInput.placeholder = config.password_configured
@@ -278,6 +597,72 @@
         : "本机免密时可留空";
     }
     setStatusBadge(databaseStatus, config.configured ? "已配置" : "未配置", config.configured ? "success" : "warning");
+  }
+
+  async function loadSemanticConfiguration() {
+    if (!metricsTable && !schemaList) return;
+    try {
+      const [metrics, schema] = await Promise.all([
+        apiRequest("/sales/metrics"),
+        apiRequest("/database/schema")
+      ]);
+      if (semanticVersion) semanticVersion.textContent = metrics.version;
+      if (metricsTable) {
+        metricsTable.innerHTML = "";
+        metrics.metrics.forEach((metric) => {
+          const row = document.createElement("tr");
+          const nameCell = document.createElement("td");
+          const name = document.createElement("strong");
+          name.textContent = metric.name;
+          const description = document.createElement("div");
+          description.className = "page-subtitle";
+          description.textContent = metric.description;
+          nameCell.append(name, description);
+          const expressionCell = document.createElement("td");
+          const expression = document.createElement("code");
+          expression.textContent = metric.expression;
+          expressionCell.appendChild(expression);
+          const statesCell = document.createElement("td");
+          const states = document.createElement("code");
+          states.textContent = metric.states.join(", ");
+          statesCell.appendChild(states);
+          const dateCell = document.createElement("td");
+          const dateField = document.createElement("code");
+          dateField.textContent = metric.date_field;
+          dateCell.appendChild(dateField);
+          const enabledCell = document.createElement("td");
+          const enabled = document.createElement("span");
+          enabled.className = "badge";
+          enabled.textContent = "已开放";
+          enabledCell.appendChild(enabled);
+          row.append(nameCell, expressionCell, statesCell, dateCell, enabledCell);
+          metricsTable.appendChild(row);
+        });
+      }
+      if (schemaList) {
+        schemaList.innerHTML = "";
+        schema.tables.forEach((table) => {
+          const row = document.createElement("div");
+          row.className = "schema-row";
+          const copy = document.createElement("span");
+          const name = document.createElement("strong");
+          name.textContent = table.name;
+          const description = document.createElement("span");
+          description.className = "page-subtitle";
+          description.textContent = `${table.description} · ${table.columns.length} 个开放字段`;
+          copy.append(name, document.createElement("br"), description);
+          const badge = document.createElement("span");
+          badge.className = "badge";
+          badge.textContent = "已开放";
+          row.append(copy, badge);
+          schemaList.appendChild(row);
+        });
+      }
+    } catch (error) {
+      if (semanticVersion) semanticVersion.textContent = "读取失败";
+      if (metricsTable) metricsTable.innerHTML = '<tr><td colspan="5" class="table-empty">指标定义读取失败</td></tr>';
+      if (schemaList) schemaList.textContent = `开放表读取失败：${error.message}`;
+    }
   }
 
   function databasePayload() {
@@ -309,6 +694,7 @@
       showSettingsFeedback("配置已从本机后端读取。密钥只显示状态，不会回显明文。");
       loadProviderModels({ quiet: true });
       refreshDatabaseStatus();
+      loadSemanticConfiguration();
     } catch (error) {
       showSettingsFeedback(`读取失败：${error.message}。请从 start-odoo-agent.bat 启动应用。`, "error");
     } finally {
@@ -605,8 +991,8 @@
           chart.classList.add("chart-fallback");
           return;
         }
-        const instance = window.echarts.init(chart);
-        instance.setOption(chartOption(metadata.chart, rows));
+        const instance = window.echarts.init(chart, null, { renderer: "svg" });
+        instance.setOption({ animation: false, ...chartOption(metadata.chart, rows) });
         const observer = new ResizeObserver(() => instance.resize());
         observer.observe(chart);
       });

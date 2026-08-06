@@ -11,6 +11,7 @@
 - LangGraph 自动路由普通问答、指标解释和 Text2SQL，错误 SQL 最多修复两次。
 - SQLGlot 单语句/表/字段/函数/公司过滤校验，数据库账号再次强制只读。
 - 真实查询结果支持结论、表格、本地 ECharts 图表、SQL 展开和查询耗时。
+- 工作台与销售看板直接读取 Odoo 实时汇总，支持周/月/季度、销售员筛选、订单待办和真实 CSV 导出。
 - Langfuse 记录 Agent、语义检索、模型、SQL 校验和只读执行全链路。
 
 ## 双击启动
@@ -34,6 +35,8 @@ Set-Location D:\odoo19e\odoo-agent
 - 健康检查：<http://127.0.0.1:8090/api/health>
 - 数据库状态：<http://127.0.0.1:8090/api/database/status>
 - 开放 Schema：<http://127.0.0.1:8090/api/database/schema>
+- 销售看板数据：<http://127.0.0.1:8090/api/sales/dashboard?period=month>
+- 销售指标定义：<http://127.0.0.1:8090/api/sales/metrics>
 
 ## 模型配置
 

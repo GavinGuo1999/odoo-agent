@@ -62,6 +62,13 @@ class SalesSemanticLayer:
             for name, table in self._definition["tables"].items()
         }
 
+    @property
+    def metric_definitions(self) -> dict[str, dict[str, Any]]:
+        return {
+            metric_id: dict(metric)
+            for metric_id, metric in self._definition["metrics"].items()
+        }
+
     def table_description(self, name: str) -> str:
         return str(self._definition["tables"][name]["description"])
 

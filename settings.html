@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 数据与模型</title>
-  <link rel="stylesheet" href="styles.css?v=6">
-  <script src="app.js?v=6" defer></script>
+  <link rel="stylesheet" href="styles.css?v=8">
+  <script src="app.js?v=8" defer></script>
 </head>
 <body data-page="settings">
   <div class="app-shell">
@@ -63,16 +63,11 @@
             </section>
 
             <section class="card panel settings-section">
-              <div class="section-heading"><div><h2>销售指标口径</h2><p>Agent 生成 SQL 时优先遵循这些业务定义</p></div><button class="btn" type="button" data-toast-message="已添加一个指标草稿（静态演示）">＋ 新增指标</button></div>
+              <div class="section-heading"><div><h2>销售指标口径</h2><p>直接读取当前销售语义层，Agent 生成 SQL 时遵循这些定义</p></div><span class="badge neutral" data-semantic-version>读取中</span></div>
               <div class="data-table-wrap">
                 <table class="data-table">
                   <thead><tr><th>指标</th><th>定义</th><th>默认状态</th><th>时间字段</th><th>启用</th></tr></thead>
-                  <tbody>
-                    <tr><td><strong>销售额</strong><div class="page-subtitle">销售收入、订单金额</div></td><td>SUM(amount_untaxed)</td><td><code>sale, done</code></td><td><code>date_order</code></td><td><label class="switch"><input type="checkbox" checked aria-label="启用销售额"><span class="switch-track"></span></label></td></tr>
-                    <tr><td><strong>订单数</strong><div class="page-subtitle">销售订单数量</div></td><td>COUNT(DISTINCT id)</td><td><code>sale, done</code></td><td><code>date_order</code></td><td><label class="switch"><input type="checkbox" checked aria-label="启用订单数"><span class="switch-track"></span></label></td></tr>
-                    <tr><td><strong>平均订单额</strong><div class="page-subtitle">客单价</div></td><td>销售额 / 订单数</td><td><code>sale, done</code></td><td><code>date_order</code></td><td><label class="switch"><input type="checkbox" checked aria-label="启用平均订单额"><span class="switch-track"></span></label></td></tr>
-                    <tr><td><strong>销售数量</strong><div class="page-subtitle">产品销量</div></td><td>SUM(product_uom_qty)</td><td><code>sale, done</code></td><td><code>date_order</code></td><td><label class="switch"><input type="checkbox" checked aria-label="启用销售数量"><span class="switch-track"></span></label></td></tr>
-                  </tbody>
+                  <tbody data-metrics-table><tr><td colspan="5" class="table-empty">正在读取语义层指标…</td></tr></tbody>
                 </table>
               </div>
             </section>
@@ -98,23 +93,15 @@
 
             <section class="card side-panel settings-section">
               <div class="section-heading"><div><h2>开放数据表</h2><p>模型只会看到启用的表</p></div></div>
-              <div class="schema-list">
-                <div class="schema-row"><span><strong>sale_order</strong><br><span class="page-subtitle">销售订单</span></span><label class="switch"><input type="checkbox" checked aria-label="启用 sale_order"><span class="switch-track"></span></label></div>
-                <div class="schema-row"><span><strong>sale_order_line</strong><br><span class="page-subtitle">销售订单明细</span></span><label class="switch"><input type="checkbox" checked aria-label="启用 sale_order_line"><span class="switch-track"></span></label></div>
-                <div class="schema-row"><span><strong>res_partner</strong><br><span class="page-subtitle">客户</span></span><label class="switch"><input type="checkbox" checked aria-label="启用 res_partner"><span class="switch-track"></span></label></div>
-                <div class="schema-row"><span><strong>product_product</strong><br><span class="page-subtitle">产品规格</span></span><label class="switch"><input type="checkbox" checked aria-label="启用 product_product"><span class="switch-track"></span></label></div>
-                <div class="schema-row"><span><strong>product_template</strong><br><span class="page-subtitle">产品模板</span></span><label class="switch"><input type="checkbox" checked aria-label="启用 product_template"><span class="switch-track"></span></label></div>
-                <div class="schema-row"><span><strong>account_move</strong><br><span class="page-subtitle">发票 · 第二阶段</span></span><label class="switch"><input type="checkbox" aria-label="启用 account_move"><span class="switch-track"></span></label></div>
-                <div class="schema-row"><span><strong>stock_move</strong><br><span class="page-subtitle">交付 · 第二阶段</span></span><label class="switch"><input type="checkbox" aria-label="启用 stock_move"><span class="switch-track"></span></label></div>
-              </div>
+              <div class="schema-list" data-schema-list><div class="table-empty">正在读取数据库开放表…</div></div>
             </section>
 
             <section class="card side-panel settings-section">
               <h3>查询限制</h3>
               <div class="context-list">
                 <div class="context-item"><span class="context-key">只允许 SELECT</span><label class="switch"><input type="checkbox" checked disabled aria-label="只允许 SELECT"><span class="switch-track"></span></label></div>
-                <div class="context-item"><span class="context-key">最大返回行数</span><span class="context-value">500</span></div>
-                <div class="context-item"><span class="context-key">查询超时</span><span class="context-value">15 秒</span></div>
+                <div class="context-item"><span class="context-key">最大返回行数</span><span class="context-value" data-query-max-rows>读取中</span></div>
+                <div class="context-item"><span class="context-key">查询超时</span><span class="context-value" data-query-timeout>读取中</span></div>
                 <div class="context-item"><span class="context-key">自动修复次数</span><span class="context-value">2 次</span></div>
               </div>
             </section>

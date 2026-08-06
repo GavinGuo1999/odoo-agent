@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 工作台</title>
-  <link rel="stylesheet" href="styles.css?v=6">
-  <script src="app.js?v=6" defer></script>
+  <link rel="stylesheet" href="styles.css?v=8">
+  <script src="echarts.min.js?v=6.1.0" defer></script>
+  <script src="app.js?v=8" defer></script>
 </head>
 <body data-page="home">
   <div class="app-shell">
@@ -33,7 +34,7 @@
       <header class="topbar">
         <div class="topbar-left">
           <button class="btn btn-icon mobile-menu" type="button" data-menu-toggle aria-label="打开导航">☰</button>
-          <div><h1 class="page-title">工作台</h1><div class="page-subtitle">2026年8月1日 · 销售数据概览</div></div>
+          <div><h1 class="page-title">工作台</h1><div class="page-subtitle" data-current-date>正在读取销售数据…</div></div>
         </div>
         <div class="topbar-right"><span class="top-status"><span class="status-dot"></span>实时数据</span><span class="avatar">我</span></div>
       </header>
@@ -50,47 +51,35 @@
             </div>
           </div>
           <div class="hero-panel" aria-label="系统连接状态">
-            <div class="hero-panel-row"><span class="hero-panel-label">当前模型</span><span class="hero-panel-value">DeepSeek API</span></div>
-            <div class="hero-panel-row"><span class="hero-panel-label">数据源</span><span class="hero-panel-value">odoo19_dev</span></div>
+            <div class="hero-panel-row"><span class="hero-panel-label">当前模型</span><span class="hero-panel-value" data-home-model>正在读取</span></div>
+            <div class="hero-panel-row"><span class="hero-panel-label">数据源</span><span class="hero-panel-value" data-home-source>正在读取</span></div>
             <div class="hero-panel-row"><span class="hero-panel-label">查询模式</span><span class="hero-panel-value">只读 · 实时</span></div>
           </div>
         </section>
 
         <section class="kpi-grid" aria-label="销售关键指标">
           <article class="card kpi-card">
-            <div class="kpi-top"><span class="kpi-label">本月销售额</span><span class="kpi-icon">¥</span></div>
-            <div class="kpi-value">¥ 86,420</div><div class="kpi-note"><span class="delta-up">↑ 12.8%</span> 较上月</div>
+            <div class="kpi-top"><span class="kpi-label">本月销售额</span><span class="kpi-icon" data-currency-icon>¤</span></div>
+            <div class="kpi-value" data-home-kpi="sales_amount">—</div><div class="kpi-note" data-home-note="sales_amount">正在读取…</div>
           </article>
           <article class="card kpi-card">
             <div class="kpi-top"><span class="kpi-label">已确认订单</span><span class="kpi-icon orange">▤</span></div>
-            <div class="kpi-value">112</div><div class="kpi-note"><span class="delta-up">+9 张</span> 较上月</div>
+            <div class="kpi-value" data-home-kpi="order_count">—</div><div class="kpi-note" data-home-note="order_count">正在读取…</div>
           </article>
           <article class="card kpi-card">
             <div class="kpi-top"><span class="kpi-label">平均订单金额</span><span class="kpi-icon green">◎</span></div>
-            <div class="kpi-value">¥ 772</div><div class="kpi-note"><span class="delta-up">↑ 4.1%</span> 较上月</div>
+            <div class="kpi-value" data-home-kpi="average_order_value">—</div><div class="kpi-note" data-home-note="average_order_value">正在读取…</div>
           </article>
           <article class="card kpi-card">
             <div class="kpi-top"><span class="kpi-label">待交付订单</span><span class="kpi-icon blue">↗</span></div>
-            <div class="kpi-value">6</div><div class="kpi-note">预计金额 ¥ 12,650</div>
+            <div class="kpi-value" data-home-kpi="pending_delivery">—</div><div class="kpi-note" data-home-note="pending_delivery">正在读取…</div>
           </article>
         </section>
 
         <section class="dashboard-grid">
           <article class="card panel">
             <div class="section-heading"><div><h2>近 6 个月销售趋势</h2><p>已确认销售订单 · 未税金额</p></div><a class="btn btn-soft" href="dashboard.html">完整看板</a></div>
-            <div class="chart-wrap">
-              <svg class="chart-svg" viewBox="0 0 620 265" role="img" aria-labelledby="homeChartTitle homeChartDesc">
-                <title id="homeChartTitle">近六个月销售额趋势</title><desc id="homeChartDesc">销售额整体上升，七月达到八万六千四百二十元。</desc>
-                <defs><linearGradient id="areaGradient" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#714b67" stop-opacity=".22"/><stop offset="1" stop-color="#714b67" stop-opacity="0"/></linearGradient></defs>
-                <line class="chart-grid-line" x1="50" y1="35" x2="590" y2="35"/><line class="chart-grid-line" x1="50" y1="88" x2="590" y2="88"/><line class="chart-grid-line" x1="50" y1="141" x2="590" y2="141"/><line class="chart-grid-line" x1="50" y1="194" x2="590" y2="194"/>
-                <text class="chart-axis-label" x="7" y="39">100k</text><text class="chart-axis-label" x="15" y="92">75k</text><text class="chart-axis-label" x="15" y="145">50k</text><text class="chart-axis-label" x="15" y="198">25k</text>
-                <path class="chart-area" d="M52 179 C90 168,113 149,153 156 S218 122,257 130 S324 101,363 112 S432 73,477 87 S535 55,588 48 L588 210 L52 210 Z"/>
-                <path class="chart-line" d="M52 179 C90 168,113 149,153 156 S218 122,257 130 S324 101,363 112 S432 73,477 87 S535 55,588 48"/>
-                <circle class="chart-point" cx="52" cy="179" r="4"/><circle class="chart-point" cx="153" cy="156" r="4"/><circle class="chart-point" cx="257" cy="130" r="4"/><circle class="chart-point" cx="363" cy="112" r="4"/><circle class="chart-point" cx="477" cy="87" r="4"/><circle class="chart-point" cx="588" cy="48" r="5"/>
-                <text class="chart-axis-label" x="45" y="235">2月</text><text class="chart-axis-label" x="146" y="235">3月</text><text class="chart-axis-label" x="250" y="235">4月</text><text class="chart-axis-label" x="356" y="235">5月</text><text class="chart-axis-label" x="470" y="235">6月</text><text class="chart-axis-label" x="580" y="235">7月</text>
-                <text x="541" y="29" fill="#5f3e57" font-size="12" font-weight="700">¥86,420</text>
-              </svg>
-            </div>
+            <div class="chart-wrap"><div class="dashboard-echart home-trend-chart" data-home-trend role="img" aria-label="近六个月真实销售额趋势"></div></div>
           </article>
 
           <aside class="card panel">
@@ -105,16 +94,11 @@
         </section>
 
         <section class="card table-card">
-          <div class="table-header"><div><h3>最近销售订单</h3><div class="page-subtitle">来自 Odoo · 最后更新于刚刚</div></div><button class="btn" type="button" data-toast-message="已刷新（静态演示）">↻ 刷新</button></div>
+          <div class="table-header"><div><h3>最近销售订单</h3><div class="page-subtitle" data-home-updated>来自 Odoo · 正在读取</div></div><button class="btn" type="button" data-home-refresh>↻ 刷新</button></div>
           <div class="data-table-wrap">
             <table class="data-table">
               <thead><tr><th>订单</th><th>客户</th><th>销售员</th><th>日期</th><th>状态</th><th class="number">未税金额</th></tr></thead>
-              <tbody>
-                <tr><td><strong>S00128</strong></td><td>上海明远科技</td><td>管理员</td><td>2026-08-01</td><td><span class="badge">销售订单</span></td><td class="number">¥ 8,650</td></tr>
-                <tr><td><strong>S00127</strong></td><td>杭州云栖贸易</td><td>管理员</td><td>2026-07-31</td><td><span class="badge warning">报价已发送</span></td><td class="number">¥ 6,280</td></tr>
-                <tr><td><strong>S00126</strong></td><td>苏州启程制造</td><td>管理员</td><td>2026-07-30</td><td><span class="badge">销售订单</span></td><td class="number">¥ 12,400</td></tr>
-                <tr><td><strong>S00125</strong></td><td>南京新锐信息</td><td>管理员</td><td>2026-07-29</td><td><span class="badge neutral">已锁定</span></td><td class="number">¥ 3,960</td></tr>
-              </tbody>
+              <tbody data-recent-orders><tr><td colspan="6" class="table-empty">正在读取 Odoo 订单…</td></tr></tbody>
             </table>
           </div>
         </section>
