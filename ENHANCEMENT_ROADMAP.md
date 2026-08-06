@@ -6,6 +6,23 @@
 >
 > 目标：不堆叠第二套 Agent 框架，用最少的新组件迅速提高准确率、可恢复性、可测试性和交互体验。
 
+## 0. 实施状态（2026-08-06）
+
+本路线图的核心强化包已经完成：
+
+| 工作包 | 状态 | 已落地内容 |
+| --- | --- | --- |
+| 黄金问题与回归 | 已完成首版 | 20 条 JSONL、静态/真实运行器、JSON 报告、Langfuse Dataset 同步 |
+| Pydantic QueryPlan | 已完成 | 一次模型调用返回并严格校验 `QueryPlan + SQL`，结构错误进入修复回路 |
+| Langfuse 质量与成本 | 已完成 | Trace 直达链接、显式 Token/Cost、BOOLEAN `user-thumbs` Score、Dataset |
+| PostgreSQL Checkpointer | 已完成 | 独立 `odoo_agent_state`、自动建表、内存降级、重启恢复 |
+| LangGraph Interrupt | 已完成首版 | QueryPlan 判定关键歧义时暂停，同一 `session_id` 接受答案并恢复 |
+| SSE 步骤流 | 已完成 | 从分类到 SQL 执行/回答的 `progress` 事件与最终 `result` 事件 |
+| 简单结果快速路径 | 已完成 | KPI、排名、趋势、空结果跳过第二次 LLM |
+| 节点级模型路由 | 已完成 | SQL、回答、普通聊天分别配置供应商、模型和估算单价 |
+
+当前自动化测试为 45 项；首批黄金集静态检查为 20/20。下一轮应根据真实回归失败项迭代语义层和 Prompt，而不是继续增加框架。
+
 ## 1. 结论先行
 
 外部建议的大方向正确：LangGraph 只负责编排，SQL、安全、模型、观测和评测由专门组件承担。但它没有完全结合当前代码现状，以下能力已经存在，不能再算新增项目：

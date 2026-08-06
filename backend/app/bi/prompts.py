@@ -24,7 +24,21 @@ def sql_generation_prompt(
 </role>
 
 <hard_constraints>
-- 只返回一个 JSON 对象，不要 Markdown：{{"sql":"...","metric_ids":["..."]}}
+- 只返回一个 JSON 对象，不要 Markdown，格式必须是：
+  {{
+    "plan": {{
+      "query_type": "kpi|trend|ranking|detail|comparison",
+      "metric_ids": ["semantic_context 中的指标 ID"],
+      "dimensions": ["用于展示或分组的字段语义"],
+      "filters": [{{"field":"字段名","operator":"eq|neq|in|not_in|gte|lte|contains","value":"值"}}],
+      "time_range": {{"label":"用户时间描述或 null","start":"YYYY-MM-DD 或 null","end":"YYYY-MM-DD 或 null","grain":"none|day|week|month|quarter|year"}},
+      "assumptions": ["不阻塞查询的口径假设"],
+      "ambiguities": ["必须由用户决定的歧义"],
+      "requires_clarification": false,
+      "clarification_question": null
+    }},
+    "sql": "..."
+  }}
 - sql 只能是一条 SELECT 或 WITH...SELECT。
 - 只能使用 semantic_context 中列出的表、字段、关系和口径。
 - 禁止 SELECT *；必须给展示字段使用清晰的中文或英文别名。
@@ -34,6 +48,9 @@ def sql_generation_prompt(
 - 时间趋势字段统一使用 day、week、month、quarter 或 year 作为别名；“每月/月度”问题必须返回 month 列并按它升序排列。
 - JSONB 多语言名称优先使用 ->>'zh_CN'，并回退到 ->>'en_US'。
 - 不要写解释，不要猜不存在的列。
+- 时间范围、客户、产品或比较基准确实缺失且无法按默认口径推断时，设置 requires_clarification=true，写一个简短具体的问题，并让 sql 为空字符串。
+- “本月、上月、今年、去年、最近 N 个月”和普通 Top N 都不是歧义，直接按当前日期计算。
+- 不要为了可选展示细节中断查询；只有会实质改变指标结果时才请求澄清。
 </hard_constraints>
 
 <semantic_context>
@@ -54,14 +71,16 @@ def sql_repair_prompt(
     question: str,
     semantic_context: str,
     previous_sql: str,
+    previous_plan: dict[str, object],
     errors: list[str],
 ) -> str:
     return f"""你正在修复一条只读 PostgreSQL 18 销售查询。
-只返回 JSON：{{"sql":"修复后的单条 SELECT","metric_ids":["..."]}}，不要 Markdown。
+只返回 JSON：{{"plan":<保持相同语义的完整 QueryPlan>,"sql":"修复后的单条 SELECT"}}，不要 Markdown。
 保持原问题和指标口径不变，只修复下面列出的错误。仍须满足 company_id、字段白名单、禁止 SELECT * 和只读要求。
 
 <question>{question}</question>
 <errors>{json.dumps(errors, ensure_ascii=False)}</errors>
+<previous_plan>{json.dumps(previous_plan, ensure_ascii=False, default=str)}</previous_plan>
 <previous_sql>{previous_sql}</previous_sql>
 <semantic_context>{semantic_context}</semantic_context>"""
 

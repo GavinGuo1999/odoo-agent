@@ -8,14 +8,18 @@ from openai import AsyncOpenAI
 from app.config import get_settings
 from app.observability import langfuse_is_configured
 from app.schemas.settings import (
-    LangfuseSettingsView,
     DatabaseSettingsView,
+    LangfuseSettingsView,
+    ModelRoleSettingsView,
+    ModelRoutingSettingsView,
     ProviderModelsView,
     ProviderSettingsView,
     SettingsUpdateRequest,
     SettingsView,
+    StateDatabaseSettingsView,
 )
 from app.services import set_user_environment
+from app.state import get_state_store
 
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -38,7 +42,14 @@ def _settings_view(*, restart_required: bool = False) -> SettingsView:
             configured=provider.configured,
             base_url=provider.base_url,
             model=provider.model,
+            input_price_per_million=provider.input_price_per_million,
+            output_price_per_million=provider.output_price_per_million,
+            pricing_currency=provider.pricing_currency,
         )
+
+    routing = settings.routing()
+    state_database = settings.state_database()
+    state_store = get_state_store()
 
     langfuse_enabled = (
         os.getenv("LANGFUSE_ENABLED", "true").strip().lower() in _TRUE_VALUES
@@ -48,6 +59,20 @@ def _settings_view(*, restart_required: bool = False) -> SettingsView:
     return SettingsView(
         selected_provider=settings.llm_provider,
         providers=providers,  # type: ignore[arg-type]
+        routing=ModelRoutingSettingsView(
+            sql=ModelRoleSettingsView(
+                provider=routing.sql.name,
+                model=routing.sql.model,
+            ),
+            answer=ModelRoleSettingsView(
+                provider=routing.answer.name,
+                model=routing.answer.model,
+            ),
+            general=ModelRoleSettingsView(
+                provider=routing.general.name,
+                model=routing.general.model,
+            ),
+        ),
         langfuse=LangfuseSettingsView(
             configured=bool(
                 os.getenv("LANGFUSE_PUBLIC_KEY")
@@ -70,6 +95,17 @@ def _settings_view(*, restart_required: bool = False) -> SettingsView:
             company_id=settings.odoo_company_id,
             statement_timeout_ms=settings.odoo_statement_timeout_ms,
             max_rows=settings.odoo_max_rows,
+        ),
+        state_database=StateDatabaseSettingsView(
+            enabled=state_database.enabled,
+            configured=state_database.configured,
+            password_configured=bool(settings.agent_state_db_password),
+            host=state_database.host,
+            port=state_database.port,
+            database=state_database.database,
+            user=state_database.user,
+            active_mode=state_store.mode,  # type: ignore[arg-type]
+            error_type=state_store.error_type,
         ),
         restart_required=restart_required,
     )
@@ -139,21 +175,33 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
     langfuse_public_key = _secret_value(payload.langfuse.public_key)
     langfuse_secret_key = _secret_value(payload.langfuse.secret_key)
     database_password = _secret_value(payload.database.password)
+    state_database_password = _secret_value(payload.state_database.password)
 
     if bool(langfuse_public_key) != bool(langfuse_secret_key):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Langfuse Public Key 和 Secret Key 必须同时填写。",
         )
     if langfuse_public_key and not langfuse_public_key.startswith("pk-lf-"):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Langfuse Key 格式不正确。",
         )
     if langfuse_secret_key and not langfuse_secret_key.startswith("sk-lf-"):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Langfuse Key 格式不正确。",
+        )
+    if (
+        payload.state_database.enabled
+        and payload.state_database.host.strip().lower() == payload.database.host.strip().lower()
+        and payload.state_database.port == payload.database.port
+        and payload.state_database.database.strip().lower()
+        == payload.database.database.strip().lower()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Agent 状态库必须与 Odoo 业务数据库分离，不能使用同一个数据库。",
         )
 
     langfuse_was_configured = langfuse_is_configured()
@@ -170,13 +218,50 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
         old_langfuse_base_url != new_langfuse_base_url
         or langfuse_credentials_changed
     )
+    current_settings = get_settings()
+    state_database_changed = any(
+        current != new
+        for current, new in (
+            (current_settings.agent_state_enabled, payload.state_database.enabled),
+            (current_settings.agent_state_db_host, payload.state_database.host.strip()),
+            (current_settings.agent_state_db_port, payload.state_database.port),
+            (current_settings.agent_state_db_name, payload.state_database.database.strip()),
+            (current_settings.agent_state_db_user, payload.state_database.user.strip()),
+        )
+    ) or bool(state_database_password)
 
     updates = {
         "LLM_PROVIDER": payload.selected_provider,
         "DEEPSEEK_BASE_URL": str(payload.deepseek.base_url).rstrip("/"),
         "DEEPSEEK_MODEL": payload.deepseek.model.strip(),
+        "DEEPSEEK_INPUT_PRICE_PER_MILLION": str(
+            payload.deepseek.input_price_per_million
+            if payload.deepseek.input_price_per_million is not None
+            else current_settings.deepseek_input_price_per_million
+        ),
+        "DEEPSEEK_OUTPUT_PRICE_PER_MILLION": str(
+            payload.deepseek.output_price_per_million
+            if payload.deepseek.output_price_per_million is not None
+            else current_settings.deepseek_output_price_per_million
+        ),
         "SILICONFLOW_BASE_URL": str(payload.siliconflow.base_url).rstrip("/"),
         "SILICONFLOW_MODEL": payload.siliconflow.model.strip(),
+        "SILICONFLOW_INPUT_PRICE_PER_MILLION": str(
+            payload.siliconflow.input_price_per_million
+            if payload.siliconflow.input_price_per_million is not None
+            else current_settings.siliconflow_input_price_per_million
+        ),
+        "SILICONFLOW_OUTPUT_PRICE_PER_MILLION": str(
+            payload.siliconflow.output_price_per_million
+            if payload.siliconflow.output_price_per_million is not None
+            else current_settings.siliconflow_output_price_per_million
+        ),
+        "SQL_LLM_PROVIDER": payload.routing.sql.provider,
+        "SQL_LLM_MODEL": payload.routing.sql.model.strip(),
+        "ANSWER_LLM_PROVIDER": payload.routing.answer.provider,
+        "ANSWER_LLM_MODEL": payload.routing.answer.model.strip(),
+        "GENERAL_LLM_PROVIDER": payload.routing.general.provider,
+        "GENERAL_LLM_MODEL": payload.routing.general.model.strip(),
         "LANGFUSE_BASE_URL": new_langfuse_base_url,
         "LANGFUSE_ENABLED": str(payload.langfuse.enabled).lower(),
         "LANGFUSE_TRACING_ENABLED": str(payload.langfuse.enabled).lower(),
@@ -187,6 +272,11 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
         "ODOO_COMPANY_ID": str(payload.database.company_id),
         "ODOO_STATEMENT_TIMEOUT_MS": str(payload.database.statement_timeout_ms),
         "ODOO_MAX_ROWS": str(payload.database.max_rows),
+        "AGENT_STATE_ENABLED": str(payload.state_database.enabled).lower(),
+        "AGENT_STATE_DB_HOST": payload.state_database.host.strip(),
+        "AGENT_STATE_DB_PORT": str(payload.state_database.port),
+        "AGENT_STATE_DB_NAME": payload.state_database.database.strip(),
+        "AGENT_STATE_DB_USER": payload.state_database.user.strip(),
     }
     if deepseek_key:
         updates["DEEPSEEK_API_KEY"] = deepseek_key
@@ -197,6 +287,8 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
         updates["LANGFUSE_SECRET_KEY"] = langfuse_secret_key
     if database_password:
         updates["ODOO_DB_PASSWORD"] = database_password
+    if state_database_password:
+        updates["AGENT_STATE_DB_PASSWORD"] = state_database_password
 
     try:
         set_user_environment(updates)
@@ -208,5 +300,8 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
 
     get_settings.cache_clear()
     return _settings_view(
-        restart_required=langfuse_was_configured and langfuse_connection_changed,
+        restart_required=(
+            (langfuse_was_configured and langfuse_connection_changed)
+            or state_database_changed
+        ),
     )

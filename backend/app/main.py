@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -10,7 +11,8 @@ from fastapi.responses import FileResponse, RedirectResponse, Response
 
 from app.api.router import api_router
 from app.config import get_settings
-from app.observability import langfuse_is_configured
+from app.observability import flush_langfuse, langfuse_is_configured, warm_langfuse_client
+from app.state import get_state_store
 
 
 _PROJECT_DIRECTORY = Path(__file__).resolve().parents[2]
@@ -27,12 +29,17 @@ _UI_FILES = {
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
+    state_store = get_state_store()
+    await state_store.start(settings.state_database())
+    if langfuse_is_configured():
+        await asyncio.to_thread(warm_langfuse_client)
     yield
 
-    if langfuse_is_configured():
-        from langfuse import get_client
+    await state_store.close()
 
-        get_client().flush()
+    if langfuse_is_configured():
+        flush_langfuse()
 
 
 def create_app() -> FastAPI:

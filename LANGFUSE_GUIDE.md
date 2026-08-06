@@ -22,10 +22,10 @@ Trace: odoo-chat-turn
       ├─ Generation: generate-sales-sql
       ├─ Tool: validate-readonly-sales-sql
       ├─ Tool: execute-readonly-sales-sql
-      └─ Generation: explain-sales-result
+      └─ Generation: explain-sales-result（仅复杂结果）
 ```
 
-普通聊天通常只有回答模型节点；销售数据问题才会出现数据库检查、语义检索、SQL 生成、安全校验、只读执行和结果解释。
+普通聊天通常只有回答模型节点；销售数据问题才会出现数据库检查、语义检索、SQL 生成、安全校验和只读执行。单 KPI、简单排名/趋势和空结果显示 `deterministic-answer`，不会再产生第二个 Generation。
 
 ## 3. 看一个 Trace 时重点检查什么
 
@@ -61,22 +61,20 @@ Trace: odoo-chat-turn
 
 稳定名称很重要。不要把用户名、日期或问题正文拼进 Trace/Observation 名称；这些内容应放在 input、metadata、tags 或 session 中。
 
-## 5. 让成本不再显示为 0
+## 5. Token 和 Cost 怎么看
 
-Langfuse 能自动记录模型返回的 Token，但当前硅基流动模型不是 Langfuse 内置价格模型，因此需要在 Langfuse 项目中配置自定义模型价格。
+当前项目不依赖 Langfuse 是否内置了硅基流动模型价格。模型网关会把供应商返回的 Token usage 和应用设置页中的百万 Token 单价，显式写入每个 Generation 的 `usage_details` 与 `cost_details`。因此新 Trace 的 Generation 和 Trace 汇总都应显示非零 Cost。
 
-操作路径通常是：
+使用方法：
 
-1. 打开 Langfuse 项目设置。
-2. 进入 `Models`，新建自定义模型定义。
-3. 模型匹配建议使用：`^deepseek-ai/DeepSeek-V3\.1-Terminus$`。
-4. Tokenizer 选择与模型兼容的选项；无法确认时先保持默认，并用接口返回的 usage 为准。
-5. 填写输入、输出和缓存输入价格。
-6. 保存后发起一条新问题，打开 Trace 检查 Generation 的 Token 与 Cost。
+1. 打开网站“数据与模型”。
+2. 在供应商卡片填写最新的“输入/输出价格（每百万 Token）”。
+3. 保存后发起一条新问题。
+4. 在回答底部先看本轮估算美元成本，再打开 Trace 查看每个 Generation 的拆分。
 
-截至 2026-08-06，硅基流动官网对该模型展示的实时价格为：输入 ¥4/百万 Token、输出 ¥12/百万 Token、缓存输入 ¥0.40/百万 Token。价格会变化，请配置前再次查看官网。
+硅基流动的页面单价按人民币填写，应用使用内部估算汇率换算成美元后写入 Langfuse；DeepSeek 页面单价按美元填写。供应商价格会变化，模型切换后请同步更新。
 
-Langfuse 成本通常按美元记录，而硅基流动报价为人民币。建议先确定一个内部记账汇率 `R = 人民币/美元`，再换算单 Token 美元价格：
+Langfuse 成本按美元记录。硅基流动报价为人民币，项目使用内部汇率 `R = 人民币/美元` 换算单 Token 美元价格：
 
 ```text
 input_price_usd_per_token  = 4 ÷ R ÷ 1,000,000
@@ -84,7 +82,7 @@ output_price_usd_per_token = 12 ÷ R ÷ 1,000,000
 cached_input_usd_per_token = 0.40 ÷ R ÷ 1,000,000
 ```
 
-不要把价格或汇率硬编码进业务代码；模型定义更适合放在 Langfuse 项目设置中统一维护。
+这些是应用侧估算成本，不是账单。核对费用时仍以供应商控制台为准。若以后需要多个应用共享价格，再把模型价格统一迁移到 Langfuse Model Definition 或集中模型网关。
 
 ## 6. Session 怎么用
 
@@ -95,9 +93,16 @@ cached_input_usd_per_token = 0.40 ÷ R ÷ 1,000,000
 
 例如用户先问“今年销售趋势”，再问“那上个月呢”，第二问是否正确依赖前一轮上下文，最适合按 Session 检查。
 
-## 7. 下一步建议：评分与数据集
+## 7. 点赞/点踩、Score 与黄金 Dataset
 
-先收集 20～30 个真实销售问题，覆盖：
+每条带 Trace 的回答下方都有 👍/👎：
+
+- 浏览器只把 Trace ID、布尔值和可选备注发给本机后端；
+- 后端使用 Secret Key 写入 Langfuse，密钥不会进入浏览器；
+- Score 固定名为 `user-thumbs`，数据类型为 BOOLEAN，👍=1、👎=0；
+- 在 Langfuse Traces 里按 `user-thumbs = 0` 建 Saved View，可以优先复盘差评。
+
+本地黄金集位于 `evals/datasets/sales_golden.jsonl`，是 Git 中的真源。首批 20 条覆盖：
 
 - 单指标：本月销售额、订单数、平均订单额
 - 排名：客户、产品、销售员 Top N
@@ -105,7 +110,25 @@ cached_input_usd_per_token = 0.40 ÷ R ÷ 1,000,000
 - 追问：那上个月呢、换成含税金额、只看某客户
 - 空数据、歧义问题和越权 SQL 尝试
 
-建议为每条 Trace 或 Dataset Run 记录这些分数：
+快速静态回归不会调用模型或数据库：
+
+```powershell
+.\.venv\Scripts\python.exe .\evals\run_sales_eval.py
+```
+
+真实回归会调用模型和 Odoo，可能产生费用：
+
+```powershell
+.\.venv\Scripts\python.exe .\evals\run_sales_eval.py --live --output .\evals\reports\latest.json
+```
+
+同步 Langfuse Dataset：
+
+```powershell
+.\.venv\Scripts\python.exe .\evals\run_sales_eval.py --sync-langfuse
+```
+
+Dataset 名称固定为 `odoo-agent/sales-golden-v1`。后续可为每条 Trace 或 Dataset Run 增加这些分数：
 
 - `sql_safe`：是否通过只读安全校验，0/1
 - `sql_executes`：SQL 是否可执行，0/1
@@ -136,7 +159,7 @@ Ragas 更适合评估 RAG 的检索与忠实度；Text2SQL 还应保留确定性
 
 ### Trace 有 Token 但 Cost 为 0
 
-通常是模型名称没有匹配到 Langfuse 的模型价格定义。检查 Generation 中的实际 model 字符串，并让自定义模型的匹配规则精确命中它。
+先确认这是本次更新后的新 Trace；历史 Trace 不会自动补写应用侧成本。然后检查设置页对应供应商的输入/输出单价是否大于 0，并展开 Generation 查看 `cost_details`。若只改了 Windows 环境变量，请重启后端。
 
 ### Time to First Token 为空
 

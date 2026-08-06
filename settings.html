@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 数据与模型</title>
-  <link rel="stylesheet" href="styles.css?v=9">
-  <script src="app.js?v=9" defer></script>
+  <link rel="stylesheet" href="styles.css?v=10">
+  <script src="app.js?v=10" defer></script>
 </head>
 <body data-page="settings">
   <div class="app-shell">
@@ -46,9 +46,20 @@
                 <label><span class="label">Base URL</span><input class="input" data-provider-url type="url" value="https://api.deepseek.com"></label>
                 <label><span class="label">模型</span><input class="input" data-provider-model type="text" list="provider-model-options" value="deepseek-chat" autocomplete="off"><datalist id="provider-model-options" data-provider-model-options></datalist><span class="help-text" data-provider-model-help>可从供应商列表选择，也可输入自定义 Model ID</span></label>
                 <label><span class="label">API Key</span><input class="input" data-provider-key type="password" autocomplete="new-password" placeholder="请输入 API Key"><span class="help-text" data-provider-key-help>仅保存到当前 Windows 用户环境变量，不会回显</span></label>
-                <label><span class="label">Temperature</span><select class="select" disabled><option>0.0（Text2SQL 稳定优先）</option></select><span class="help-text">第一阶段固定为 0，减少 SQL 随机性</span></label>
+                <label><span class="label">输入价格 / 百万 Token</span><input class="input" data-provider-input-price type="number" min="0" step="0.001"><span class="help-text" data-provider-pricing-currency>用于 Langfuse Cost 估算</span></label>
+                <label><span class="label">输出价格 / 百万 Token</span><input class="input" data-provider-output-price type="number" min="0" step="0.001"><span class="help-text">模型变更后请同步核对供应商价格</span></label>
               </div>
               <div class="inline-row model-actions" style="margin-top:16px"><button class="btn" type="button" data-refresh-models>刷新模型列表</button><button class="btn btn-primary" type="button" data-test-model>保存并测试连接</button><span class="help-text">保存后，新的聊天立即使用所选供应商和模型</span></div>
+            </section>
+
+            <section class="card panel settings-section">
+              <div class="section-heading"><div><h2>节点级模型路由</h2><p>SQL、结果解释与普通聊天可以使用不同供应商和模型</p></div><span class="badge neutral">按任务分工</span></div>
+              <div class="routing-grid">
+                <div class="routing-row"><strong>SQL 生成与修复</strong><select class="select" data-role-provider="sql"><option value="deepseek">DeepSeek</option><option value="siliconflow">硅基流动</option></select><input class="input" data-role-model="sql" placeholder="Model ID"></div>
+                <div class="routing-row"><strong>复杂结果解释</strong><select class="select" data-role-provider="answer"><option value="deepseek">DeepSeek</option><option value="siliconflow">硅基流动</option></select><input class="input" data-role-model="answer" placeholder="Model ID"></div>
+                <div class="routing-row"><strong>普通聊天</strong><select class="select" data-role-provider="general"><option value="deepseek">DeepSeek</option><option value="siliconflow">硅基流动</option></select><input class="input" data-role-model="general" placeholder="Model ID"></div>
+              </div>
+              <div class="help-text" style="margin-top:12px">简单 KPI、排名和趋势由程序直接总结，不调用“复杂结果解释”模型。</div>
             </section>
 
             <section class="card panel settings-section">
@@ -94,6 +105,19 @@
             <section class="card side-panel settings-section">
               <div class="section-heading"><div><h2>开放数据表</h2><p>模型只会看到启用的表</p></div></div>
               <div class="schema-list" data-schema-list><div class="table-empty">正在读取数据库开放表…</div></div>
+            </section>
+
+            <section class="card connection-card settings-section">
+              <div class="section-heading"><div><h2>Agent 状态库</h2><p>独立 PostgreSQL · 会话恢复与中断</p></div><span class="badge neutral" data-state-db-status>内存模式</span></div>
+              <div class="context-item settings-toggle-row"><span><strong>启用持久状态</strong><br><span class="help-text">必须是独立库，不能填写 odoo19_dev</span></span><label class="switch"><input type="checkbox" data-state-db-enabled aria-label="启用 Agent 状态库"><span class="switch-track"></span></label></div>
+              <div class="database-form">
+                <label><span class="label">地址</span><input class="input" data-state-db-host value="127.0.0.1"></label>
+                <label><span class="label">端口</span><input class="input" data-state-db-port type="number" min="1" max="65535" value="55432"></label>
+                <label><span class="label">数据库</span><input class="input" data-state-db-name value="odoo_agent_state"></label>
+                <label><span class="label">写入用户</span><input class="input" data-state-db-user value="odoo_agent_state"></label>
+                <label><span class="label">密码</span><input class="input" data-state-db-password type="password" autocomplete="new-password" placeholder="留空保留当前配置"></label>
+              </div>
+              <div class="help-text" data-state-db-help style="margin-top:12px">未启用时使用进程内存；启用或修改后需要重启应用。</div>
             </section>
 
             <section class="card side-panel settings-section">

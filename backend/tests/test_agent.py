@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from langgraph.checkpoint.memory import InMemorySaver
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
@@ -25,6 +26,41 @@ def llm_result(content: str, total: int = 10) -> LLMResult:
         input_tokens=total - 2,
         output_tokens=2,
         total_tokens=total,
+    )
+
+
+def sql_payload(
+    sql: str,
+    *,
+    query_type: str,
+    metrics: list[str],
+    dimensions: list[str] | None = None,
+    requires_clarification: bool = False,
+    clarification_question: str | None = None,
+) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "plan": {
+                "query_type": query_type,
+                "metric_ids": metrics,
+                "dimensions": dimensions or [],
+                "filters": [],
+                "time_range": {
+                    "label": None,
+                    "start": None,
+                    "end": None,
+                    "grain": "month" if query_type == "trend" else "none",
+                },
+                "assumptions": [],
+                "ambiguities": ["客户名称不明确"] if requires_clarification else [],
+                "requires_clarification": requires_clarification,
+                "clarification_question": clarification_question,
+            },
+            "sql": sql,
+        },
+        ensure_ascii=False,
     )
 
 
@@ -73,15 +109,17 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, self.environment, clear=True):
             agent = SalesAgent(self.provider, self.database)
             agent._gateway.complete = AsyncMock(
-                side_effect=[
-                    llm_result(
-                        '{"sql":"SELECT date_trunc(\'month\', so.date_order)::date AS month, '
-                        'SUM(so.amount_untaxed) AS sales_amount FROM sale_order so '
+                return_value=llm_result(
+                    sql_payload(
+                        "SELECT date_trunc('month', so.date_order)::date AS month, "
+                        "SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
                         "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
-                        'GROUP BY 1 ORDER BY 1","metric_ids":["sales_amount"]}'
-                    ),
-                    llm_result("今年 6 月销售额 100，7 月销售额 200，呈上升趋势。", 12),
-                ]
+                        "GROUP BY 1 ORDER BY 1",
+                        query_type="trend",
+                        metrics=["sales_amount"],
+                        dimensions=["month"],
+                    )
+                )
             )
             agent._database.healthcheck = AsyncMock(
                 return_value=DatabaseHealth(
@@ -120,20 +158,30 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.intent, "data")
         self.assertEqual(result.chart["type"], "line")
         self.assertIn("LIMIT 500", result.sql or "")
-        self.assertEqual(result.total_tokens, 22)
+        self.assertEqual(result.total_tokens, 10)
+        self.assertEqual(result.answer_mode, "deterministic")
+        self.assertEqual(agent._gateway.complete.await_count, 1)
 
     async def test_invalid_sql_is_repaired_before_execution(self) -> None:
         with patch.dict(os.environ, self.environment, clear=True):
             agent = SalesAgent(self.provider, self.database)
             agent._gateway.complete = AsyncMock(
                 side_effect=[
-                    llm_result('{"sql":"SELECT * FROM sale_order","metric_ids":[]}'),
                     llm_result(
-                        '{"sql":"SELECT COUNT(so.id) AS order_count FROM sale_order so '
-                        "WHERE so.company_id = 1 AND so.state IN ('sale','done')\","
-                        '"metric_ids":["order_count"]}'
+                        sql_payload(
+                            "SELECT * FROM sale_order",
+                            query_type="kpi",
+                            metrics=["order_count"],
+                        )
                     ),
-                    llm_result("共有 23 张已确认销售订单。"),
+                    llm_result(
+                        sql_payload(
+                            "SELECT COUNT(so.id) AS order_count FROM sale_order so "
+                            "WHERE so.company_id = 1 AND so.state IN ('sale','done')",
+                            query_type="kpi",
+                            metrics=["order_count"],
+                        )
+                    ),
                 ]
             )
             agent._database.healthcheck = AsyncMock(
@@ -167,8 +215,102 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
             result = await agent.run(question="订单数是多少？", history=[])
 
         self.assertTrue(result.data_accessed)
-        self.assertEqual(agent._gateway.complete.await_count, 3)
+        self.assertEqual(agent._gateway.complete.await_count, 2)
         agent._database.execute_readonly.assert_awaited_once()
+
+    async def test_query_plan_interrupt_can_resume_with_same_thread(self) -> None:
+        with patch.dict(os.environ, self.environment, clear=True):
+            agent = SalesAgent(
+                self.provider,
+                self.database,
+                checkpointer=InMemorySaver(),
+            )
+            agent._gateway.complete = AsyncMock(
+                side_effect=[
+                    llm_result(
+                        sql_payload(
+                            "",
+                            query_type="kpi",
+                            metrics=["sales_amount"],
+                            requires_clarification=True,
+                            clarification_question="你指的是哪一个客户？",
+                        )
+                    ),
+                    llm_result(
+                        sql_payload(
+                            "SELECT SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
+                            "WHERE so.company_id = 1 AND so.state IN ('sale','done')",
+                            query_type="kpi",
+                            metrics=["sales_amount"],
+                        )
+                    ),
+                ]
+            )
+            agent._database.healthcheck = AsyncMock(
+                return_value=DatabaseHealth(
+                    connected=True,
+                    user="codex_readonly",
+                    database="odoo19_dev",
+                    read_only=True,
+                    company_id=1,
+                    company_name="My Company",
+                    currency="USD",
+                    order_count=23,
+                    response_ms=2.0,
+                )
+            )
+            agent._database.discover_columns = AsyncMock(
+                return_value={
+                    table: [{"name": column, "type": "text"} for column in columns]
+                    for table, columns in agent._semantics.table_columns.items()
+                }
+            )
+            agent._database.execute_readonly = AsyncMock(
+                return_value=QueryResult(
+                    columns=["sales_amount"],
+                    rows=[{"sales_amount": 8768.0}],
+                    row_count=1,
+                    truncated=False,
+                    duration_ms=1.2,
+                )
+            )
+
+            interrupted = await agent.run(
+                question="那个客户今年的销售额是多少？",
+                history=[],
+                session_id="interrupt-test",
+            )
+            resumed = await agent.resume(
+                session_id="interrupt-test",
+                answer="CODEX Website Customer 20260627",
+            )
+
+        self.assertTrue(interrupted.interrupted)
+        self.assertEqual(interrupted.interrupt_payload["question"], "你指的是哪一个客户？")
+        self.assertFalse(resumed.interrupted)
+        self.assertTrue(resumed.data_accessed)
+        self.assertEqual(resumed.answer_mode, "deterministic")
+
+    async def test_stream_emits_progress_and_final_outcome(self) -> None:
+        with patch.dict(os.environ, self.environment, clear=True):
+            agent = SalesAgent(
+                self.provider,
+                self.database,
+                checkpointer=InMemorySaver(),
+            )
+            agent._gateway.complete = AsyncMock(return_value=llm_result("你好。"))
+            events = [
+                event
+                async for event in agent.stream(
+                    question="你好",
+                    history=[],
+                    session_id="stream-test",
+                )
+            ]
+
+        self.assertTrue(any(event.get("type") == "progress" for event in events))
+        self.assertEqual(events[-1]["type"], "outcome")
+        self.assertEqual(events[-1]["outcome"].answer, "你好。")
 
 
 if __name__ == "__main__":

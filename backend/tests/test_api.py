@@ -203,13 +203,66 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(messages[2], {"role": "assistant", "content": "知道。"})
         self.assertEqual(messages[3], {"role": "user", "content": "今天呢？"})
 
+    async def test_chat_stream_returns_progress_and_result_events(self) -> None:
+        environment = dict(self.environment)
+        environment["DEEPSEEK_API_KEY"] = "sensitive-value"
+        result = LLMResult(
+            content="流式回答完成。",
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            input_tokens=8,
+            output_tokens=4,
+            total_tokens=12,
+        )
+
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch("app.bi.agent.LLMGateway.complete", new=AsyncMock(return_value=result)),
+        ):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/api/chat/stream",
+                    json={"question": "你好", "session_id": "api-stream-test"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("event: progress", response.text)
+        self.assertIn("event: result", response.text)
+        self.assertIn("流式回答完成", response.text)
+
+    async def test_chat_feedback_records_boolean_langfuse_score(self) -> None:
+        with (
+            patch.dict(os.environ, self.environment, clear=True),
+            patch(
+                "app.api.routes.chat.record_user_feedback",
+                return_value=True,
+            ) as record,
+        ):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/api/chat/feedback",
+                    json={"trace_id": "a" * 32, "positive": False},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["recorded"])
+        record.assert_called_once_with(
+            trace_id="a" * 32,
+            positive=False,
+            comment=None,
+        )
+
     async def test_settings_never_returns_saved_secrets(self) -> None:
         environment = dict(self.environment)
         environment.update(
             {
                 "DEEPSEEK_API_KEY": "deepseek-secret-marker",
-                "LANGFUSE_PUBLIC_KEY": "pk-lf-public-secret-marker",
-                "LANGFUSE_SECRET_KEY": "sk-lf-private-secret-marker",
+                "LANGFUSE_PUBLIC_KEY": "test-public-marker",
+                "LANGFUSE_SECRET_KEY": "test-private-marker",
                 "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
             }
         )
@@ -287,11 +340,20 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 "api_key": "deepseek-new-secret-marker",
                 "base_url": "https://api.deepseek.com",
                 "model": "deepseek-v4-pro",
+                "input_price_per_million": 0.435,
+                "output_price_per_million": 0.87,
             },
             "siliconflow": {
                 "api_key": "siliconflow-new-secret-marker",
                 "base_url": "https://api.siliconflow.cn/v1",
                 "model": "deepseek-ai/DeepSeek-V3.1-Terminus",
+                "input_price_per_million": 4,
+                "output_price_per_million": 12,
+            },
+            "routing": {
+                "sql": {"provider": "siliconflow", "model": "deepseek-ai/DeepSeek-V3.1-Terminus"},
+                "answer": {"provider": "deepseek", "model": "deepseek-v4-pro"},
+                "general": {"provider": "siliconflow", "model": "deepseek-ai/DeepSeek-V3.1-Terminus"},
             },
             "langfuse": {
                 "public_key": "pk-lf-new-public-marker",
@@ -308,6 +370,14 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 "company_id": 1,
                 "statement_timeout_ms": 15000,
                 "max_rows": 500,
+            },
+            "state_database": {
+                "enabled": False,
+                "host": "127.0.0.1",
+                "port": 55432,
+                "database": "odoo_agent_state",
+                "user": "odoo_agent_state",
+                "password": None,
             },
         }
 
@@ -331,9 +401,62 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["SILICONFLOW_API_KEY"], "siliconflow-new-secret-marker")
         self.assertEqual(saved["ODOO_DB_USER"], "codex_readonly")
         self.assertEqual(saved["ODOO_COMPANY_ID"], "1")
+        self.assertEqual(saved["SQL_LLM_PROVIDER"], "siliconflow")
+        self.assertEqual(saved["ANSWER_LLM_PROVIDER"], "deepseek")
         self.assertTrue(response.json()["providers"]["siliconflow"]["configured"])
         self.assertNotIn("new-secret-marker", response.text)
         self.assertNotIn("new-public-marker", response.text)
+
+    async def test_settings_rejects_odoo_database_as_checkpoint_database(self) -> None:
+        request = {
+            "selected_provider": "deepseek",
+            "deepseek": {
+                "base_url": "https://api.deepseek.com",
+                "model": "deepseek-v4-pro",
+                "input_price_per_million": 0.435,
+                "output_price_per_million": 0.87,
+            },
+            "siliconflow": {
+                "base_url": "https://api.siliconflow.cn/v1",
+                "model": "deepseek-ai/DeepSeek-V3.1-Terminus",
+                "input_price_per_million": 4,
+                "output_price_per_million": 12,
+            },
+            "routing": {
+                "sql": {"provider": "deepseek", "model": "deepseek-v4-pro"},
+                "answer": {"provider": "deepseek", "model": "deepseek-v4-pro"},
+                "general": {"provider": "deepseek", "model": "deepseek-v4-pro"},
+            },
+            "langfuse": {
+                "base_url": "https://cloud.langfuse.com",
+                "enabled": False,
+            },
+            "database": {
+                "host": "127.0.0.1",
+                "port": 55432,
+                "database": "odoo19_dev",
+                "user": "codex_readonly",
+                "company_id": 1,
+                "statement_timeout_ms": 15000,
+                "max_rows": 500,
+            },
+            "state_database": {
+                "enabled": True,
+                "host": "127.0.0.1",
+                "port": 55432,
+                "database": "odoo19_dev",
+                "user": "writer",
+            },
+        }
+
+        with patch.dict(os.environ, self.environment, clear=True):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.put("/api/settings", json=request)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("必须与 Odoo 业务数据库分离", response.json()["detail"])
 
     async def test_fastapi_serves_only_allowlisted_ui_files(self) -> None:
         with patch.dict(os.environ, self.environment, clear=True):

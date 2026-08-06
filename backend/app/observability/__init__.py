@@ -1,9 +1,11 @@
 """Observability helpers for Odoo Agent."""
 
 from .langfuse_tracing import (
+    flush_langfuse,
     get_current_trace_id,
     get_current_trace_url,
     langfuse_is_configured,
+    record_user_feedback,
     redact_for_trace,
     trace_agent,
     trace_chat_turn,
@@ -11,10 +13,13 @@ from .langfuse_tracing import (
     trace_retrieval,
     trace_tool,
     update_observation,
+    warm_langfuse_client,
 )
 
 __all__ = [
     "langfuse_is_configured",
+    "flush_langfuse",
+    "record_user_feedback",
     "get_current_trace_id",
     "get_current_trace_url",
     "redact_for_trace",
@@ -24,4 +29,5 @@ __all__ = [
     "trace_retrieval",
     "trace_tool",
     "update_observation",
+    "warm_langfuse_client",
 ]

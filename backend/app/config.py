@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 ProviderName = Literal["deepseek", "siliconflow"]
+ModelRole = Literal["sql", "answer", "general"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,10 +21,37 @@ class ProviderConfig:
     base_url: str
     model: str
     timeout_seconds: float
+    input_price_per_million: float = 0.0
+    output_price_per_million: float = 0.0
+    pricing_currency: Literal["USD", "CNY"] = "USD"
+    cny_per_usd: float = 7.2
 
     @property
     def configured(self) -> bool:
         return bool(self.api_key and self.base_url and self.model)
+
+    def estimated_cost_usd(
+        self,
+        *,
+        input_tokens: int | None,
+        output_tokens: int | None,
+    ) -> tuple[float, float]:
+        input_cost = (input_tokens or 0) * self.input_price_per_million / 1_000_000
+        output_cost = (output_tokens or 0) * self.output_price_per_million / 1_000_000
+        if self.pricing_currency == "CNY":
+            input_cost /= self.cny_per_usd
+            output_cost /= self.cny_per_usd
+        return input_cost, output_cost
+
+
+@dataclass(frozen=True, slots=True)
+class ModelRoutingConfig:
+    sql: ProviderConfig
+    answer: ProviderConfig
+    general: ProviderConfig
+
+    def for_role(self, role: ModelRole) -> ProviderConfig:
+        return getattr(self, role)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +70,26 @@ class DatabaseConfig:
         return bool(self.host and self.port and self.database and self.user)
 
 
+@dataclass(frozen=True, slots=True)
+class StateDatabaseConfig:
+    enabled: bool
+    host: str
+    port: int
+    database: str
+    user: str
+    password: str | None
+
+    @property
+    def configured(self) -> bool:
+        return bool(
+            self.enabled
+            and self.host
+            and self.port
+            and self.database
+            and self.user
+        )
+
+
 class Settings(BaseSettings):
     """Settings intentionally avoid `.env` files so credentials stay out of Git."""
 
@@ -54,7 +102,7 @@ class Settings(BaseSettings):
         default="Odoo Sales Agent",
         validation_alias="ODOO_AGENT_APP_NAME",
     )
-    app_version: str = "0.1.0"
+    app_version: str = "0.2.0"
     environment: Literal["development", "test", "production"] = Field(
         default="development",
         validation_alias="ODOO_AGENT_ENVIRONMENT",
@@ -84,6 +132,16 @@ class Settings(BaseSettings):
         default="deepseek-v4-pro",
         validation_alias="DEEPSEEK_MODEL",
     )
+    deepseek_input_price_per_million: float = Field(
+        default=0.435,
+        ge=0,
+        validation_alias="DEEPSEEK_INPUT_PRICE_PER_MILLION",
+    )
+    deepseek_output_price_per_million: float = Field(
+        default=0.87,
+        ge=0,
+        validation_alias="DEEPSEEK_OUTPUT_PRICE_PER_MILLION",
+    )
 
     siliconflow_api_key: SecretStr | None = Field(
         default=None,
@@ -96,6 +154,46 @@ class Settings(BaseSettings):
     siliconflow_model: str = Field(
         default="deepseek-ai/DeepSeek-V3.1-Terminus",
         validation_alias="SILICONFLOW_MODEL",
+    )
+    siliconflow_input_price_per_million: float = Field(
+        default=4.0,
+        ge=0,
+        validation_alias="SILICONFLOW_INPUT_PRICE_PER_MILLION",
+    )
+    siliconflow_output_price_per_million: float = Field(
+        default=12.0,
+        ge=0,
+        validation_alias="SILICONFLOW_OUTPUT_PRICE_PER_MILLION",
+    )
+    cny_per_usd: float = Field(
+        default=7.2,
+        gt=0,
+        validation_alias="CNY_PER_USD",
+    )
+
+    sql_llm_provider: ProviderName | None = Field(
+        default=None,
+        validation_alias="SQL_LLM_PROVIDER",
+    )
+    sql_llm_model: str | None = Field(
+        default=None,
+        validation_alias="SQL_LLM_MODEL",
+    )
+    answer_llm_provider: ProviderName | None = Field(
+        default=None,
+        validation_alias="ANSWER_LLM_PROVIDER",
+    )
+    answer_llm_model: str | None = Field(
+        default=None,
+        validation_alias="ANSWER_LLM_MODEL",
+    )
+    general_llm_provider: ProviderName | None = Field(
+        default=None,
+        validation_alias="GENERAL_LLM_PROVIDER",
+    )
+    general_llm_model: str | None = Field(
+        default=None,
+        validation_alias="GENERAL_LLM_MODEL",
     )
 
     odoo_db_host: str = Field(
@@ -138,7 +236,39 @@ class Settings(BaseSettings):
         validation_alias="ODOO_MAX_ROWS",
     )
 
-    def provider(self, name: ProviderName | None = None) -> ProviderConfig:
+    agent_state_enabled: bool = Field(
+        default=False,
+        validation_alias="AGENT_STATE_ENABLED",
+    )
+    agent_state_db_host: str = Field(
+        default="127.0.0.1",
+        validation_alias="AGENT_STATE_DB_HOST",
+    )
+    agent_state_db_port: int = Field(
+        default=55432,
+        ge=1,
+        le=65535,
+        validation_alias="AGENT_STATE_DB_PORT",
+    )
+    agent_state_db_name: str = Field(
+        default="odoo_agent_state",
+        validation_alias="AGENT_STATE_DB_NAME",
+    )
+    agent_state_db_user: str = Field(
+        default="odoo_agent_state",
+        validation_alias="AGENT_STATE_DB_USER",
+    )
+    agent_state_db_password: SecretStr | None = Field(
+        default=None,
+        validation_alias="AGENT_STATE_DB_PASSWORD",
+    )
+
+    def provider(
+        self,
+        name: ProviderName | None = None,
+        *,
+        model: str | None = None,
+    ) -> ProviderConfig:
         selected = name or self.llm_provider
         if selected == "deepseek":
             secret = (
@@ -150,8 +280,12 @@ class Settings(BaseSettings):
                 name="deepseek",
                 api_key=secret,
                 base_url=str(self.deepseek_base_url).rstrip("/"),
-                model=self.deepseek_model,
+                model=model or self.deepseek_model,
                 timeout_seconds=self.llm_timeout_seconds,
+                input_price_per_million=self.deepseek_input_price_per_million,
+                output_price_per_million=self.deepseek_output_price_per_million,
+                pricing_currency="USD",
+                cny_per_usd=self.cny_per_usd,
             )
 
         secret = (
@@ -163,8 +297,36 @@ class Settings(BaseSettings):
             name="siliconflow",
             api_key=secret,
             base_url=str(self.siliconflow_base_url).rstrip("/"),
-            model=self.siliconflow_model,
+            model=model or self.siliconflow_model,
             timeout_seconds=self.llm_timeout_seconds,
+            input_price_per_million=self.siliconflow_input_price_per_million,
+            output_price_per_million=self.siliconflow_output_price_per_million,
+            pricing_currency="CNY",
+            cny_per_usd=self.cny_per_usd,
+        )
+
+    def routing(self, override_provider: ProviderName | None = None) -> ModelRoutingConfig:
+        if override_provider:
+            provider = self.provider(override_provider)
+            return ModelRoutingConfig(
+                sql=provider,
+                answer=provider,
+                general=provider,
+            )
+
+        return ModelRoutingConfig(
+            sql=self.provider(
+                self.sql_llm_provider or self.llm_provider,
+                model=self.sql_llm_model,
+            ),
+            answer=self.provider(
+                self.answer_llm_provider or self.llm_provider,
+                model=self.answer_llm_model,
+            ),
+            general=self.provider(
+                self.general_llm_provider or self.llm_provider,
+                model=self.general_llm_model,
+            ),
         )
 
     def database(self) -> DatabaseConfig:
@@ -182,6 +344,21 @@ class Settings(BaseSettings):
             company_id=self.odoo_company_id,
             statement_timeout_ms=self.odoo_statement_timeout_ms,
             max_rows=self.odoo_max_rows,
+        )
+
+    def state_database(self) -> StateDatabaseConfig:
+        password = (
+            self.agent_state_db_password.get_secret_value()
+            if self.agent_state_db_password
+            else None
+        )
+        return StateDatabaseConfig(
+            enabled=self.agent_state_enabled,
+            host=self.agent_state_db_host,
+            port=self.agent_state_db_port,
+            database=self.agent_state_db_name,
+            user=self.agent_state_db_user,
+            password=password,
         )
 
 

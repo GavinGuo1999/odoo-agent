@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from app.config import ProviderName
+from app.schemas.query_plan import QueryPlan
 
 
 class ChatHistoryMessage(BaseModel):
@@ -19,10 +20,34 @@ class ChatRequest(BaseModel):
     history: list[ChatHistoryMessage] = Field(default_factory=list, max_length=20)
 
 
+class ChatResumeRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=200)
+    answer: str = Field(min_length=1, max_length=4_000)
+    provider: ProviderName | None = None
+
+
+class ChatFeedbackRequest(BaseModel):
+    trace_id: str = Field(pattern=r"^[a-fA-F0-9]{32}$")
+    positive: bool
+    comment: str | None = Field(default=None, max_length=500)
+
+
 class TokenUsage(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
     total_tokens: int | None = None
+    estimated_cost_usd: float = 0.0
+
+
+class InterruptInfo(BaseModel):
+    type: Literal["clarification"] = "clarification"
+    question: str
+    ambiguities: list[str] = Field(default_factory=list)
+
+
+class ModelExecution(BaseModel):
+    provider: str
+    model: str
 
 
 class ChartSpec(BaseModel):
@@ -40,6 +65,8 @@ class ChatResponse(BaseModel):
     usage: TokenUsage
     trace_id: str | None = None
     trace_url: str | None = None
+    status: Literal["completed", "interrupted"] = "completed"
+    interrupt: InterruptInfo | None = None
     data_accessed: bool = False
     phase: Literal["general-chat", "semantic-layer", "text2sql"] = "general-chat"
     intent: Literal["general", "semantic", "data"] = "general"
@@ -55,3 +82,18 @@ class ChatResponse(BaseModel):
     query_ms: float | None = None
     truncated: bool = False
     warnings: list[str] = Field(default_factory=list)
+    query_plan: QueryPlan | None = None
+    answer_mode: Literal["llm", "deterministic", "semantic", "failure"] = "llm"
+    model_roles: dict[str, ModelExecution] = Field(default_factory=dict)
+
+
+class ChatSessionView(BaseModel):
+    session_id: str
+    history: list[ChatHistoryMessage] = Field(default_factory=list)
+    pending_interrupt: InterruptInfo | None = None
+    persistence_mode: Literal["memory", "postgres"]
+
+
+class ChatFeedbackResponse(BaseModel):
+    recorded: bool
+    score_name: Literal["user-thumbs"] = "user-thumbs"

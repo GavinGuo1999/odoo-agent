@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -36,9 +37,20 @@ class LLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             base_url="https://api.deepseek.com",
             model="deepseek-v4-pro",
             timeout_seconds=30,
+            input_price_per_million=1.0,
+            output_price_per_million=2.0,
         )
 
-        with patch("app.llm.gateway.AsyncOpenAI", return_value=client):
+        observation = Mock()
+
+        @contextmanager
+        def fake_generation(**_kwargs):
+            yield observation
+
+        with (
+            patch("app.llm.gateway.AsyncOpenAI", return_value=client),
+            patch("app.llm.gateway.trace_generation", side_effect=fake_generation) as trace,
+        ):
             result = await LLMGateway(config).complete(
                 messages=[{"role": "user", "content": "你好"}],
                 generation_name="generate-model-response",
@@ -47,12 +59,17 @@ class LLMGatewayTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.content, "连接正常")
         self.assertEqual(result.total_tokens, 12)
+        self.assertAlmostEqual(result.total_cost_usd, 0.000016)
         call = client.chat.completions.create.await_args.kwargs
-        self.assertEqual(call["name"], "generate-model-response")
-        self.assertEqual(call["metadata"]["provider"], "deepseek")
+        self.assertEqual(call["model"], "deepseek-v4-pro")
+        self.assertNotIn("name", call)
+        trace.assert_called_once_with(
+            name="generate-model-response",
+            model="deepseek-v4-pro",
+            input_data={"messages": [{"role": "user", "content": "你好"}]},
+        )
         client.close.assert_awaited_once()
 
 
 if __name__ == "__main__":
     unittest.main()
-

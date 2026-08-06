@@ -10,6 +10,7 @@ import os
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
+from functools import lru_cache
 from typing import Any
 
 from langfuse import get_client, propagate_attributes
@@ -34,6 +35,13 @@ _SECRET_PATTERNS = (
 )
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 _REDACTED = "[REDACTED]"
+
+
+@lru_cache(maxsize=1)
+def _langfuse_client() -> Any:
+    # Langfuse 4.14 returns a new facade from get_client() on each call. A
+    # process-level client retains the project ID needed for immediate URLs.
+    return get_client()
 
 
 def _is_enabled() -> bool:
@@ -62,7 +70,7 @@ def get_current_trace_id() -> str | None:
 
     if not langfuse_is_configured():
         return None
-    return get_client().get_current_trace_id()
+    return _langfuse_client().get_current_trace_id()
 
 
 def get_current_trace_url(trace_id: str | None = None) -> str | None:
@@ -71,9 +79,51 @@ def get_current_trace_url(trace_id: str | None = None) -> str | None:
     if not langfuse_is_configured():
         return None
     try:
-        return get_client().get_trace_url(trace_id=trace_id)
+        return _langfuse_client().get_trace_url(trace_id=trace_id)
     except Exception:
         return None
+
+
+def warm_langfuse_client() -> bool:
+    """Authenticate once and cache the project ID used to build trace URLs."""
+
+    if not langfuse_is_configured():
+        return False
+    try:
+        client = _langfuse_client()
+        if not client.auth_check():
+            return False
+        return bool(client.get_trace_url(trace_id="0" * 32))
+    except Exception:
+        return False
+
+
+def record_user_feedback(
+    *,
+    trace_id: str,
+    positive: bool,
+    comment: str | None = None,
+) -> bool:
+    """Record explicit chat feedback as a BOOLEAN trace score."""
+
+    if not langfuse_is_configured():
+        return False
+    client = _langfuse_client()
+    client.create_score(
+        trace_id=trace_id,
+        name="user-thumbs",
+        value=1.0 if positive else 0.0,
+        data_type="BOOLEAN",
+        comment=comment,
+        metadata={"source": "odoo-agent-chat"},
+    )
+    client.flush()
+    return True
+
+
+def flush_langfuse() -> None:
+    if langfuse_is_configured():
+        _langfuse_client().flush()
 
 
 def _redact_string(value: str) -> str:
@@ -131,7 +181,7 @@ def _observation(
         yield None
         return
 
-    client = get_client()
+    client = _langfuse_client()
     kwargs: dict[str, Any] = {
         "as_type": as_type,
         "name": name,

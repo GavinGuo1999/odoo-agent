@@ -407,6 +407,9 @@
   const providerModelInput = document.querySelector("[data-provider-model]");
   const providerModelOptions = document.querySelector("[data-provider-model-options]");
   const providerModelHelp = document.querySelector("[data-provider-model-help]");
+  const providerInputPrice = document.querySelector("[data-provider-input-price]");
+  const providerOutputPrice = document.querySelector("[data-provider-output-price]");
+  const providerPricingCurrency = document.querySelector("[data-provider-pricing-currency]");
   const refreshModelsButton = document.querySelector("[data-refresh-models]");
   const providerKeyInput = document.querySelector("[data-provider-key]");
   const providerKeyHelp = document.querySelector("[data-provider-key-help]");
@@ -437,6 +440,16 @@
   const schemaList = document.querySelector("[data-schema-list]");
   const queryMaxRows = document.querySelector("[data-query-max-rows]");
   const queryTimeout = document.querySelector("[data-query-timeout]");
+  const roleProviderInputs = document.querySelectorAll("[data-role-provider]");
+  const roleModelInputs = document.querySelectorAll("[data-role-model]");
+  const stateDatabaseStatus = document.querySelector("[data-state-db-status]");
+  const stateDatabaseEnabled = document.querySelector("[data-state-db-enabled]");
+  const stateDatabaseHost = document.querySelector("[data-state-db-host]");
+  const stateDatabasePort = document.querySelector("[data-state-db-port]");
+  const stateDatabaseName = document.querySelector("[data-state-db-name]");
+  const stateDatabaseUser = document.querySelector("[data-state-db-user]");
+  const stateDatabasePassword = document.querySelector("[data-state-db-password]");
+  const stateDatabaseHelp = document.querySelector("[data-state-db-help]");
 
   const providerDrafts = {
     deepseek: {
@@ -444,15 +457,26 @@
       model: "deepseek-v4-pro",
       configured: false,
       models: [],
-      draftKey: ""
+      draftKey: "",
+      input_price_per_million: 0.435,
+      output_price_per_million: 0.87,
+      pricing_currency: "USD"
     },
     siliconflow: {
       base_url: "https://api.siliconflow.cn/v1",
       model: "deepseek-ai/DeepSeek-V3.1-Terminus",
       configured: false,
       models: [],
-      draftKey: ""
+      draftKey: "",
+      input_price_per_million: 4,
+      output_price_per_million: 12,
+      pricing_currency: "CNY"
     }
+  };
+  const routingDraft = {
+    sql: { provider: "deepseek", model: "deepseek-v4-pro" },
+    answer: { provider: "deepseek", model: "deepseek-v4-pro" },
+    general: { provider: "deepseek", model: "deepseek-v4-pro" }
   };
   let activeProvider = "deepseek";
 
@@ -477,6 +501,8 @@
     draft.base_url = providerUrlInput.value.trim();
     draft.model = providerModelInput.value.trim();
     draft.draftKey = providerKeyInput.value.trim();
+    draft.input_price_per_million = Number(providerInputPrice?.value || 0);
+    draft.output_price_per_million = Number(providerOutputPrice?.value || 0);
   }
 
   function renderActiveProvider() {
@@ -486,6 +512,11 @@
     });
     if (providerUrlInput) providerUrlInput.value = draft.base_url;
     if (providerModelInput) providerModelInput.value = draft.model;
+    if (providerInputPrice) providerInputPrice.value = draft.input_price_per_million;
+    if (providerOutputPrice) providerOutputPrice.value = draft.output_price_per_million;
+    if (providerPricingCurrency) {
+      providerPricingCurrency.textContent = `${draft.pricing_currency} / 百万 Token，用于 Langfuse Cost 估算`;
+    }
     if (providerModelOptions) {
       providerModelOptions.innerHTML = "";
       draft.models.forEach((modelId) => {
@@ -599,6 +630,69 @@
     setStatusBadge(databaseStatus, config.configured ? "已配置" : "未配置", config.configured ? "success" : "warning");
   }
 
+  function renderRoutingSettings(config) {
+    if (!config) return;
+    Object.entries(config).forEach(([role, value]) => {
+      routingDraft[role] = { ...value };
+      const providerInput = document.querySelector(`[data-role-provider="${role}"]`);
+      const modelInput = document.querySelector(`[data-role-model="${role}"]`);
+      if (providerInput) providerInput.value = value.provider;
+      if (modelInput) modelInput.value = value.model;
+    });
+  }
+
+  function captureRoutingSettings() {
+    roleProviderInputs.forEach((input) => {
+      const role = input.dataset.roleProvider;
+      if (routingDraft[role]) routingDraft[role].provider = input.value;
+    });
+    roleModelInputs.forEach((input) => {
+      const role = input.dataset.roleModel;
+      if (routingDraft[role]) routingDraft[role].model = input.value.trim();
+    });
+  }
+
+  function renderStateDatabaseSettings(config) {
+    if (!config) return;
+    if (stateDatabaseEnabled) stateDatabaseEnabled.checked = config.enabled;
+    if (stateDatabaseHost) stateDatabaseHost.value = config.host;
+    if (stateDatabasePort) stateDatabasePort.value = config.port;
+    if (stateDatabaseName) stateDatabaseName.value = config.database;
+    if (stateDatabaseUser) stateDatabaseUser.value = config.user;
+    if (stateDatabasePassword) {
+      stateDatabasePassword.value = "";
+      stateDatabasePassword.placeholder = config.password_configured
+        ? "已配置，留空不修改"
+        : "请输入独立状态库密码";
+    }
+    const label = config.active_mode === "postgres"
+      ? "PostgreSQL 已连接"
+      : (config.error_type ? "连接失败" : "内存模式");
+    setStatusBadge(
+      stateDatabaseStatus,
+      label,
+      config.active_mode === "postgres" ? "success" : (config.error_type ? "warning" : "neutral")
+    );
+    if (stateDatabaseHelp) {
+      stateDatabaseHelp.textContent = config.error_type
+        ? `状态库启动失败：${config.error_type}。当前已安全降级为内存模式。`
+        : (config.active_mode === "postgres"
+          ? "会话、Checkpoint 与 Interrupt 已持久化到独立状态库。"
+          : "未启用时使用进程内存；启用或修改后需要重启应用。");
+    }
+  }
+
+  function stateDatabasePayload() {
+    return {
+      enabled: stateDatabaseEnabled?.checked ?? false,
+      host: stateDatabaseHost?.value.trim() || "127.0.0.1",
+      port: Number(stateDatabasePort?.value || 55432),
+      database: stateDatabaseName?.value.trim() || "odoo_agent_state",
+      user: stateDatabaseUser?.value.trim() || "odoo_agent_state",
+      password: stateDatabasePassword?.value.trim() || null
+    };
+  }
+
   async function loadSemanticConfiguration() {
     if (!metricsTable && !schemaList) return;
     try {
@@ -689,8 +783,10 @@
       });
       activeProvider = data.selected_provider;
       renderActiveProvider();
+      renderRoutingSettings(data.routing);
       renderLangfuseStatus(data.langfuse);
       renderDatabaseSettings(data.database);
+      renderStateDatabaseSettings(data.state_database);
       showSettingsFeedback("配置已从本机后端读取。密钥只显示状态，不会回显明文。");
       loadProviderModels({ quiet: true });
       refreshDatabaseStatus();
@@ -704,6 +800,7 @@
 
   async function saveSettings({ quiet = false } = {}) {
     captureActiveProvider();
+    captureRoutingSettings();
     const publicKey = langfusePublicKeyInput?.value.trim() || "";
     const secretKey = langfuseSecretKeyInput?.value.trim() || "";
     const body = {
@@ -711,20 +808,26 @@
       deepseek: {
         base_url: providerDrafts.deepseek.base_url,
         model: providerDrafts.deepseek.model,
-        api_key: providerDrafts.deepseek.draftKey || null
+        api_key: providerDrafts.deepseek.draftKey || null,
+        input_price_per_million: providerDrafts.deepseek.input_price_per_million,
+        output_price_per_million: providerDrafts.deepseek.output_price_per_million
       },
       siliconflow: {
         base_url: providerDrafts.siliconflow.base_url,
         model: providerDrafts.siliconflow.model,
-        api_key: providerDrafts.siliconflow.draftKey || null
+        api_key: providerDrafts.siliconflow.draftKey || null,
+        input_price_per_million: providerDrafts.siliconflow.input_price_per_million,
+        output_price_per_million: providerDrafts.siliconflow.output_price_per_million
       },
+      routing: routingDraft,
       langfuse: {
         base_url: langfuseUrlInput?.value.trim() || "https://cloud.langfuse.com",
         enabled: langfuseEnabledInput?.checked ?? true,
         public_key: publicKey || null,
         secret_key: secretKey || null
       },
-      database: databasePayload()
+      database: databasePayload(),
+      state_database: stateDatabasePayload()
     };
 
     const data = await apiRequest("/settings", {
@@ -735,8 +838,10 @@
       Object.assign(providerDrafts[name], config, { draftKey: "" });
     });
     renderActiveProvider();
+    renderRoutingSettings(data.routing);
     renderLangfuseStatus(data.langfuse);
     renderDatabaseSettings(data.database);
+    renderStateDatabaseSettings(data.state_database);
     const message = data.restart_required
       ? "配置已保存。你更换了 Langfuse 连接信息，请关闭后端窗口并重新双击 BAT。"
       : "配置已保存，并已对新的模型请求生效。";
@@ -893,9 +998,14 @@
   const query = new URLSearchParams(window.location.search).get("q");
   if (query && chatInput) setChatQuestion(query);
 
-  let chatSessionId = window.crypto?.randomUUID?.() || `chat-${Date.now()}`;
+  const chatSessionStorageKey = "odoo-agent-current-session";
+  let chatSessionId = window.localStorage.getItem(chatSessionStorageKey)
+    || window.crypto?.randomUUID?.()
+    || `chat-${Date.now()}`;
+  window.localStorage.setItem(chatSessionStorageKey, chatSessionId);
   let chatHistory = [];
   let chatSending = false;
+  let pendingInterrupt = null;
 
   function fieldLabel(field, metadata = {}) {
     return metadata.column_labels?.[field] || metadata.metric_labels?.[field] || field;
@@ -1121,6 +1231,10 @@
       meta.className = "chat-response-meta";
       const phaseLabel = { "general-chat": "普通问答", "semantic-layer": "指标口径", "text2sql": "Odoo 只读查询" }[metadata.phase] || "智能回答";
       meta.append(`${phaseLabel} · ${metadata.provider} · ${metadata.model}`);
+      if (metadata.answer_mode === "deterministic") meta.append(" · 确定性摘要（省略第二次模型调用）");
+      if (metadata.usage?.estimated_cost_usd > 0) {
+        meta.append(` · 估算 $${Number(metadata.usage.estimated_cost_usd).toFixed(6)}`);
+      }
       if (metadata.trace_url) {
         meta.append(" · ");
         const traceLink = document.createElement("a");
@@ -1133,6 +1247,37 @@
         meta.append(" · Langfuse Trace 已记录");
       }
       content.appendChild(meta);
+
+      if (metadata.trace_id) {
+        const feedback = document.createElement("div");
+        feedback.className = "chat-feedback";
+        const label = document.createElement("span");
+        label.textContent = "这个回答有帮助吗？";
+        feedback.appendChild(label);
+        [[true, "👍"], [false, "👎"]].forEach(([positive, symbol]) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "chat-feedback-button";
+          button.textContent = symbol;
+          button.setAttribute("aria-label", positive ? "有帮助" : "没帮助");
+          button.addEventListener("click", async () => {
+            feedback.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+            try {
+              await apiRequest("/chat/feedback", {
+                method: "POST",
+                body: JSON.stringify({ trace_id: metadata.trace_id, positive })
+              });
+              button.classList.add("selected");
+              label.textContent = "已记录到 Langfuse";
+            } catch (error) {
+              label.textContent = `反馈未记录：${error.message}`;
+              feedback.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+            }
+          });
+          feedback.appendChild(button);
+        });
+        content.appendChild(feedback);
+      }
     }
 
     message.appendChild(avatar);
@@ -1185,19 +1330,77 @@
     }
   }
 
+  async function streamApi(path, body, onProgress) {
+    const response = await window.fetch(`${apiBase}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(typeof payload.detail === "string" ? payload.detail : `请求失败（HTTP ${response.status}）`);
+    }
+    if (!response.body) throw new Error("浏览器没有收到流式响应。");
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let result = null;
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const blocks = buffer.replace(/\r\n/g, "\n").split("\n\n");
+      buffer = blocks.pop() || "";
+      blocks.forEach((block) => {
+        if (!block.trim()) return;
+        let eventName = "message";
+        const dataLines = [];
+        block.split("\n").forEach((line) => {
+          if (line.startsWith("event:")) eventName = line.slice(6).trim();
+          if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+        });
+        if (!dataLines.length) return;
+        const payload = JSON.parse(dataLines.join("\n"));
+        if (eventName === "progress") onProgress?.(payload);
+        if (eventName === "result") result = payload;
+        if (eventName === "error") throw new Error(payload.detail || "流式请求失败");
+      });
+      if (done) break;
+    }
+    if (!result) throw new Error("流式请求结束但没有返回最终结果。");
+    return result;
+  }
+
+  async function restoreChatSession() {
+    if (!chatThread) return;
+    try {
+      const session = await apiRequest(`/chat/sessions/${encodeURIComponent(chatSessionId)}`);
+      if (!session.history.length && !session.pending_interrupt) return;
+      chatThread.innerHTML = "";
+      chatHistory = session.history.map((message) => ({ ...message }));
+      chatHistory.forEach((message) => appendChatMessage(message.role, message.content));
+      pendingInterrupt = session.pending_interrupt;
+      if (pendingInterrupt) appendChatMessage("assistant", pendingInterrupt.question);
+      showToast(session.persistence_mode === "postgres" ? "已恢复持久会话" : "已恢复当前进程会话");
+    } catch (_error) {
+      // A new session has no checkpoint yet; keep the welcome message.
+    }
+  }
+
   async function sendChatMessage() {
     if (!chatInput || !chatThread || chatSending) return;
     const question = chatInput.value.trim();
     if (!question) return;
 
     const priorHistory = chatHistory.slice(-12);
+    const isResume = Boolean(pendingInterrupt);
     chatHistory.push({ role: "user", content: question });
     appendChatMessage("user", question);
     chatInput.value = "";
 
     const thinking = document.createElement("div");
     thinking.className = "message assistant-thinking";
-    thinking.innerHTML = `<div class="message-avatar">AI</div><div class="message-bubble"><div class="typing"><span></span><span></span><span></span></div></div>`;
+    thinking.innerHTML = `<div class="message-avatar">AI</div><div class="message-bubble"><div class="chat-progress"><div class="typing"><span></span><span></span><span></span></div><span class="chat-progress-label">正在接收任务…</span></div></div>`;
     chatThread.appendChild(thinking);
     chatThread.scrollTop = chatThread.scrollHeight;
     chatSending = true;
@@ -1205,17 +1408,19 @@
     chatInput.disabled = true;
 
     try {
-      const result = await apiRequest("/chat", {
-        method: "POST",
-        body: JSON.stringify({
-          question,
-          session_id: chatSessionId,
-          history: priorHistory
-        })
+      const path = isResume ? "/chat/resume/stream" : "/chat/stream";
+      const body = isResume
+        ? { session_id: chatSessionId, answer: question }
+        : { question, session_id: chatSessionId, history: priorHistory };
+      const result = await streamApi(path, body, (event) => {
+        const label = thinking.querySelector(".chat-progress-label");
+        if (label) label.textContent = event.label || "正在处理…";
+        chatThread.scrollTop = chatThread.scrollHeight;
       });
       thinking.remove();
       appendChatMessage("assistant", result.answer, result);
       chatHistory.push({ role: "assistant", content: result.answer });
+      pendingInterrupt = result.status === "interrupted" ? result.interrupt : null;
     } catch (error) {
       thinking.remove();
       chatHistory.pop();
@@ -1238,13 +1443,16 @@
       }
     });
     loadChatProviderStatus();
+    restoreChatSession();
   }
 
   const newChatButton = document.querySelector("[data-new-chat]");
   if (newChatButton) {
     newChatButton.addEventListener("click", () => {
       chatSessionId = window.crypto?.randomUUID?.() || `chat-${Date.now()}`;
+      window.localStorage.setItem(chatSessionStorageKey, chatSessionId);
       chatHistory = [];
+      pendingInterrupt = null;
       chatThread.innerHTML = "";
       appendWelcomeMessage();
       showToast("已开始新会话");

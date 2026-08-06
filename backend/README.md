@@ -40,4 +40,25 @@ Set-Location D:\odoo19e\odoo-agent
 - Odoo 元数据、指标口径和示例检索使用 `retriever`。
 - 只读 SQL 执行使用 `tool`。
 - 调用结束时使用 `update_observation(...)` 更新 `output`；模型调用同时记录实际 token usage。
+- 每个 Generation 显式记录 `usage_details` 和按页面配置单价估算的 `cost_details`。
 - 密钥、密码、Token、Cookie 等内容会在发送前被替换为 `[REDACTED]`。
+
+## 独立状态数据库
+
+首次配置：
+
+```powershell
+Set-Location D:\odoo19e\odoo-agent
+.\configure-agent-state.ps1
+```
+
+它创建 `odoo_agent_state` 数据库和独立读写账号，并配置 `AsyncPostgresSaver`。应用启动时自动初始化 Checkpointer 表；连接失败时降级为进程内存模式，不会改用 Odoo 业务库。Windows 上 Uvicorn 使用项目提供的 Selector event loop，以兼容 psycopg 异步连接。
+
+## 对话协议
+
+- `POST /api/chat/stream`：SSE 返回 `progress` 与最终 `result` 事件。
+- `POST /api/chat/resume/stream`：使用原 `session_id` 和澄清答案恢复 Interrupt。
+- `GET /api/chat/sessions/{session_id}`：读取已保存历史、待处理 Interrupt 和持久化模式。
+- `POST /api/chat/feedback`：由后端把 👍/👎 写成 Langfuse BOOLEAN `user-thumbs` Score。
+
+SQL 模型一次返回严格的 Pydantic `QueryPlan + sql`。简单 KPI、Top N、趋势和空结果使用确定性回答；复杂结果才调用回答模型。三个模型角色通过 `SQL_LLM_*`、`ANSWER_LLM_*`、`GENERAL_LLM_*` 配置，也可以直接在设置页修改。
