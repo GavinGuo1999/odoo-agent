@@ -31,6 +31,7 @@ def sql_generation_prompt(
 - 所有销售查询必须显式包含 required_company_id 对应的 company_id 等值过滤。
 - 销售额和订单数默认只统计 semantic_context 指标给出的订单状态。
 - 时间分组使用 semantic_context 的 timezone 和 date_field。
+- 时间趋势字段统一使用 day、week、month、quarter 或 year 作为别名；“每月/月度”问题必须返回 month 列并按它升序排列。
 - JSONB 多语言名称优先使用 ->>'zh_CN'，并回退到 ->>'en_US'。
 - 不要写解释，不要猜不存在的列。
 </hard_constraints>

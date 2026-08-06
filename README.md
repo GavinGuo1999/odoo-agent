@@ -1,5 +1,7 @@
 # Odoo Sales Agent
 
+Langfuse 的日常排错、Session、成本和评测用法见 [LANGFUSE_GUIDE.md](LANGFUSE_GUIDE.md)。
+
 面向单公司、单用户、只读销售分析场景的 Odoo ChatBI 项目。
 
 ## 当前进度

@@ -5,9 +5,15 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.bi import SalesAgent
+from app.bi.presentation import presentation_metadata
 from app.config import Settings, get_settings
 from app.llm import ProviderNotConfiguredError
-from app.observability import get_current_trace_id, trace_chat_turn, update_observation
+from app.observability import (
+    get_current_trace_id,
+    get_current_trace_url,
+    trace_chat_turn,
+    update_observation,
+)
 from app.schemas import ChartSpec, ChatRequest, ChatResponse, TokenUsage
 
 
@@ -58,6 +64,11 @@ async def chat(
                 detail=f"Agent request failed: {type(exc).__name__}",
             ) from exc
 
+        trace_id = get_current_trace_id()
+        column_labels, column_formats, metric_labels = presentation_metadata(
+            outcome.columns,
+            outcome.metrics,
+        )
         response = ChatResponse(
             answer=outcome.answer,
             session_id=session_id,
@@ -68,7 +79,8 @@ async def chat(
                 output_tokens=outcome.output_tokens,
                 total_tokens=outcome.total_tokens,
             ),
-            trace_id=get_current_trace_id(),
+            trace_id=trace_id,
+            trace_url=get_current_trace_url(trace_id),
             data_accessed=outcome.data_accessed,
             phase=outcome.phase,
             intent=outcome.intent,
@@ -77,6 +89,10 @@ async def chat(
             rows=outcome.rows,
             chart=ChartSpec.model_validate(outcome.chart) if outcome.chart else None,
             metrics=outcome.metrics,
+            currency=outcome.currency,
+            column_labels=column_labels,
+            column_formats=column_formats,
+            metric_labels=metric_labels,
             query_ms=outcome.query_ms,
             truncated=outcome.truncated,
             warnings=outcome.warnings,
@@ -85,6 +101,7 @@ async def chat(
             turn,
             output={
                 "status": "ok",
+                "answer": response.answer,
                 "intent": response.intent,
                 "provider": response.provider,
                 "model": response.model,

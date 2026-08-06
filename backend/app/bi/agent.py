@@ -15,6 +15,7 @@ from app.bi.prompts import (
     sql_repair_prompt,
 )
 from app.bi.semantic import SalesSemanticLayer
+from app.bi.time_series import complete_year_months
 from app.config import DatabaseConfig, ProviderConfig
 from app.database import OdooDatabase, ReadOnlySqlGuard
 from app.llm import LLMGateway, LLMResult
@@ -51,6 +52,7 @@ class AgentState(TypedDict, total=False):
     data_accessed: bool
     chart: dict[str, Any]
     warnings: list[str]
+    filled_time_buckets: int
     repair_count: int
     input_tokens: int
     output_tokens: int
@@ -75,6 +77,7 @@ class AgentOutcome:
     query_ms: float | None = None
     truncated: bool = False
     warnings: list[str] = field(default_factory=list)
+    currency: str | None = None
 
     @property
     def phase(self) -> str:
@@ -248,6 +251,7 @@ class SalesAgent:
             query_ms=state.get("query_ms"),
             truncated=state.get("truncated", False),
             warnings=state.get("warnings", []),
+            currency=state.get("currency"),
         )
 
     def _classify(self, state: AgentState) -> dict[str, Any]:
@@ -440,23 +444,35 @@ class SalesAgent:
                 )
                 return {"sql_errors": errors, "data_accessed": False}
 
+            display_rows, filled_time_buckets = complete_year_months(
+                question=state["question"],
+                columns=result.columns,
+                rows=result.rows,
+            )
             update_observation(
                 observation,
                 output={
                     "status": "ok",
                     "columns": result.columns,
-                    "row_count": result.row_count,
+                    "raw_row_count": result.row_count,
+                    "display_row_count": len(display_rows),
+                    "filled_time_buckets": filled_time_buckets,
                     "truncated": result.truncated,
                     "duration_ms": result.duration_ms,
                 },
             )
+        warnings = state.get("warnings", [])
+        if filled_time_buckets:
+            warnings = warnings + ["无订单月份已按 0 展示；这只补齐时间刻度，不代表新增业务数据。"]
         return {
             "columns": result.columns,
-            "rows": result.rows,
+            "rows": display_rows,
             "query_ms": result.duration_ms,
             "truncated": result.truncated,
             "data_accessed": True,
             "sql_errors": [],
+            "filled_time_buckets": filled_time_buckets,
+            "warnings": warnings,
         }
 
     def _route_after_execution(self, state: AgentState) -> str:

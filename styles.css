@@ -1141,6 +1141,16 @@ button {
   font-size: 10px;
 }
 
+.chat-response-meta a {
+  color: var(--primary);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.chat-response-meta a:hover {
+  text-decoration: underline;
+}
+
 .agent-result-card {
   width: min(780px, calc(100vw - 390px));
   min-width: 460px;
@@ -1207,7 +1217,7 @@ button {
 
 .agent-echart {
   width: 100%;
-  height: 320px;
+  height: 280px;
   padding: 8px;
 }
 
@@ -1221,6 +1231,45 @@ button {
   max-height: 360px;
   overflow: auto;
   border-top: 1px solid var(--border-light);
+}
+
+.result-section {
+  border-top: 1px solid var(--border-light);
+}
+
+.result-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  color: var(--text);
+  background: #fff;
+  cursor: pointer;
+  list-style: none;
+}
+
+.result-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.result-section > summary::before {
+  content: "›";
+  color: var(--primary);
+  font-size: 18px;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 0.15s ease;
+}
+
+.result-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.result-section > summary span {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 400;
 }
 
 .agent-result-table {

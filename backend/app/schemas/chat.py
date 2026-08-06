@@ -39,6 +39,7 @@ class ChatResponse(BaseModel):
     model: str
     usage: TokenUsage
     trace_id: str | None = None
+    trace_url: str | None = None
     data_accessed: bool = False
     phase: Literal["general-chat", "semantic-layer", "text2sql"] = "general-chat"
     intent: Literal["general", "semantic", "data"] = "general"
@@ -47,6 +48,10 @@ class ChatResponse(BaseModel):
     rows: list[dict[str, Any]] = Field(default_factory=list)
     chart: ChartSpec | None = None
     metrics: list[str] = Field(default_factory=list)
+    currency: str | None = None
+    column_labels: dict[str, str] = Field(default_factory=dict)
+    column_formats: dict[str, str] = Field(default_factory=dict)
+    metric_labels: dict[str, str] = Field(default_factory=dict)
     query_ms: float | None = None
     truncated: bool = False
     warnings: list[str] = Field(default_factory=list)

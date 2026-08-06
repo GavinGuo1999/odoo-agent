@@ -127,6 +127,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["intent"], "general")
         self.assertEqual(payload["usage"]["total_tokens"], 22)
         self.assertIsNone(payload["trace_id"])
+        self.assertIsNone(payload["trace_url"])
+        self.assertEqual(payload["column_labels"], {})
 
     async def test_chat_masks_provider_error_details(self) -> None:
         environment = dict(self.environment)

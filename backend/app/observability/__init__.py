@@ -2,6 +2,7 @@
 
 from .langfuse_tracing import (
     get_current_trace_id,
+    get_current_trace_url,
     langfuse_is_configured,
     redact_for_trace,
     trace_agent,
@@ -15,6 +16,7 @@ from .langfuse_tracing import (
 __all__ = [
     "langfuse_is_configured",
     "get_current_trace_id",
+    "get_current_trace_url",
     "redact_for_trace",
     "trace_agent",
     "trace_chat_turn",

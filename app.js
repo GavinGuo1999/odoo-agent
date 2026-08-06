@@ -897,42 +897,68 @@
   let chatHistory = [];
   let chatSending = false;
 
-  function displayValue(value) {
+  function fieldLabel(field, metadata = {}) {
+    return metadata.column_labels?.[field] || metadata.metric_labels?.[field] || field;
+  }
+
+  function displayDateValue(value, field) {
+    const text = String(value);
+    const match = text.match(/^(\d{4})-(\d{2})(?:-(\d{2}))?/);
+    if (!match) return text;
+    if (String(field).toLowerCase().includes("month")) {
+      return `${match[1]}年${Number(match[2])}月`;
+    }
+    return `${match[1]}-${match[2]}-${match[3] || "01"}`;
+  }
+
+  function displayValue(value, field = "", metadata = {}) {
     if (value === null || value === undefined || value === "") return "—";
     if (typeof value === "number") {
-      return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 }).format(value);
+      const format = metadata.column_formats?.[field] || "auto";
+      const digits = format === "integer" ? 0 : 2;
+      const formatted = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: digits }).format(value);
+      if (format === "currency") return `${formatted} ${metadata.currency || ""}`.trim();
+      if (format === "percent") return `${formatted}%`;
+      return formatted;
     }
     if (typeof value === "object") return JSON.stringify(value);
+    if ((metadata.column_formats?.[field] || "") === "date") return displayDateValue(value, field);
     return String(value);
   }
 
-  function chartOption(spec, rows) {
+  function chartOption(spec, rows, metadata) {
     const xField = spec.x_field;
     const yFields = spec.y_fields || [];
     const palette = ["#714b67", "#017e84", "#e28b46", "#6c63a8"];
     if (spec.type === "pie") {
       const yField = yFields[0];
       return {
-        tooltip: { trigger: "item" },
+        tooltip: {
+          trigger: "item",
+          valueFormatter: (value) => displayValue(value, yField, metadata)
+        },
         legend: { bottom: 0 },
         series: [{
-          name: yField,
+          name: fieldLabel(yField, metadata),
           type: "pie",
           radius: ["42%", "70%"],
-          data: rows.map((row) => ({ name: displayValue(row[xField]), value: row[yField] })),
+          data: rows.map((row) => ({ name: displayValue(row[xField], xField, metadata), value: row[yField] })),
           itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 }
         }],
         color: palette
       };
     }
     return {
-      tooltip: { trigger: "axis" },
+      tooltip: {
+        trigger: "axis",
+        valueFormatter: (value) => displayValue(value, yFields[0], metadata)
+      },
       legend: { bottom: 0 },
       grid: { left: 18, right: 20, top: 24, bottom: 48, containLabel: true },
-      xAxis: { type: "category", data: rows.map((row) => displayValue(row[xField])), axisLabel: { color: "#6f6672" } },
+      xAxis: { type: "category", data: rows.map((row) => displayValue(row[xField], xField, metadata)), axisLabel: { color: "#6f6672" } },
       yAxis: { type: "value", axisLabel: { color: "#6f6672" }, splitLine: { lineStyle: { color: "#eee9ed" } } },
       series: yFields.map((field, index) => ({
-        name: field,
+        name: fieldLabel(field, metadata),
         type: spec.type,
         data: rows.map((row) => row[field]),
         smooth: spec.type === "line",
@@ -941,6 +967,20 @@
         lineStyle: { width: 3 }
       }))
     };
+  }
+
+  function resultSection(title, detail, open = false) {
+    const section = document.createElement("details");
+    section.className = "result-section";
+    section.open = open;
+    const summary = document.createElement("summary");
+    const label = document.createElement("strong");
+    label.textContent = title;
+    const note = document.createElement("span");
+    note.textContent = detail;
+    summary.append(label, note);
+    section.appendChild(summary);
+    return section;
   }
 
   function appendResultCard(container, metadata) {
@@ -959,7 +999,7 @@
     metricChips.className = "result-chips";
     (metadata.metrics || []).forEach((metric) => {
       const chip = document.createElement("span");
-      chip.textContent = metric;
+      chip.textContent = metadata.metric_labels?.[metric] || metric;
       metricChips.appendChild(chip);
     });
     summary.append(summaryTitle, metricChips);
@@ -974,17 +1014,19 @@
       metadata.chart.y_fields.forEach((field) => {
         const item = document.createElement("div");
         const label = document.createElement("span");
-        label.textContent = field;
+        label.textContent = fieldLabel(field, metadata);
         const value = document.createElement("strong");
-        value.textContent = displayValue(rows[0][field]);
+        value.textContent = displayValue(rows[0][field], field, metadata);
         item.append(label, value);
         kpis.appendChild(item);
       });
       card.appendChild(kpis);
     } else if (metadata.chart && metadata.chart.type !== "none" && rows.length) {
+      const section = resultSection(metadata.chart.title || "图表", `${rows.length} 个数据点`, true);
       const chart = document.createElement("div");
       chart.className = "agent-echart";
-      card.appendChild(chart);
+      section.appendChild(chart);
+      card.appendChild(section);
       window.requestAnimationFrame(() => {
         if (!window.echarts) {
           chart.textContent = "图表组件未加载，表格结果仍可正常查看。";
@@ -992,13 +1034,17 @@
           return;
         }
         const instance = window.echarts.init(chart, null, { renderer: "svg" });
-        instance.setOption({ animation: false, ...chartOption(metadata.chart, rows) });
+        instance.setOption({ animation: false, ...chartOption(metadata.chart, rows, metadata) });
         const observer = new ResizeObserver(() => instance.resize());
         observer.observe(chart);
+        section.addEventListener("toggle", () => {
+          if (section.open) window.requestAnimationFrame(() => instance.resize());
+        });
       });
     }
 
     if (rows.length && columns.length) {
+      const section = resultSection("明细表", `${rows.length} 行 · ${columns.length} 列`);
       const wrap = document.createElement("div");
       wrap.className = "agent-table-wrap";
       const table = document.createElement("table");
@@ -1007,7 +1053,7 @@
       const headRow = document.createElement("tr");
       columns.forEach((column) => {
         const cell = document.createElement("th");
-        cell.textContent = column;
+        cell.textContent = fieldLabel(column, metadata);
         headRow.appendChild(cell);
       });
       head.appendChild(headRow);
@@ -1016,14 +1062,15 @@
         const tableRow = document.createElement("tr");
         columns.forEach((column) => {
           const cell = document.createElement("td");
-          cell.textContent = displayValue(row[column]);
+          cell.textContent = displayValue(row[column], column, metadata);
           tableRow.appendChild(cell);
         });
         body.appendChild(tableRow);
       });
       table.append(head, body);
       wrap.appendChild(table);
-      card.appendChild(wrap);
+      section.appendChild(wrap);
+      card.appendChild(section);
     }
 
     if (metadata.sql) {
@@ -1072,9 +1119,19 @@
       appendResultCard(content, metadata);
       const meta = document.createElement("div");
       meta.className = "chat-response-meta";
-      const traceLabel = metadata.trace_id ? " · Langfuse Trace 已记录" : "";
       const phaseLabel = { "general-chat": "普通问答", "semantic-layer": "指标口径", "text2sql": "Odoo 只读查询" }[metadata.phase] || "智能回答";
-      meta.textContent = `${phaseLabel} · ${metadata.provider} · ${metadata.model}${traceLabel}`;
+      meta.append(`${phaseLabel} · ${metadata.provider} · ${metadata.model}`);
+      if (metadata.trace_url) {
+        meta.append(" · ");
+        const traceLink = document.createElement("a");
+        traceLink.href = metadata.trace_url;
+        traceLink.target = "_blank";
+        traceLink.rel = "noopener noreferrer";
+        traceLink.textContent = "打开 Langfuse Trace ↗";
+        meta.appendChild(traceLink);
+      } else if (metadata.trace_id) {
+        meta.append(" · Langfuse Trace 已记录");
+      }
       content.appendChild(meta);
     }
 

@@ -65,6 +65,17 @@ def get_current_trace_id() -> str | None:
     return get_client().get_current_trace_id()
 
 
+def get_current_trace_url(trace_id: str | None = None) -> str | None:
+    """Return the direct Langfuse URL for the active trace when configured."""
+
+    if not langfuse_is_configured():
+        return None
+    try:
+        return get_client().get_trace_url(trace_id=trace_id)
+    except Exception:
+        return None
+
+
 def _redact_string(value: str) -> str:
     redacted = value
     for pattern in _SECRET_PATTERNS:
@@ -160,10 +171,11 @@ def trace_chat_turn(
             return
 
         with propagate_attributes(
+            trace_name="odoo-chat-turn",
             session_id=session_id,
             tags=["odoo-agent", "chatbi", "sales"],
             metadata={"provider": provider, "access_mode": "read-only"},
-            version="0.1.0",
+            version="0.2.0",
         ):
             yield observation
 

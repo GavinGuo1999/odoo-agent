@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -65,7 +66,37 @@ class ObservabilityTests(unittest.TestCase):
             output={"answer": "ok", "access_token": "[REDACTED]"}
         )
 
+    def test_chat_turn_uses_stable_trace_attributes(self) -> None:
+        observation = Mock()
+
+        @contextmanager
+        def fake_observation(**_kwargs):
+            yield observation
+
+        with (
+            patch(
+                "app.observability.langfuse_tracing._observation",
+                side_effect=fake_observation,
+            ),
+            patch(
+                "app.observability.langfuse_tracing.propagate_attributes"
+            ) as propagate_attributes,
+        ):
+            with trace_chat_turn(
+                session_id="test-session",
+                question="测试问题",
+                provider="siliconflow",
+            ) as active_observation:
+                self.assertIs(active_observation, observation)
+
+        propagate_attributes.assert_called_once_with(
+            trace_name="odoo-chat-turn",
+            session_id="test-session",
+            tags=["odoo-agent", "chatbi", "sales"],
+            metadata={"provider": "siliconflow", "access_mode": "read-only"},
+            version="0.2.0",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
-
