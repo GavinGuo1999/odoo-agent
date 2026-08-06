@@ -2,6 +2,8 @@
 
 Langfuse 的日常排错、Session、成本和评测用法见 [LANGFUSE_GUIDE.md](LANGFUSE_GUIDE.md)。
 
+针对当前代码现状筛选后的强化顺序、验收指标和暂缓项见 [ENHANCEMENT_ROADMAP.md](ENHANCEMENT_ROADMAP.md)。
+
 Windows 下双击 `start-odoo-agent.bat` 启动，双击 `stop-odoo-agent.bat` 停止本项目的 8090 后端。
 
 面向单公司、单用户、只读销售分析场景的 Odoo ChatBI 项目。
