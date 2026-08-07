@@ -263,7 +263,7 @@ general -> answer-general-question
 - 输入、输出和总 Token；
 - 估算输入、输出和总 Cost。
 
-当前没有自动 provider fallback。模型不可用时返回受控错误；未来只有在三个以上供应商或集中预算/限流出现后再评估 LiteLLM。
+底层调用已统一经过 LiteLLM Python SDK；应用层仍保存 `sql`、`answer`、`general` 三类业务角色和供应商配置。当前没有启用 LiteLLM Router 自动 fallback，模型不可用时仍返回受控错误。等黄金集能够验证 fallback 不改变口径后，再配置重试、fallback 或负载均衡。
 
 ## 11. Checkpointer
 

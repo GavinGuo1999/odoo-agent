@@ -1,11 +1,11 @@
-"""OpenAI-compatible gateway for DeepSeek and SiliconFlow."""
+"""LiteLLM-backed gateway for the application's configured providers."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-from openai import AsyncOpenAI
+import litellm
 
 from app.config import ProviderConfig
 from app.observability import trace_generation, update_observation
@@ -52,18 +52,22 @@ class LLMGateway:
                 f"Provider {active_config.name} is not configured."
             )
 
-        client = AsyncOpenAI(
-            api_key=active_config.api_key,
-            base_url=active_config.base_url,
-            timeout=active_config.timeout_seconds,
-        )
-
         request_options: dict[str, Any] = {}
         if json_mode:
             request_options["response_format"] = {"type": "json_object"}
 
+        # LiteLLM requires an explicit provider prefix. DeepSeek has a native
+        # adapter; SiliconFlow exposes an OpenAI-compatible endpoint.
+        litellm_model = (
+            f"deepseek/{active_config.model}"
+            if active_config.name == "deepseek"
+            else f"openai/{active_config.model}"
+        )
+
         trace_metadata = {
             "provider": active_config.name,
+            "llm_gateway": "litellm-sdk",
+            "gateway_model": litellm_model,
             "generation_role": generation_role or generation_name,
             "pricing_currency": active_config.pricing_currency,
             "pricing_is_estimate": True,
@@ -76,9 +80,12 @@ class LLMGateway:
         ) as observation:
             update_observation(observation, metadata=trace_metadata)
             try:
-                completion = await client.chat.completions.create(
-                    model=active_config.model,
-                    messages=messages,  # type: ignore[arg-type]
+                completion = await litellm.acompletion(
+                    model=litellm_model,
+                    messages=messages,
+                    api_key=active_config.api_key,
+                    api_base=active_config.base_url,
+                    timeout=active_config.timeout_seconds,
                     temperature=0,
                     stream=False,
                     **request_options,
@@ -90,8 +97,6 @@ class LLMGateway:
                     status_message=type(exc).__name__,
                 )
                 raise
-            finally:
-                await client.close()
 
             content = completion.choices[0].message.content
             if not content:

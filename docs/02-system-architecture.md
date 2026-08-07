@@ -16,9 +16,10 @@ flowchart LR
     GRAPH --> GUARD["SQLGlot ReadOnlySqlGuard"]
     GUARD --> ODOO[("Odoo PostgreSQL\nodoo19_dev\n只读")]
     GRAPH --> STATE[("Agent PostgreSQL\nodoo_agent_state\n读写")]
-    GRAPH --> LLM["LLM Gateway"]
-    LLM --> DS["DeepSeek API"]
-    LLM --> SF["硅基流动"]
+    GRAPH --> LLM["Application LLM Gateway"]
+    LLM --> LITELLM["LiteLLM Python SDK"]
+    LITELLM --> DS["DeepSeek API"]
+    LITELLM --> SF["硅基流动"]
     API -. Trace / Score .-> LF["Langfuse"]
     WEB --> ECHARTS["本地 ECharts"]
 ```
@@ -35,7 +36,7 @@ flowchart LR
 | SQL Guard | `backend/app/database/sql_guard.py` | AST 解析、安全策略、公司过滤、LIMIT |
 | Odoo DB Client | `backend/app/database/client.py` | 强制只读连接、超时、查询执行、类型序列化 |
 | State Store | `backend/app/state/checkpointer.py` | AsyncPostgresSaver 生命周期和内存降级 |
-| LLM Gateway | `backend/app/llm/gateway.py` | OpenAI 兼容调用、节点模型路由、usage/cost |
+| LLM Gateway | `backend/app/llm/gateway.py` | LiteLLM 统一调用、节点模型路由、usage/cost；DeepSeek 原生适配、硅基流动 OpenAI 兼容适配 |
 | Langfuse Adapter | `backend/app/observability/` | Trace、Observation、脱敏、Score、URL、flush |
 | Evaluation | `evals/` | 黄金集、静态/真实回归、报告和 Dataset 同步 |
 
@@ -204,7 +205,7 @@ flowchart LR
 | ECharts 替代 Metabase | 与对话结果紧密集成，前端直接控制展示 |
 | 直接 PostgreSQL 只读查询 | 实时、结构明确、无需额外同步层 |
 | Pydantic 原生结构化输出 | 当前结构化节点少，不急于增加 Instructor |
-| 自建薄模型网关 | 当前仅两个 OpenAI 兼容供应商，不急于增加 LiteLLM |
+| 应用网关 + LiteLLM SDK | 保留业务角色路由和配置界面，以 LiteLLM 统一供应商调用；当前不增加独立 Proxy 服务 |
 | 独立状态数据库 | Checkpoint 需要写权限，不能污染 Odoo 业务库 |
 | 确定性快速回答 | 简单结果无需第二次模型总结 |
 

@@ -65,11 +65,15 @@
 
     当前完成度、已知限制、近期优化和中长期触发条件。
 
+12. [核心技术组件状态](12-technology-stack-status.md)
+
+    SQLGlot、Pydantic/Instructor、Langfuse、dbt Core 和 LiteLLM 的用途、落地状态与后续边界。
+
 ## 3. 当前能力快照
 
 | 能力 | 状态 |
 | --- | --- |
-| DeepSeek / 硅基流动 | 已支持，可按节点选择供应商和模型 |
+| LiteLLM + DeepSeek / 硅基流动 | 已支持，LiteLLM SDK 统一调用，可按节点选择供应商和模型 |
 | Odoo 实时销售数据 | 已支持，PostgreSQL 强制只读 |
 | Text2SQL | 已支持，Pydantic QueryPlan + SQLGlot 校验 + 最多两次修复 |
 | 图表 | 已支持，后端白名单 ChartSpec，前端本地 ECharts 渲染 |

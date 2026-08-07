@@ -19,6 +19,8 @@
 
 生产依赖固定在 `backend/requirements.txt`。前端不需要 npm 构建，ECharts 作为本地静态文件提供。
 
+模型调用使用进程内 LiteLLM Python SDK。当前不需要单独启动 LiteLLM Proxy，也不占用额外端口；首次启动时 LiteLLM 在 Windows 上初始化供应商元数据，可能比旧版多等待数秒。
+
 ## 2. 目录确认
 
 ```powershell

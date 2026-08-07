@@ -51,11 +51,11 @@ odoo-agent/
 | Schema/Config | Pydantic Settings 2.14.2 |
 | Agent | LangGraph 1.2.10 |
 | Checkpoint | langgraph-checkpoint-postgres 3.1.1 |
-| LLM | OpenAI Python SDK 2.52.0，OpenAI 兼容接口 |
+| LLM Gateway | LiteLLM 1.95.0；OpenAI SDK 2.52.0 作为底层依赖 |
 | Observability | Langfuse 4.14.3 |
 | SQL | SQLGlot 30.14.0 |
 | PostgreSQL | psycopg 3.3.4 |
-| Server | Uvicorn 0.41.0 |
+| Server | Uvicorn 0.52.1 |
 | Frontend | 原生 HTML/CSS/JavaScript + ECharts |
 
 依赖版本固定，升级时必须跑全量测试和真实 Trace 自检。
@@ -196,11 +196,11 @@ git status --short
 2. 添加 Settings 和 ProviderConfig；
 3. 更新设置 Schema、路由和 Windows 白名单；
 4. 更新设置页面；
-5. 确认 OpenAI 兼容差异、JSON Mode、usage 字段和模型目录；
+5. 在 LiteLLM 中选择原生 provider adapter；无原生适配时使用明确的 OpenAI 兼容前缀和 Base URL；
 6. 配置价格和币种换算；
 7. 增加网关/API 测试；
 8. 使用黄金集对比；
-9. 供应商达到三个以上时重新评估 LiteLLM。
+9. 如需自动降级，将候选加入 LiteLLM Router，并使用黄金集验证 fallback 前后的业务口径。
 
 ### 6.3 新增 Graph 节点
 

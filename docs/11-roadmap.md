@@ -15,6 +15,7 @@
 | Text2SQL | 已完成首版 | QueryPlan、SQL 生成、Guard、最多两次修复 |
 | ECharts | 已完成 | KPI、折线、柱状、饼图白名单 |
 | 节点模型路由 | 已完成 | SQL、回答、普通聊天独立配置 |
+| LiteLLM | 已完成 SDK 首版 | 统一 DeepSeek 与硅基流动调用；尚未启用 Proxy/Router fallback |
 | Langfuse | 已完成首版 | Trace、Session、Token、Cost、Score、Dataset |
 | 黄金问题集 | 已完成首版 | 20 条、静态和真实运行器 |
 | 持久会话 | 已完成 | PostgreSQL Checkpointer、内存降级 |
@@ -184,7 +185,7 @@ SQL JSON 生成不建议向最终用户流式展示。
 | --- | --- |
 | 用户登录/RBAC | 从单用户本机转为多人共享 |
 | 行级/公司权限 | 多公司或销售员只能看自己的数据 |
-| LiteLLM | 三个以上供应商、多个应用共享、集中预算/限流 |
+| LiteLLM Proxy/Router | 三个以上供应商、多个应用共享、集中预算/限流或需要自动 fallback |
 | dbt Core | 重复复杂 JOIN、多消费者共享指标、需要数据测试 |
 | pgvector | 50 条以上已验证 SQL 示例，关键词检索明显不足 |
 | Ragas | 真正接入文档 RAG 和向量 Context |

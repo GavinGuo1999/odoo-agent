@@ -4,7 +4,7 @@
 
 ## 当前能力
 
-- DeepSeek / 硅基流动，SQL、复杂解释、普通聊天按节点选择模型；
+- LiteLLM 统一接入 DeepSeek / 硅基流动，SQL、复杂解释、普通聊天按节点选择模型；
 - Odoo PostgreSQL 实时只读查询和版本化销售语义层；
 - Pydantic QueryPlan + Text2SQL + 最多两次安全修复；
 - SQL AST 白名单、公司过滤、超时、LIMIT 和数据库只读事务；

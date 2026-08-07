@@ -36,7 +36,10 @@ async def main(*, with_model: bool) -> int:
 
     try:
         async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}") as client:
-            for _ in range(40):
+            # LiteLLM's first Windows import can take several seconds while
+            # provider metadata is initialized. Give application startup a
+            # realistic window before treating it as a failure.
+            for _ in range(300):
                 if server.started:
                     break
                 if server_task.done():
@@ -68,10 +71,7 @@ async def main(*, with_model: bool) -> int:
                 chat = await client.post(
                     "/api/chat",
                     json={
-                        "question": (
-                            "请用一句话确认模型连接正常，并明确说明尚未查询 "
-                            "Odoo 数据。"
-                        )
+                        "question": "请只回答四个字：连接正常。"
                     },
                     timeout=120,
                 )

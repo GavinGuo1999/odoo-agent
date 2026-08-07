@@ -27,10 +27,6 @@ class LLMGatewayTests(unittest.IsolatedAsyncioTestCase):
                 total_tokens=12,
             ),
         )
-        client = Mock()
-        client.chat.completions.create = AsyncMock(return_value=completion)
-        client.close = AsyncMock()
-
         config = ProviderConfig(
             name="deepseek",
             api_key="sensitive-value",
@@ -48,7 +44,10 @@ class LLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             yield observation
 
         with (
-            patch("app.llm.gateway.AsyncOpenAI", return_value=client),
+            patch(
+                "app.llm.gateway.litellm.acompletion",
+                new=AsyncMock(return_value=completion),
+            ) as complete,
             patch("app.llm.gateway.trace_generation", side_effect=fake_generation) as trace,
         ):
             result = await LLMGateway(config).complete(
@@ -60,15 +59,62 @@ class LLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.content, "连接正常")
         self.assertEqual(result.total_tokens, 12)
         self.assertAlmostEqual(result.total_cost_usd, 0.000016)
-        call = client.chat.completions.create.await_args.kwargs
-        self.assertEqual(call["model"], "deepseek-v4-pro")
+        call = complete.await_args.kwargs
+        self.assertEqual(call["model"], "deepseek/deepseek-v4-pro")
+        self.assertEqual(call["api_base"], "https://api.deepseek.com")
+        self.assertEqual(call["api_key"], "sensitive-value")
         self.assertNotIn("name", call)
         trace.assert_called_once_with(
             name="generate-model-response",
             model="deepseek-v4-pro",
             input_data={"messages": [{"role": "user", "content": "你好"}]},
         )
-        client.close.assert_awaited_once()
+        metadata = observation.update.call_args_list[0].kwargs["metadata"]
+        self.assertEqual(metadata["llm_gateway"], "litellm-sdk")
+        self.assertEqual(metadata["gateway_model"], "deepseek/deepseek-v4-pro")
+
+    async def test_siliconflow_uses_openai_compatible_litellm_adapter(self) -> None:
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+            model="deepseek-ai/DeepSeek-V3.1-Terminus",
+            usage=None,
+        )
+        config = ProviderConfig(
+            name="siliconflow",
+            api_key="sensitive-value",
+            base_url="https://api.siliconflow.cn/v1",
+            model="deepseek-ai/DeepSeek-V3.1-Terminus",
+            timeout_seconds=30,
+        )
+
+        @contextmanager
+        def fake_generation(**_kwargs):
+            yield Mock()
+
+        with (
+            patch(
+                "app.llm.gateway.litellm.acompletion",
+                new=AsyncMock(return_value=completion),
+            ) as complete,
+            patch(
+                "app.llm.gateway.trace_generation",
+                side_effect=fake_generation,
+            ),
+        ):
+            result = await LLMGateway(config).complete(
+                messages=[{"role": "user", "content": "你好"}],
+                generation_name="generate-model-response",
+                json_mode=True,
+            )
+
+        call = complete.await_args.kwargs
+        self.assertEqual(
+            call["model"],
+            "openai/deepseek-ai/DeepSeek-V3.1-Terminus",
+        )
+        self.assertEqual(call["api_base"], "https://api.siliconflow.cn/v1")
+        self.assertEqual(call["response_format"], {"type": "json_object"})
+        self.assertEqual(result.provider, "siliconflow")
 
 
 if __name__ == "__main__":
