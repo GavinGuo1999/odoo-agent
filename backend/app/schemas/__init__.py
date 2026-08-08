@@ -2,6 +2,9 @@
 
 from .chat import (
     ChartSpec,
+    ChatConversationDeleteResponse,
+    ChatConversationList,
+    ChatConversationSummary,
     ChatFeedbackRequest,
     ChatFeedbackResponse,
     ChatHistoryMessage,
@@ -22,6 +25,9 @@ __all__ = [
     "ChatResponse",
     "ChatResumeRequest",
     "ChatSessionView",
+    "ChatConversationDeleteResponse",
+    "ChatConversationList",
+    "ChatConversationSummary",
     "ChatFeedbackRequest",
     "ChatFeedbackResponse",
     "ChatHistoryMessage",

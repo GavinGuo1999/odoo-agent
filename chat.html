@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 智能助手</title>
-  <link rel="stylesheet" href="styles.css?v=10">
+  <link rel="stylesheet" href="styles.css?v=11">
   <script src="echarts.min.js?v=6.1.0" defer></script>
-  <script src="app.js?v=10" defer></script>
+  <script src="app.js?v=11" defer></script>
 </head>
 <body data-page="chat">
   <div class="app-shell">
@@ -20,6 +20,10 @@
       </nav>
       <div class="nav-label">系统</div>
       <nav class="nav-list" aria-label="系统导航"><a class="nav-link" data-nav="settings" href="settings.html"><span class="nav-icon">⚙</span><span>数据与模型</span></a></nav>
+      <section class="sidebar-chat-section" aria-label="对话历史">
+        <div class="sidebar-chat-heading"><span>对话</span><button class="sidebar-new-chat" type="button" data-new-chat aria-label="新建对话">＋</button></div>
+        <div class="conversation-list" data-conversation-list><div class="conversation-list-status">正在读取历史记录…</div></div>
+      </section>
       <div class="sidebar-footer"><div class="db-mini-status" data-db-mini-status><span class="status-dot"></span><span>Odoo 19 · 正在检查数据库</span></div></div>
     </aside>
 
@@ -33,7 +37,7 @@
         <section class="chat-layout">
           <article class="card chat-main">
             <div class="chat-header">
-              <div><div class="chat-title">Odoo Agent 会话</div><div class="chat-meta">自动模式：普通问答 / Odoo BI · 数据查询只读</div></div>
+              <div><div class="chat-title" data-chat-title>新对话</div><div class="chat-meta">自动模式：普通问答 / Odoo BI · 数据查询只读</div></div>
               <button class="btn btn-icon" type="button" data-new-chat aria-label="新建会话">＋</button>
             </div>
 

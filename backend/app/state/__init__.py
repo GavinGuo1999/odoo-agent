@@ -1,5 +1,5 @@
 """LangGraph checkpoint lifecycle."""
 
-from .checkpointer import AgentStateStore, get_state_store
+from .checkpointer import AgentStateStore, ConversationRecord, get_state_store
 
-__all__ = ["AgentStateStore", "get_state_store"]
+__all__ = ["AgentStateStore", "ConversationRecord", "get_state_store"]

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -92,6 +93,23 @@ class ChatSessionView(BaseModel):
     history: list[ChatHistoryMessage] = Field(default_factory=list)
     pending_interrupt: InterruptInfo | None = None
     persistence_mode: Literal["memory", "postgres"]
+
+
+class ChatConversationSummary(BaseModel):
+    session_id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChatConversationList(BaseModel):
+    conversations: list[ChatConversationSummary] = Field(default_factory=list)
+    persistence_mode: Literal["memory", "postgres"]
+
+
+class ChatConversationDeleteResponse(BaseModel):
+    session_id: str
+    deleted: bool
 
 
 class ChatFeedbackResponse(BaseModel):

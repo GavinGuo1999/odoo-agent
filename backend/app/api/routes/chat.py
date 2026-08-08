@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -21,6 +22,9 @@ from app.observability import (
 )
 from app.schemas import (
     ChartSpec,
+    ChatConversationDeleteResponse,
+    ChatConversationList,
+    ChatConversationSummary,
     ChatFeedbackRequest,
     ChatFeedbackResponse,
     ChatRequest,
@@ -34,6 +38,23 @@ from app.state import get_state_store
 
 
 router = APIRouter(tags=["chat"])
+logger = logging.getLogger(__name__)
+
+
+async def _remember_conversation(
+    session_id: str,
+    title: str | None = None,
+    *,
+    update_activity: bool = True,
+) -> None:
+    try:
+        await get_state_store().touch_conversation(
+            session_id,
+            title=title,
+            update_activity=update_activity,
+        )
+    except Exception as exc:
+        logger.warning("Conversation directory update failed: %s", type(exc).__name__)
 
 
 def _routing_or_503(
@@ -193,13 +214,15 @@ async def chat(
 ) -> ChatResponse:
     routing = _routing_or_503(settings, payload.provider)
     session_id = payload.session_id or uuid4().hex
-    return await _run_turn(
+    response = await _run_turn(
         agent=_agent(settings, routing),
         session_id=session_id,
         question=payload.question,
         provider_name=routing.general.name,
         history=[message.model_dump() for message in payload.history],
     )
+    await _remember_conversation(session_id, payload.question)
+    return response
 
 
 @router.post("/chat/resume", response_model=ChatResponse)
@@ -208,13 +231,15 @@ async def resume_chat(
     settings: Settings = Depends(get_settings),
 ) -> ChatResponse:
     routing = _routing_or_503(settings, payload.provider)
-    return await _run_turn(
+    response = await _run_turn(
         agent=_agent(settings, routing),
         session_id=payload.session_id,
         question="继续已中断的查询",
         provider_name=routing.general.name,
         resume_answer=payload.answer,
     )
+    await _remember_conversation(payload.session_id)
+    return response
 
 
 def _sse(event: str, data: dict[str, object]) -> str:
@@ -255,6 +280,7 @@ def _streaming_response(
                             trace_url=turn_trace_url,
                         )
                         _update_turn(turn, response)
+                        await _remember_conversation(session_id, question)
                         yield _sse("result", response.model_dump(mode="json"))
                     else:
                         yield _sse("progress", event)
@@ -325,12 +351,65 @@ async def read_chat_session(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Chat session not found: {type(exc).__name__}",
         ) from exc
+    first_question = next(
+        (
+            message["content"]
+            for message in history
+            if message.get("role") == "user" and message.get("content")
+        ),
+        None,
+    )
+    if first_question:
+        await _remember_conversation(
+            session_id,
+            first_question,
+            update_activity=False,
+        )
     return ChatSessionView(
         session_id=session_id,
         history=history,
         pending_interrupt=InterruptInfo.model_validate(pending) if pending else None,
         persistence_mode=get_state_store().mode,
     )
+
+
+@router.get("/chat/conversations", response_model=ChatConversationList)
+async def list_chat_conversations() -> ChatConversationList:
+    store = get_state_store()
+    try:
+        records = await store.list_conversations()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Conversation list failed: {type(exc).__name__}",
+        ) from exc
+    return ChatConversationList(
+        conversations=[
+            ChatConversationSummary(
+                session_id=record.session_id,
+                title=record.title,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
+            for record in records
+        ],
+        persistence_mode=store.mode,
+    )
+
+
+@router.delete(
+    "/chat/conversations/{session_id}",
+    response_model=ChatConversationDeleteResponse,
+)
+async def delete_chat_conversation(session_id: str) -> ChatConversationDeleteResponse:
+    try:
+        deleted = await get_state_store().delete_conversation(session_id)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Conversation deletion failed: {type(exc).__name__}",
+        ) from exc
+    return ChatConversationDeleteResponse(session_id=session_id, deleted=deleted)
 
 
 @router.post("/chat/feedback", response_model=ChatFeedbackResponse)

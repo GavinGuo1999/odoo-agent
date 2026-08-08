@@ -232,6 +232,58 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("event: result", response.text)
         self.assertIn("流式回答完成", response.text)
 
+    async def test_chat_conversations_can_be_listed_restored_and_deleted(self) -> None:
+        environment = dict(self.environment)
+        environment["DEEPSEEK_API_KEY"] = "sensitive-value"
+        session_id = "api-conversation-history-test"
+        result = LLMResult(
+            content="本月销售情况正常。",
+            provider="deepseek",
+            model="deepseek-v4-pro",
+            input_tokens=8,
+            output_tokens=4,
+            total_tokens=12,
+        )
+
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch("app.bi.agent.LLMGateway.complete", new=AsyncMock(return_value=result)),
+        ):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/api/chat",
+                    json={
+                        "question": "  请看一下\n本月销售  ",
+                        "session_id": session_id,
+                    },
+                )
+                conversations = await client.get("/api/chat/conversations")
+                restored = await client.get(f"/api/chat/sessions/{session_id}")
+                deleted = await client.delete(f"/api/chat/conversations/{session_id}")
+                after_delete = await client.get("/api/chat/conversations")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(conversations.status_code, 200)
+        matching = [
+            item
+            for item in conversations.json()["conversations"]
+            if item["session_id"] == session_id
+        ]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["title"], "请看一下 本月销售")
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(
+            [message["role"] for message in restored.json()["history"]],
+            ["user", "assistant"],
+        )
+        self.assertEqual(deleted.json(), {"session_id": session_id, "deleted": True})
+        self.assertNotIn(
+            session_id,
+            [item["session_id"] for item in after_delete.json()["conversations"]],
+        )
+
     async def test_chat_feedback_records_boolean_langfuse_score(self) -> None:
         with (
             patch.dict(os.environ, self.environment, clear=True),
