@@ -1281,6 +1281,13 @@ button {
   background: #fff3f3;
 }
 
+.conversation-run-note .message-bubble {
+  border-style: dashed;
+  color: #665866;
+  background: #f8f3f7;
+  box-shadow: none;
+}
+
 .chat-response-meta {
   margin: 6px 4px 0;
   color: var(--text-secondary);

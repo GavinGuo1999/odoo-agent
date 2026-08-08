@@ -29,6 +29,9 @@
 | POST | `/chat/resume` | 非流式恢复 Interrupt |
 | POST | `/chat/resume/stream` | SSE 恢复 Interrupt |
 | GET | `/chat/sessions/{session_id}` | 恢复会话和待处理 Interrupt |
+| GET | `/chat/conversations` | 按最近活动时间列出会话 |
+| DELETE | `/chat/conversations/{session_id}` | 删除会话目录和 Checkpoint |
+| POST | `/chat/conversations/{session_id}/detach` | 标记页面刷新导致的流断开 |
 | POST | `/chat/feedback` | 写入 Langfuse 点赞/点踩 |
 | GET | `/settings` | 安全读取设置状态 |
 | PUT | `/settings` | 保存设置到 Windows 用户环境 |
@@ -345,11 +348,26 @@ QueryPlan：
     {"role": "assistant", "content": "查询结果：销售额为 ..."}
   ],
   "pending_interrupt": null,
-  "persistence_mode": "postgres"
+  "persistence_mode": "postgres",
+  "run_status": "completed"
 }
 ```
 
+`run_status` 可能为 `new/running/completed/interrupted/failed/cancelled`。生成开始前，用户问题会以 `pending_question` 形式写入独立状态库，并在该接口的 `history` 中恢复。
+
 `persistence_mode=memory` 表示后端重启后无法保证恢复。
+
+### GET `/chat/conversations`
+
+返回会话标题、创建时间、最近活动时间和当前持久化模式。标题来自第一条用户问题，不额外调用模型。
+
+### DELETE `/chat/conversations/{session_id}`
+
+同时删除会话目录记录和该 Session 的 LangGraph Checkpoint。
+
+### POST `/chat/conversations/{session_id}/detach`
+
+网页在生成过程中刷新或关闭时使用。接口只把仍处于 `running` 的记录标记为 `cancelled` 并保留问题；如果后台任务随后正常完成，状态仍可更新为 `completed`。
 
 ## 11. 用户反馈接口
 

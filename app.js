@@ -1007,6 +1007,8 @@
   window.localStorage.setItem(chatSessionStorageKey, chatSessionId);
   let chatHistory = [];
   let chatSending = false;
+  let activeChatRequest = null;
+  let sessionPollTimer = null;
   let pendingInterrupt = null;
   let conversations = [];
   let currentConversationTitle = "新对话";
@@ -1457,11 +1459,63 @@
     return conversations;
   }
 
+  function stopSessionPolling() {
+    if (sessionPollTimer !== null) {
+      window.clearTimeout(sessionPollTimer);
+      sessionPollTimer = null;
+    }
+  }
+
+  function appendConversationRunNote(runStatus) {
+    const messages = {
+      running: "这条回答仍在处理中，完成后会自动恢复到当前会话。",
+      cancelled: "上一次回答因刷新或切换被中断，问题已经保留，你可以重新发送或继续提问。",
+      failed: "上一次回答没有完成，但问题已经保留，你可以重新发送或换一种问法。"
+    };
+    const text = messages[runStatus];
+    if (!text) return;
+    const note = appendChatMessage("assistant", text);
+    note?.classList.add("conversation-run-note");
+  }
+
+  function pollConversationCompletion(sessionId, attempt = 0) {
+    stopSessionPolling();
+    if (attempt >= 40 || sessionId !== chatSessionId) return;
+    sessionPollTimer = window.setTimeout(async () => {
+      sessionPollTimer = null;
+      if (sessionId !== chatSessionId || chatSending) return;
+      try {
+        const session = await apiRequest(`/chat/sessions/${encodeURIComponent(sessionId)}`);
+        if (["running", "cancelled"].includes(session.run_status)) {
+          pollConversationCompletion(sessionId, attempt + 1);
+          return;
+        }
+        await restoreChatSession(sessionId, { allowEmpty: true });
+        await refreshConversationList();
+      } catch (_error) {
+        pollConversationCompletion(sessionId, attempt + 1);
+      }
+    }, 1500);
+  }
+
+  function detachActiveChatRequest() {
+    if (!chatSending || !activeChatRequest) return false;
+    activeChatRequest.detached = true;
+    activeChatRequest = null;
+    chatSending = false;
+    if (sendButton) sendButton.disabled = false;
+    if (chatInput) chatInput.disabled = false;
+    return true;
+  }
+
   async function restoreChatSession(sessionId, { notify = false, allowEmpty = false } = {}) {
     if (!chatThread) return false;
+    stopSessionPolling();
     try {
       const session = await apiRequest(`/chat/sessions/${encodeURIComponent(sessionId)}`);
-      const hasContent = session.history.length > 0 || Boolean(session.pending_interrupt);
+      const hasContent = session.history.length > 0
+        || Boolean(session.pending_interrupt)
+        || !["new", "completed"].includes(session.run_status);
       if (!hasContent && !allowEmpty) return false;
 
       chatSessionId = sessionId;
@@ -1476,6 +1530,10 @@
         appendWelcomeMessage();
       }
       if (pendingInterrupt) appendChatMessage("assistant", pendingInterrupt.question);
+      appendConversationRunNote(session.run_status);
+      if (["running", "cancelled"].includes(session.run_status)) {
+        pollConversationCompletion(sessionId);
+      }
       renderConversationList();
       document.body.classList.remove("menu-open");
       if (notify) {
@@ -1489,10 +1547,9 @@
   }
 
   function startNewChat({ notify = true } = {}) {
-    if (!chatThread || chatSending) {
-      if (chatSending) showToast("请等待当前回答完成");
-      return;
-    }
+    if (!chatThread) return;
+    if (chatSending) detachActiveChatRequest();
+    stopSessionPolling();
     chatSessionId = createChatSessionId();
     window.localStorage.setItem(chatSessionStorageKey, chatSessionId);
     chatHistory = [];
@@ -1507,21 +1564,18 @@
   }
 
   async function switchChatConversation(sessionId) {
-    if (chatSending) {
-      showToast("请等待当前回答完成后再切换");
-      return;
-    }
     if (sessionId === chatSessionId && chatHistory.length) return;
+    if (chatSending) detachActiveChatRequest();
+    stopSessionPolling();
     await restoreChatSession(sessionId, { notify: true, allowEmpty: true });
   }
 
   async function deleteChatConversation(conversation) {
-    if (chatSending) {
-      showToast("请等待当前回答完成后再删除");
-      return;
-    }
     if (!window.confirm(`确定删除“${conversation.title}”吗？删除后无法恢复。`)) return;
     try {
+      if (chatSending && conversation.session_id === chatSessionId) {
+        detachActiveChatRequest();
+      }
       await apiRequest(`/chat/conversations/${encodeURIComponent(conversation.session_id)}`, {
         method: "DELETE"
       });
@@ -1552,6 +1606,10 @@
     const priorHistory = chatHistory.slice(-12);
     const isResume = Boolean(pendingInterrupt);
     const isFirstQuestion = !chatHistory.some((message) => message.role === "user");
+    const requestSessionId = chatSessionId;
+    const request = { sessionId: requestSessionId, detached: false };
+    activeChatRequest = request;
+    stopSessionPolling();
     chatHistory.push({ role: "user", content: question });
     if (isFirstQuestion) setCurrentConversationTitle(question);
     appendChatMessage("user", question);
@@ -1569,29 +1627,38 @@
     try {
       const path = isResume ? "/chat/resume/stream" : "/chat/stream";
       const body = isResume
-        ? { session_id: chatSessionId, answer: question }
-        : { question, session_id: chatSessionId, history: priorHistory };
+        ? { session_id: requestSessionId, answer: question }
+        : { question, session_id: requestSessionId, history: priorHistory };
       const result = await streamApi(path, body, (event) => {
         const label = thinking.querySelector(".chat-progress-label");
         if (label) label.textContent = event.label || "正在处理…";
         chatThread.scrollTop = chatThread.scrollHeight;
       });
       thinking.remove();
+      if (request.detached || requestSessionId !== chatSessionId) {
+        await refreshConversationList();
+        return;
+      }
       appendChatMessage("assistant", result.answer, result);
       chatHistory.push({ role: "assistant", content: result.answer });
       pendingInterrupt = result.status === "interrupted" ? result.interrupt : null;
       await refreshConversationList();
     } catch (error) {
       thinking.remove();
-      chatHistory.pop();
-      if (isFirstQuestion) setCurrentConversationTitle("新对话");
-      const errorMessage = appendChatMessage("assistant", friendlyChatError(error));
-      errorMessage?.querySelector(".message-bubble")?.classList.add("error");
+      if (!request.detached && requestSessionId === chatSessionId) {
+        const errorMessage = appendChatMessage("assistant", friendlyChatError(error));
+        errorMessage?.querySelector(".message-bubble")?.classList.add("error");
+      } else {
+        await refreshConversationList();
+      }
     } finally {
-      chatSending = false;
-      if (sendButton) sendButton.disabled = false;
-      chatInput.disabled = false;
-      chatInput.focus();
+      if (activeChatRequest === request) {
+        activeChatRequest = null;
+        chatSending = false;
+        if (sendButton) sendButton.disabled = false;
+        chatInput.disabled = false;
+        if (requestSessionId === chatSessionId) chatInput.focus();
+      }
     }
   }
 
@@ -1609,5 +1676,13 @@
 
   document.querySelectorAll("[data-new-chat]").forEach((button) => {
     button.addEventListener("click", () => startNewChat());
+  });
+
+  window.addEventListener("pagehide", () => {
+    if (!chatSending || !activeChatRequest) return;
+    window.fetch(
+      `${apiBase}/chat/conversations/${encodeURIComponent(activeChatRequest.sessionId)}/detach`,
+      { method: "POST", keepalive: true }
+    ).catch(() => {});
   });
 })();

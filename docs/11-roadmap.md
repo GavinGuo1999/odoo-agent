@@ -49,13 +49,11 @@
 - SQL 语义等价；
 - 回答数字忠实度。
 
-### 2.3 状态管理接口不完整
+### 2.3 状态管理后续治理
 
-当前能按 Session 读取历史和恢复 Interrupt，但没有：
+当前已完成会话列表、标题、新建、切换、删除、刷新恢复和 Interrupt 恢复。后续仍需：
 
-- 会话列表；
-- 会话标题；
-- 删除/归档；
+- 归档；
 - 保留期；
 - Checkpoint 迁移工具。
 
@@ -117,18 +115,18 @@
 
 ## 4. 中期路线：P1
 
-### P1.1 会话管理
+### P1.1 会话管理（核心功能已完成）
 
-新增：
+已实现：
 
 ```text
-GET    /api/conversations
-GET    /api/conversations/{thread_id}
-DELETE /api/conversations/{thread_id}
-POST   /api/conversations/{thread_id}/archive
+GET    /api/chat/conversations
+GET    /api/chat/sessions/{session_id}
+DELETE /api/chat/conversations/{session_id}
+POST   /api/chat/conversations/{session_id}/detach
 ```
 
-同时增加前端会话列表、标题、删除确认和保留期。
+前端已具备列表、标题、新建、切换、删除确认、生成中后台切换和刷新恢复。归档与保留期仍未实现。
 
 ### P1.2 用户反馈原因
 

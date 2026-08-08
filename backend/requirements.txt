@@ -6,6 +6,7 @@ langgraph-checkpoint-postgres==3.1.1
 litellm==1.95.0
 openai==2.52.0
 psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
 pydantic-settings==2.14.2
 sqlglot==30.14.0
 uvicorn==0.52.1

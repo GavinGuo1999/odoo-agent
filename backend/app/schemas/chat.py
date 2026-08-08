@@ -93,6 +93,14 @@ class ChatSessionView(BaseModel):
     history: list[ChatHistoryMessage] = Field(default_factory=list)
     pending_interrupt: InterruptInfo | None = None
     persistence_mode: Literal["memory", "postgres"]
+    run_status: Literal[
+        "new",
+        "running",
+        "completed",
+        "interrupted",
+        "failed",
+        "cancelled",
+    ] = "completed"
 
 
 class ChatConversationSummary(BaseModel):
@@ -110,6 +118,18 @@ class ChatConversationList(BaseModel):
 class ChatConversationDeleteResponse(BaseModel):
     session_id: str
     deleted: bool
+
+
+class ChatConversationStatusResponse(BaseModel):
+    session_id: str
+    run_status: Literal[
+        "new",
+        "running",
+        "completed",
+        "interrupted",
+        "failed",
+        "cancelled",
+    ]
 
 
 class ChatFeedbackResponse(BaseModel):

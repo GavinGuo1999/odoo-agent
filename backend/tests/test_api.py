@@ -133,6 +133,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
     async def test_chat_masks_provider_error_details(self) -> None:
         environment = dict(self.environment)
         environment["DEEPSEEK_API_KEY"] = "sensitive-value"
+        session_id = "api-failed-turn-persistence-test"
 
         with (
             patch.dict(os.environ, environment, clear=True),
@@ -149,8 +150,13 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             ) as client:
                 response = await client.post(
                     "/api/chat",
-                    json={"question": "测试错误处理"},
+                    json={
+                        "question": "测试错误处理",
+                        "session_id": session_id,
+                    },
                 )
+                restored = await client.get(f"/api/chat/sessions/{session_id}")
+                await client.delete(f"/api/chat/conversations/{session_id}")
 
         self.assertEqual(response.status_code, 502)
         self.assertEqual(
@@ -158,6 +164,12 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
             "Agent request failed: RuntimeError",
         )
         self.assertNotIn("sensitive provider detail", response.text)
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(restored.json()["run_status"], "failed")
+        self.assertEqual(
+            restored.json()["history"][-1],
+            {"role": "user", "content": "测试错误处理"},
+        )
 
     async def test_chat_supports_general_questions_and_conversation_history(
         self,
@@ -261,6 +273,9 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 )
                 conversations = await client.get("/api/chat/conversations")
                 restored = await client.get(f"/api/chat/sessions/{session_id}")
+                detached = await client.post(
+                    f"/api/chat/conversations/{session_id}/detach"
+                )
                 deleted = await client.delete(f"/api/chat/conversations/{session_id}")
                 after_delete = await client.get("/api/chat/conversations")
 
@@ -274,6 +289,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(matching), 1)
         self.assertEqual(matching[0]["title"], "请看一下 本月销售")
         self.assertEqual(restored.status_code, 200)
+        self.assertEqual(restored.json()["run_status"], "completed")
+        self.assertEqual(detached.json()["run_status"], "completed")
         self.assertEqual(
             [message["role"] for message in restored.json()["history"]],
             ["user", "assistant"],

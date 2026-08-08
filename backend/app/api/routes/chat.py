@@ -24,6 +24,7 @@ from app.schemas import (
     ChartSpec,
     ChatConversationDeleteResponse,
     ChatConversationList,
+    ChatConversationStatusResponse,
     ChatConversationSummary,
     ChatFeedbackRequest,
     ChatFeedbackResponse,
@@ -55,6 +56,38 @@ async def _remember_conversation(
         )
     except Exception as exc:
         logger.warning("Conversation directory update failed: %s", type(exc).__name__)
+
+
+async def _begin_conversation_turn(
+    session_id: str,
+    *,
+    question: str,
+    title: str | None,
+) -> None:
+    try:
+        await get_state_store().begin_conversation_turn(
+            session_id,
+            question=question,
+            title=title,
+        )
+    except Exception as exc:
+        logger.warning("Conversation turn start failed: %s", type(exc).__name__)
+
+
+async def _finish_conversation_turn(
+    session_id: str,
+    *,
+    run_status: str,
+    keep_pending_question: bool = False,
+) -> None:
+    try:
+        await get_state_store().finish_conversation_turn(
+            session_id,
+            run_status=run_status,
+            keep_pending_question=keep_pending_question,
+        )
+    except Exception as exc:
+        logger.warning("Conversation turn finish failed: %s", type(exc).__name__)
 
 
 def _routing_or_503(
@@ -214,14 +247,27 @@ async def chat(
 ) -> ChatResponse:
     routing = _routing_or_503(settings, payload.provider)
     session_id = payload.session_id or uuid4().hex
-    response = await _run_turn(
-        agent=_agent(settings, routing),
-        session_id=session_id,
+    await _begin_conversation_turn(
+        session_id,
         question=payload.question,
-        provider_name=routing.general.name,
-        history=[message.model_dump() for message in payload.history],
+        title=payload.question,
     )
-    await _remember_conversation(session_id, payload.question)
+    try:
+        response = await _run_turn(
+            agent=_agent(settings, routing),
+            session_id=session_id,
+            question=payload.question,
+            provider_name=routing.general.name,
+            history=[message.model_dump() for message in payload.history],
+        )
+    except Exception:
+        await _finish_conversation_turn(
+            session_id,
+            run_status="failed",
+            keep_pending_question=True,
+        )
+        raise
+    await _finish_conversation_turn(session_id, run_status=response.status)
     return response
 
 
@@ -231,14 +277,27 @@ async def resume_chat(
     settings: Settings = Depends(get_settings),
 ) -> ChatResponse:
     routing = _routing_or_503(settings, payload.provider)
-    response = await _run_turn(
-        agent=_agent(settings, routing),
-        session_id=payload.session_id,
-        question="继续已中断的查询",
-        provider_name=routing.general.name,
-        resume_answer=payload.answer,
+    await _begin_conversation_turn(
+        payload.session_id,
+        question=payload.answer,
+        title=None,
     )
-    await _remember_conversation(payload.session_id)
+    try:
+        response = await _run_turn(
+            agent=_agent(settings, routing),
+            session_id=payload.session_id,
+            question="继续已中断的查询",
+            provider_name=routing.general.name,
+            resume_answer=payload.answer,
+        )
+    except Exception:
+        await _finish_conversation_turn(
+            payload.session_id,
+            run_status="failed",
+            keep_pending_question=True,
+        )
+        raise
+    await _finish_conversation_turn(payload.session_id, run_status=response.status)
     return response
 
 
@@ -256,6 +315,7 @@ def _streaming_response(
     resume_answer: str | None,
 ) -> StreamingResponse:
     async def events() -> AsyncIterator[str]:
+        outcome_returned = False
         trace_question = question or "继续已中断的查询"
         with trace_chat_turn(
             session_id=session_id,
@@ -272,6 +332,7 @@ def _streaming_response(
                     resume_answer=resume_answer,
                 ):
                     if event.get("type") == "outcome":
+                        outcome_returned = True
                         outcome = event["outcome"]
                         response = _response_from_outcome(
                             outcome=outcome,
@@ -280,11 +341,32 @@ def _streaming_response(
                             trace_url=turn_trace_url,
                         )
                         _update_turn(turn, response)
-                        await _remember_conversation(session_id, question)
+                        await _finish_conversation_turn(
+                            session_id,
+                            run_status=response.status,
+                        )
                         yield _sse("result", response.model_dump(mode="json"))
                     else:
                         yield _sse("progress", event)
+                if not outcome_returned:
+                    await _finish_conversation_turn(
+                        session_id,
+                        run_status="failed",
+                        keep_pending_question=True,
+                    )
+            except asyncio.CancelledError:
+                await _finish_conversation_turn(
+                    session_id,
+                    run_status="cancelled",
+                    keep_pending_question=True,
+                )
+                raise
             except Exception as exc:
+                await _finish_conversation_turn(
+                    session_id,
+                    run_status="failed",
+                    keep_pending_question=True,
+                )
                 update_observation(
                     turn,
                     output={"status": "error", "stage": "stream", "error_type": type(exc).__name__},
@@ -311,6 +393,11 @@ async def stream_chat(
 ) -> StreamingResponse:
     routing = _routing_or_503(settings, payload.provider)
     session_id = payload.session_id or uuid4().hex
+    await _begin_conversation_turn(
+        session_id,
+        question=payload.question,
+        title=payload.question,
+    )
     return _streaming_response(
         agent=_agent(settings, routing),
         session_id=session_id,
@@ -327,6 +414,11 @@ async def stream_resume_chat(
     settings: Settings = Depends(get_settings),
 ) -> StreamingResponse:
     routing = _routing_or_503(settings, payload.provider)
+    await _begin_conversation_turn(
+        payload.session_id,
+        question=payload.answer,
+        title=None,
+    )
     return _streaming_response(
         agent=_agent(settings, routing),
         session_id=payload.session_id,
@@ -344,13 +436,22 @@ async def read_chat_session(
 ) -> ChatSessionView:
     routing = settings.routing()
     agent = _agent(settings, routing)
+    store = get_state_store()
     try:
         history, pending = await agent.session_state(session_id)
+        conversation = await store.get_conversation(session_id)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Chat session not found: {type(exc).__name__}",
         ) from exc
+    if conversation and conversation.pending_question:
+        pending_message = {
+            "role": "user",
+            "content": conversation.pending_question,
+        }
+        if not history or history[-1] != pending_message:
+            history.append(pending_message)
     first_question = next(
         (
             message["content"]
@@ -369,7 +470,12 @@ async def read_chat_session(
         session_id=session_id,
         history=history,
         pending_interrupt=InterruptInfo.model_validate(pending) if pending else None,
-        persistence_mode=get_state_store().mode,
+        persistence_mode=store.mode,
+        run_status=(
+            conversation.run_status
+            if conversation
+            else ("interrupted" if pending else "completed" if history else "new")
+        ),
     )
 
 
@@ -410,6 +516,30 @@ async def delete_chat_conversation(session_id: str) -> ChatConversationDeleteRes
             detail=f"Conversation deletion failed: {type(exc).__name__}",
         ) from exc
     return ChatConversationDeleteResponse(session_id=session_id, deleted=deleted)
+
+
+@router.post(
+    "/chat/conversations/{session_id}/detach",
+    response_model=ChatConversationStatusResponse,
+)
+async def detach_chat_conversation(session_id: str) -> ChatConversationStatusResponse:
+    try:
+        record = await get_state_store().finish_conversation_turn(
+            session_id,
+            run_status="cancelled",
+            keep_pending_question=True,
+            only_if_running=True,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Conversation detach failed: {type(exc).__name__}",
+        ) from exc
+    run_status = record.run_status if record else "new"
+    return ChatConversationStatusResponse(
+        session_id=session_id,
+        run_status=run_status,
+    )
 
 
 @router.post("/chat/feedback", response_model=ChatFeedbackResponse)

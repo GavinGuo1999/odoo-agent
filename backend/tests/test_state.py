@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -12,14 +12,6 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.config import StateDatabaseConfig  # noqa: E402
 from app.state.checkpointer import AgentStateStore  # noqa: E402
-
-
-class _FailingContext:
-    async def __aenter__(self):
-        raise ConnectionError("not available")
-
-    async def __aexit__(self, *_args):
-        return None
 
 
 class StateStoreTests(unittest.IsolatedAsyncioTestCase):
@@ -42,8 +34,8 @@ class StateStoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_postgres_state_database_degrades_to_memory(self) -> None:
         store = AgentStateStore()
         with patch(
-            "app.state.checkpointer.AsyncPostgresSaver.from_conn_string",
-            return_value=_FailingContext(),
+            "app.state.checkpointer.AsyncConnectionPool.open",
+            new=AsyncMock(side_effect=ConnectionError("not available")),
         ):
             await store.start(
                 StateDatabaseConfig(
@@ -91,6 +83,39 @@ class StateStoreTests(unittest.IsolatedAsyncioTestCase):
 
         records = await store.list_conversations()
         self.assertEqual([record.session_id for record in records], ["sales-session"])
+
+        running = await store.begin_conversation_turn(
+            "sales-session",
+            question="那上个月呢？",
+        )
+        self.assertEqual(running.pending_question, "那上个月呢？")
+        self.assertEqual(running.run_status, "running")
+        self.assertEqual(
+            (await store.get_conversation("sales-session")).pending_question,
+            "那上个月呢？",
+        )
+
+        cancelled = await store.finish_conversation_turn(
+            "sales-session",
+            run_status="cancelled",
+            keep_pending_question=True,
+        )
+        self.assertEqual(cancelled.pending_question, "那上个月呢？")
+        self.assertEqual(cancelled.run_status, "cancelled")
+
+        completed = await store.finish_conversation_turn(
+            "sales-session",
+            run_status="completed",
+        )
+        self.assertIsNone(completed.pending_question)
+        self.assertEqual(completed.run_status, "completed")
+        unchanged = await store.finish_conversation_turn(
+            "sales-session",
+            run_status="cancelled",
+            keep_pending_question=True,
+            only_if_running=True,
+        )
+        self.assertEqual(unchanged.run_status, "completed")
         self.assertTrue(await store.delete_conversation("sales-session"))
         self.assertFalse(await store.delete_conversation("sales-session"))
         self.assertEqual(await store.list_conversations(), [])
