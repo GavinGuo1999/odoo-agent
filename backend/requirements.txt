@@ -10,3 +10,4 @@ psycopg-pool==3.3.1
 pydantic-settings==2.14.2
 sqlglot==30.14.0
 uvicorn==0.52.1
+wrenai==0.13.2

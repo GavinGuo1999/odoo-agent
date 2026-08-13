@@ -1,0 +1,15 @@
+name: product_template
+table_reference: {schema: public, table: product_template}
+primary_key: id
+columns:
+  - {name: id, type: BIGINT, is_primary_key: true, not_null: true}
+  - {name: name, type: JSON, properties: {description: "多语言 JSONB 名称，优先 zh_CN 再 en_US"}}
+  - {name: categ_id, type: BIGINT}
+  - {name: uom_id, type: BIGINT}
+  - {name: company_id, type: BIGINT}
+  - {name: list_price, type: DECIMAL}
+  - {name: sale_ok, type: BOOLEAN}
+  - {name: active, type: BOOLEAN}
+  - {name: type, type: VARCHAR}
+cached: false
+properties: {description: "Odoo 产品模板和多语言产品名称"}

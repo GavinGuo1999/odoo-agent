@@ -59,6 +59,7 @@
                 <div class="routing-row"><strong>复杂结果解释</strong><select class="select" data-role-provider="answer"><option value="deepseek">DeepSeek</option><option value="siliconflow">硅基流动</option></select><input class="input" data-role-model="answer" placeholder="Model ID"></div>
                 <div class="routing-row"><strong>普通聊天</strong><select class="select" data-role-provider="general"><option value="deepseek">DeepSeek</option><option value="siliconflow">硅基流动</option></select><input class="input" data-role-model="general" placeholder="Model ID"></div>
               </div>
+              <div class="routing-row" style="margin-top:12px"><strong>SQL 深度思考</strong><select class="select" data-sql-thinking-mode><option value="disabled">关闭（推荐，低延迟）</option><option value="auto">供应商默认</option><option value="enabled">开启</option></select><span class="help-text">只影响 SQL 生成与修复节点。</span></div>
               <div class="help-text" style="margin-top:12px">简单 KPI、排名和趋势由程序直接总结，不调用“复杂结果解释”模型。</div>
             </section>
 
@@ -75,6 +76,14 @@
 
             <section class="card panel settings-section">
               <div class="section-heading"><div><h2>销售指标口径</h2><p>直接读取当前销售语义层，Agent 生成 SQL 时遵循这些定义</p></div><span class="badge neutral" data-semantic-version>读取中</span></div>
+              <div class="routing-row" style="margin-bottom:16px">
+                <strong>Text2SQL 语义引擎</strong>
+                <select class="select" data-semantic-provider>
+                  <option value="native">原生语义层（稳定基线）</option>
+                  <option value="wren">Wren MDL（实验对比）</option>
+                </select>
+                <span class="help-text" data-semantic-provider-help>原生路径不经过 Wren 编译。</span>
+              </div>
               <div class="data-table-wrap">
                 <table class="data-table">
                   <thead><tr><th>指标</th><th>定义</th><th>默认状态</th><th>时间字段</th><th>启用</th></tr></thead>

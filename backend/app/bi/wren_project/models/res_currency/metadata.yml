@@ -1,0 +1,11 @@
+name: res_currency
+table_reference: {schema: public, table: res_currency}
+primary_key: id
+columns:
+  - {name: id, type: BIGINT, is_primary_key: true, not_null: true}
+  - {name: name, type: VARCHAR}
+  - {name: symbol, type: VARCHAR}
+  - {name: position, type: VARCHAR}
+  - {name: rounding, type: DECIMAL}
+cached: false
+properties: {description: "Odoo 币种定义"}

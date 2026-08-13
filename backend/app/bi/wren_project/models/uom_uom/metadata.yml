@@ -1,0 +1,11 @@
+name: uom_uom
+table_reference: {schema: public, table: uom_uom}
+primary_key: id
+columns:
+  - {name: id, type: BIGINT, is_primary_key: true, not_null: true}
+  - {name: name, type: JSON, properties: {description: "多语言 JSONB 计量单位名称"}}
+  - {name: relative_factor, type: DECIMAL}
+  - {name: factor, type: DECIMAL}
+  - {name: active, type: BOOLEAN}
+cached: false
+properties: {description: "Odoo 计量单位"}

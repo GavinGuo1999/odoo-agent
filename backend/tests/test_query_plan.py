@@ -26,8 +26,15 @@ class QueryPlanTests(unittest.TestCase):
             "query_type": "kpi",
             "metric_ids": ["sales_amount", "unknown"],
             "dimensions": [],
-            "filters": [],
+            "filters": [
+              {"field":"company_id","operator":"eq","value":1,"source":"system_required"},
+              {"field":"state","operator":"in","value":["sale","done"],"source":"metric_rule"}
+            ],
             "time_range": {"label": "本月", "start": null, "end": null, "grain": "none"},
+            "result_shape": "scalar",
+            "select_columns": ["sales_amount"],
+            "sort": [],
+            "row_limit": null,
             "assumptions": [],
             "ambiguities": [],
             "requires_clarification": false,
@@ -52,6 +59,13 @@ class QueryPlanTests(unittest.TestCase):
                     "requires_clarification": True,
                     "clarification_question": None,
                 }
+            )
+
+    def test_model_payload_must_explicitly_supply_result_contract(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_sql_generation_payload(
+                '{"plan":{"query_type":"kpi"},"sql":"SELECT 1 AS value"}',
+                allowed_metric_ids=[],
             )
 
     def test_simple_kpi_uses_deterministic_answer(self) -> None:

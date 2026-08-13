@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import os
+import shutil
+import sys
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, status
 from openai import AsyncOpenAI
@@ -16,8 +19,10 @@ from app.schemas.settings import (
     ProviderSettingsView,
     SettingsUpdateRequest,
     SettingsView,
+    SemanticSettingsView,
     StateDatabaseSettingsView,
 )
+from app.bi import SalesSemanticLayer
 from app.services import set_user_environment
 from app.state import get_state_store
 
@@ -50,6 +55,10 @@ def _settings_view(*, restart_required: bool = False) -> SettingsView:
     routing = settings.routing()
     state_database = settings.state_database()
     state_store = get_state_store()
+    semantic = settings.semantic()
+    local_wren = Path(sys.prefix) / ("Scripts" if os.name == "nt" else "bin") / (
+        "wren.exe" if os.name == "nt" else "wren"
+    )
 
     langfuse_enabled = (
         os.getenv("LANGFUSE_ENABLED", "true").strip().lower() in _TRUE_VALUES
@@ -107,6 +116,18 @@ def _settings_view(*, restart_required: bool = False) -> SettingsView:
             active_mode=state_store.mode,  # type: ignore[arg-type]
             error_type=state_store.error_type,
         ),
+        semantic=SemanticSettingsView(
+            provider=semantic.provider,
+            native_version=SalesSemanticLayer.load().version,
+            wren_project_path=str(semantic.wren_project_path),
+            wren_project_configured=(semantic.wren_project_path / "wren_project.yml").exists(),
+            wren_executable_configured=bool(
+                semantic.wren_executable
+                or local_wren.exists()
+                or shutil.which("wren")
+            ),
+        ),
+        sql_thinking_mode=settings.sql_llm_thinking_mode,
         restart_required=restart_required,
     )
 
@@ -219,6 +240,14 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
         or langfuse_credentials_changed
     )
     current_settings = get_settings()
+    if (
+        payload.semantic.provider == "wren"
+        and not _settings_view().semantic.wren_executable_configured
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Wren 尚未安装到当前应用环境，请先重新运行项目依赖安装。",
+        )
     state_database_changed = any(
         current != new
         for current, new in (
@@ -258,10 +287,12 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
         ),
         "SQL_LLM_PROVIDER": payload.routing.sql.provider,
         "SQL_LLM_MODEL": payload.routing.sql.model.strip(),
+        "SQL_LLM_THINKING_MODE": payload.sql_thinking_mode,
         "ANSWER_LLM_PROVIDER": payload.routing.answer.provider,
         "ANSWER_LLM_MODEL": payload.routing.answer.model.strip(),
         "GENERAL_LLM_PROVIDER": payload.routing.general.provider,
         "GENERAL_LLM_MODEL": payload.routing.general.model.strip(),
+        "SEMANTIC_PROVIDER": payload.semantic.provider,
         "LANGFUSE_BASE_URL": new_langfuse_base_url,
         "LANGFUSE_ENABLED": str(payload.langfuse.enabled).lower(),
         "LANGFUSE_TRACING_ENABLED": str(payload.langfuse.enabled).lower(),

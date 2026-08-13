@@ -37,6 +37,9 @@ def sql_payload(
     dimensions: list[str] | None = None,
     requires_clarification: bool = False,
     clarification_question: str | None = None,
+    filters: list[dict[str, object]] | None = None,
+    select_columns: list[str] | None = None,
+    row_limit: int | None = None,
 ) -> str:
     import json
 
@@ -46,13 +49,29 @@ def sql_payload(
                 "query_type": query_type,
                 "metric_ids": metrics,
                 "dimensions": dimensions or [],
-                "filters": [],
+                "filters": filters
+                or [
+                    {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
+                    {"field": "state", "operator": "in", "value": ["sale", "done"], "source": "metric_rule"},
+                ],
                 "time_range": {
                     "label": None,
                     "start": None,
                     "end": None,
                     "grain": "month" if query_type == "trend" else "none",
                 },
+                "result_shape": {
+                    "kpi": "scalar",
+                    "trend": "time_series",
+                    "ranking": "ranking",
+                }.get(query_type, "table"),
+                "select_columns": select_columns or [*(dimensions or []), *metrics],
+                "sort": (
+                    [{"field": (dimensions or ["month"])[0], "direction": "asc"}]
+                    if query_type == "trend"
+                    else []
+                ),
+                "row_limit": row_limit,
                 "assumptions": [],
                 "ambiguities": ["客户名称不明确"] if requires_clarification else [],
                 "requires_clarification": requires_clarification,

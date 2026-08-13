@@ -1,0 +1,25 @@
+name: sale_order_line
+table_reference: {schema: public, table: sale_order_line}
+primary_key: id
+columns:
+  - {name: id, type: BIGINT, is_primary_key: true, not_null: true}
+  - {name: order_id, type: BIGINT, properties: {description: "所属 sale_order.id"}}
+  - {name: company_id, type: BIGINT}
+  - {name: order_partner_id, type: BIGINT}
+  - {name: salesman_id, type: BIGINT}
+  - {name: product_id, type: BIGINT, properties: {description: "产品 product_product.id"}}
+  - {name: product_uom_id, type: BIGINT}
+  - {name: state, type: VARCHAR}
+  - {name: display_type, type: VARCHAR, properties: {description: "产品分析必须为 NULL"}}
+  - {name: product_uom_qty, type: DECIMAL, properties: {description: "销售数量"}}
+  - {name: price_unit, type: DECIMAL}
+  - {name: discount, type: DECIMAL}
+  - {name: price_subtotal, type: DECIMAL, properties: {description: "产品未税销售额"}}
+  - {name: price_total, type: DECIMAL}
+  - {name: qty_delivered, type: DECIMAL, properties: {description: "已交付数量"}}
+  - {name: qty_invoiced, type: DECIMAL, properties: {description: "已开票数量"}}
+  - {name: qty_to_invoice, type: DECIMAL}
+  - {name: is_downpayment, type: BOOLEAN}
+  - {name: is_delivery, type: BOOLEAN}
+cached: false
+properties: {description: "Odoo 销售订单行；产品分析排除展示行"}

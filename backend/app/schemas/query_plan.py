@@ -17,6 +17,9 @@ FilterOperator = Literal[
     "lte",
     "contains",
 ]
+FilterSource = Literal["user", "metric_rule", "system_required"]
+ResultShape = Literal["scalar", "time_series", "ranking", "table"]
+SortDirection = Literal["asc", "desc"]
 
 
 class QueryFilter(BaseModel):
@@ -25,6 +28,14 @@ class QueryFilter(BaseModel):
     field: str = Field(min_length=1, max_length=120)
     operator: FilterOperator = "eq"
     value: Any
+    source: FilterSource = "user"
+
+
+class QuerySort(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    field: str = Field(min_length=1, max_length=120)
+    direction: SortDirection = "asc"
 
 
 class QueryTimeRange(BaseModel):
@@ -52,6 +63,10 @@ class QueryPlan(BaseModel):
     dimensions: list[str] = Field(default_factory=list, max_length=12)
     filters: list[QueryFilter] = Field(default_factory=list, max_length=20)
     time_range: QueryTimeRange = Field(default_factory=QueryTimeRange)
+    result_shape: ResultShape = "table"
+    select_columns: list[str] = Field(default_factory=list, max_length=20)
+    sort: list[QuerySort] = Field(default_factory=list, max_length=6)
+    row_limit: int | None = Field(default=None, ge=1, le=5_000)
     assumptions: list[str] = Field(default_factory=list, max_length=10)
     ambiguities: list[str] = Field(default_factory=list, max_length=10)
     requires_clarification: bool = False

@@ -1,0 +1,12 @@
+name: res_partner
+table_reference: {schema: public, table: res_partner}
+primary_key: id
+columns:
+  - {name: id, type: BIGINT, is_primary_key: true, not_null: true}
+  - {name: name, type: VARCHAR, properties: {description: "客户或联系人名称"}}
+  - {name: commercial_partner_id, type: BIGINT}
+  - {name: customer_rank, type: INTEGER}
+  - {name: active, type: BOOLEAN}
+  - {name: is_company, type: BOOLEAN}
+cached: false
+properties: {description: "Odoo 客户、联系人和销售员姓名表"}

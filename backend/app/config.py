@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import AnyHttpUrl, Field, SecretStr
@@ -12,6 +13,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ProviderName = Literal["deepseek", "siliconflow"]
 ModelRole = Literal["sql", "answer", "general"]
+SemanticProviderName = Literal["native", "wren"]
+ThinkingMode = Literal["auto", "enabled", "disabled"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +28,7 @@ class ProviderConfig:
     output_price_per_million: float = 0.0
     pricing_currency: Literal["USD", "CNY"] = "USD"
     cny_per_usd: float = 7.2
+    thinking_mode: ThinkingMode = "auto"
 
     @property
     def configured(self) -> bool:
@@ -88,6 +92,14 @@ class StateDatabaseConfig:
             and self.database
             and self.user
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticConfig:
+    provider: SemanticProviderName
+    wren_project_path: Path
+    wren_executable: str | None
+    timeout_seconds: float
 
 
 class Settings(BaseSettings):
@@ -179,6 +191,10 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="SQL_LLM_MODEL",
     )
+    sql_llm_thinking_mode: ThinkingMode = Field(
+        default="disabled",
+        validation_alias="SQL_LLM_THINKING_MODE",
+    )
     answer_llm_provider: ProviderName | None = Field(
         default=None,
         validation_alias="ANSWER_LLM_PROVIDER",
@@ -194,6 +210,25 @@ class Settings(BaseSettings):
     general_llm_model: str | None = Field(
         default=None,
         validation_alias="GENERAL_LLM_MODEL",
+    )
+
+    semantic_provider: SemanticProviderName = Field(
+        default="native",
+        validation_alias="SEMANTIC_PROVIDER",
+    )
+    wren_project_path: str | None = Field(
+        default=None,
+        validation_alias="WREN_PROJECT_PATH",
+    )
+    wren_executable: str | None = Field(
+        default=None,
+        validation_alias="WREN_EXECUTABLE",
+    )
+    wren_timeout_seconds: float = Field(
+        default=20.0,
+        ge=1.0,
+        le=120.0,
+        validation_alias="WREN_TIMEOUT_SECONDS",
     )
 
     odoo_db_host: str = Field(
@@ -268,6 +303,7 @@ class Settings(BaseSettings):
         name: ProviderName | None = None,
         *,
         model: str | None = None,
+        thinking_mode: ThinkingMode = "auto",
     ) -> ProviderConfig:
         selected = name or self.llm_provider
         if selected == "deepseek":
@@ -286,6 +322,7 @@ class Settings(BaseSettings):
                 output_price_per_million=self.deepseek_output_price_per_million,
                 pricing_currency="USD",
                 cny_per_usd=self.cny_per_usd,
+                thinking_mode=thinking_mode,
             )
 
         secret = (
@@ -303,21 +340,25 @@ class Settings(BaseSettings):
             output_price_per_million=self.siliconflow_output_price_per_million,
             pricing_currency="CNY",
             cny_per_usd=self.cny_per_usd,
+            thinking_mode=thinking_mode,
         )
 
     def routing(self, override_provider: ProviderName | None = None) -> ModelRoutingConfig:
         if override_provider:
-            provider = self.provider(override_provider)
             return ModelRoutingConfig(
-                sql=provider,
-                answer=provider,
-                general=provider,
+                sql=self.provider(
+                    override_provider,
+                    thinking_mode=self.sql_llm_thinking_mode,
+                ),
+                answer=self.provider(override_provider),
+                general=self.provider(override_provider),
             )
 
         return ModelRoutingConfig(
             sql=self.provider(
                 self.sql_llm_provider or self.llm_provider,
                 model=self.sql_llm_model,
+                thinking_mode=self.sql_llm_thinking_mode,
             ),
             answer=self.provider(
                 self.answer_llm_provider or self.llm_provider,
@@ -359,6 +400,21 @@ class Settings(BaseSettings):
             database=self.agent_state_db_name,
             user=self.agent_state_db_user,
             password=password,
+        )
+
+    def semantic(self) -> SemanticConfig:
+        bundled_project = Path(__file__).resolve().parent / "bi" / "wren_project"
+        project_path = (
+            Path(self.wren_project_path).expanduser().resolve()
+            if self.wren_project_path
+            else bundled_project
+        )
+        executable = self.wren_executable.strip() if self.wren_executable else None
+        return SemanticConfig(
+            provider=self.semantic_provider,
+            wren_project_path=project_path,
+            wren_executable=executable or None,
+            timeout_seconds=self.wren_timeout_seconds,
         )
 
 

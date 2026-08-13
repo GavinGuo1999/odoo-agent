@@ -1,0 +1,37 @@
+relationships:
+  - name: sale_order_customer
+    models: [sale_order, res_partner]
+    join_type: MANY_TO_ONE
+    condition: sale_order.partner_id = res_partner.id
+  - name: sale_order_salesperson
+    models: [sale_order, res_users]
+    join_type: MANY_TO_ONE
+    condition: sale_order.user_id = res_users.id
+  - name: res_users_partner
+    models: [res_users, res_partner]
+    join_type: MANY_TO_ONE
+    condition: res_users.partner_id = res_partner.id
+  - name: sale_order_company
+    models: [sale_order, res_company]
+    join_type: MANY_TO_ONE
+    condition: sale_order.company_id = res_company.id
+  - name: sale_order_currency
+    models: [sale_order, res_currency]
+    join_type: MANY_TO_ONE
+    condition: sale_order.currency_id = res_currency.id
+  - name: sale_order_line_order
+    models: [sale_order_line, sale_order]
+    join_type: MANY_TO_ONE
+    condition: sale_order_line.order_id = sale_order.id
+  - name: sale_order_line_product
+    models: [sale_order_line, product_product]
+    join_type: MANY_TO_ONE
+    condition: sale_order_line.product_id = product_product.id
+  - name: sale_order_line_uom
+    models: [sale_order_line, uom_uom]
+    join_type: MANY_TO_ONE
+    condition: sale_order_line.product_uom_id = uom_uom.id
+  - name: product_product_template
+    models: [product_product, product_template]
+    join_type: MANY_TO_ONE
+    condition: product_product.product_tmpl_id = product_template.id

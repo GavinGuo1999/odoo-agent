@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from sqlglot import exp, parse
 from sqlglot.errors import ParseError
 
+from app.schemas.query_plan import QueryPlan
+
 
 @dataclass(frozen=True, slots=True)
 class SqlValidationResult:
@@ -40,7 +42,13 @@ class ReadOnlySqlGuard:
         self._company_id = company_id
         self._max_rows = max_rows
 
-    def validate(self, sql: str) -> SqlValidationResult:
+    def validate(
+        self,
+        sql: str,
+        *,
+        plan: QueryPlan | None = None,
+        question: str = "",
+    ) -> SqlValidationResult:
         errors: list[str] = []
         try:
             statements = parse(sql.strip(), read="postgres")
@@ -83,7 +91,7 @@ class ReadOnlySqlGuard:
         real_tables: set[str] = set()
         for table in statement.find_all(exp.Table):
             table_name = table.name.lower()
-            if table_name in cte_names:
+            if table_name in cte_names and not table.db and not table.catalog:
                 continue
             if table.db and table.db.lower() != "public":
                 errors.append(f"不允许访问 schema：{table.db}。")
@@ -137,6 +145,9 @@ class ReadOnlySqlGuard:
             ).lower()
             if function_name in self._FORBIDDEN_FUNCTIONS:
                 errors.append(f"不允许调用函数：{function_name}。")
+
+        if plan is not None:
+            errors.extend(self._validate_query_contract(statement, plan, question))
 
         if {"sale_order", "sale_order_line"} & real_tables:
             company_filter_found = False
@@ -193,3 +204,130 @@ class ReadOnlySqlGuard:
             errors=[],
             tables=sorted(real_tables),
         )
+
+    @staticmethod
+    def _field_name(value: str) -> str:
+        return value.rsplit(".", 1)[-1].strip().casefold()
+
+    def _validate_query_contract(
+        self,
+        statement: exp.Query,
+        plan: QueryPlan,
+        question: str,
+    ) -> list[str]:
+        errors: list[str] = []
+        final_select = statement if isinstance(statement, exp.Select) else statement.find(exp.Select)
+        if final_select is not None and plan.select_columns:
+            actual_columns = [
+                projection.alias_or_name.casefold()
+                for projection in final_select.expressions
+                if projection.alias_or_name
+            ]
+            expected_columns = [column.casefold() for column in plan.select_columns]
+            if actual_columns != expected_columns:
+                errors.append(
+                    "SQL 最终输出列与 QueryPlan.select_columns 不一致："
+                    f"期望 {expected_columns}，实际 {actual_columns}。"
+                )
+
+        if plan.query_type == "ranking" and plan.row_limit is None:
+            errors.append("排名查询必须在 QueryPlan.row_limit 中声明 Top N。")
+        elif plan.row_limit is not None:
+            limit = statement.args.get("limit")
+            expression = limit.expression if limit is not None else None
+            if not (
+                isinstance(expression, exp.Literal)
+                and expression.is_int
+                and int(expression.this) == plan.row_limit
+            ):
+                errors.append(f"SQL LIMIT 必须与 QueryPlan.row_limit={plan.row_limit} 一致。")
+
+        order = statement.args.get("order")
+        if order is not None or plan.sort:
+            actual_sort: list[tuple[str, str]] = []
+            for ordered in order.expressions if order is not None else []:
+                target = ordered.this
+                if isinstance(target, exp.Literal) and target.is_int:
+                    index = int(target.this) - 1
+                    field = (
+                        plan.select_columns[index].casefold()
+                        if 0 <= index < len(plan.select_columns)
+                        else target.this
+                    )
+                else:
+                    field = target.alias_or_name.casefold()
+                actual_sort.append(
+                    (field, "desc" if ordered.args.get("desc") else "asc")
+                )
+            expected_sort = [
+                (item.field.casefold(), item.direction) for item in plan.sort
+            ]
+            if actual_sort != expected_sort:
+                errors.append(
+                    "SQL ORDER BY 与 QueryPlan.sort 不一致："
+                    f"期望 {expected_sort}，实际 {actual_sort}。"
+                )
+
+        system_fields = {"company_id"}
+        metric_fields = {"state", "display_type"}
+        question_fields = self._question_filter_fields(question)
+        declared_fields: set[str] = set()
+        for query_filter in plan.filters:
+            field = self._field_name(query_filter.field)
+            declared_fields.add(field)
+            if query_filter.source == "system_required" and field not in system_fields:
+                errors.append(f"过滤字段 {field} 不能标记为 system_required。")
+            elif query_filter.source == "metric_rule" and field not in metric_fields:
+                errors.append(f"过滤字段 {field} 不是已登记的指标口径规则。")
+            elif query_filter.source == "user" and field not in question_fields:
+                errors.append(f"用户问题没有授权过滤字段 {field}。")
+
+        allowed_where_fields = system_fields | metric_fields | declared_fields
+        if (
+            plan.time_range.label
+            or plan.time_range.start
+            or plan.time_range.end
+            or plan.time_range.grain != "none"
+        ):
+            allowed_where_fields.add("date_order")
+        for where in statement.find_all(exp.Where):
+            for column in where.find_all(exp.Column):
+                field = column.name.casefold()
+                if field not in allowed_where_fields:
+                    errors.append(f"SQL 包含 QueryPlan 未声明的过滤字段：{field}。")
+        return errors
+
+    @staticmethod
+    def _question_filter_fields(question: str) -> set[str]:
+        normalized = question.casefold()
+        fields: set[str] = set()
+        keyword_fields = {
+            "客户": {"name", "partner_id", "commercial_partner_id", "customer_rank", "is_company"},
+            "伙伴": {"name", "partner_id", "commercial_partner_id"},
+            "产品": {"name", "product_id", "default_code", "categ_id"},
+            "商品": {"name", "product_id", "default_code", "categ_id"},
+            "销售员": {"name", "user_id", "salesman_id", "partner_id"},
+            "业务员": {"name", "user_id", "salesman_id", "partner_id"},
+            "交付": {"delivery_status", "qty_delivered"},
+            "发货": {"delivery_status", "qty_delivered", "is_delivery"},
+            "开票": {"invoice_status", "qty_invoiced"},
+            "预付款": {"is_downpayment"},
+            "折扣": {"discount"},
+            "订单": {"name"},
+            "今天": {"date_order"},
+            "本日": {"date_order"},
+            "昨天": {"date_order"},
+            "本周": {"date_order"},
+            "上周": {"date_order"},
+            "本月": {"date_order"},
+            "上月": {"date_order"},
+            "今年": {"date_order"},
+            "去年": {"date_order"},
+            "月份": {"date_order"},
+            "季度": {"date_order"},
+            "年度": {"date_order"},
+        }
+        for keyword, related_fields in keyword_fields.items():
+            if keyword in normalized:
+                fields.update(related_fields)
+        return fields

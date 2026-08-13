@@ -1,0 +1,11 @@
+name: res_users
+table_reference: {schema: public, table: res_users}
+primary_key: id
+columns:
+  - {name: id, type: BIGINT, is_primary_key: true, not_null: true}
+  - {name: partner_id, type: BIGINT, properties: {description: "姓名位于 res_partner"}}
+  - {name: company_id, type: BIGINT}
+  - {name: active, type: BOOLEAN}
+  - {name: share, type: BOOLEAN}
+cached: false
+properties: {description: "Odoo 用户；不开放登录名和密码字段"}

@@ -30,8 +30,12 @@ def sql_generation_prompt(
       "query_type": "kpi|trend|ranking|detail|comparison",
       "metric_ids": ["semantic_context 中的指标 ID"],
       "dimensions": ["用于展示或分组的字段语义"],
-      "filters": [{{"field":"字段名","operator":"eq|neq|in|not_in|gte|lte|contains","value":"值"}}],
+      "filters": [{{"field":"字段名","operator":"eq|neq|in|not_in|gte|lte|contains","value":"值","source":"user|metric_rule|system_required"}}],
       "time_range": {{"label":"用户时间描述或 null","start":"YYYY-MM-DD 或 null","end":"YYYY-MM-DD 或 null","grain":"none|day|week|month|quarter|year"}},
+      "result_shape": "scalar|time_series|ranking|table",
+      "select_columns": ["SQL 最终输出列的精确别名，顺序必须与 SELECT 一致"],
+      "sort": [{{"field":"输出列别名","direction":"asc|desc"}}],
+      "row_limit": 10,
       "assumptions": ["不阻塞查询的口径假设"],
       "ambiguities": ["必须由用户决定的歧义"],
       "requires_clarification": false,
@@ -44,6 +48,10 @@ def sql_generation_prompt(
 - 禁止 SELECT *；必须给展示字段使用清晰的中文或英文别名。
 - 所有销售查询必须显式包含 required_company_id 对应的 company_id 等值过滤。
 - 销售额和订单数默认只统计 semantic_context 指标给出的订单状态。
+- filters 必须完整列出 SQL WHERE 中的业务过滤：公司隔离用 system_required，指标状态/展示行规则用 metric_rule，用户明确提出的条件用 user；禁止把模型自行猜测的条件伪装成 user。
+- select_columns 必须逐项等于最终 SELECT 列别名；排名的 row_limit 必须等于 SQL LIMIT，非排名可为 null。
+- result_shape：单值 KPI 用 scalar，时间趋势用 time_series，Top N 用 ranking，其他用 table。
+- semantic_provider=wren 时，SQL 必须针对 wren_mdl_schema 中的 MDL 模型名编写；不要自行展开成物理表 SQL，后续节点会 dry-plan 编译。
 - 时间分组使用 semantic_context 的 timezone 和 date_field。
 - 时间趋势字段统一使用 day、week、month、quarter 或 year 作为别名；“每月/月度”问题必须返回 month 列并按它升序排列。
 - JSONB 多语言名称优先使用 ->>'zh_CN'，并回退到 ->>'en_US'。

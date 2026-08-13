@@ -437,11 +437,14 @@
   const testDatabaseButton = document.querySelector("[data-test-database]");
   const metricsTable = document.querySelector("[data-metrics-table]");
   const semanticVersion = document.querySelector("[data-semantic-version]");
+  const semanticProviderInput = document.querySelector("[data-semantic-provider]");
+  const semanticProviderHelp = document.querySelector("[data-semantic-provider-help]");
   const schemaList = document.querySelector("[data-schema-list]");
   const queryMaxRows = document.querySelector("[data-query-max-rows]");
   const queryTimeout = document.querySelector("[data-query-timeout]");
   const roleProviderInputs = document.querySelectorAll("[data-role-provider]");
   const roleModelInputs = document.querySelectorAll("[data-role-model]");
+  const sqlThinkingModeInput = document.querySelector("[data-sql-thinking-mode]");
   const stateDatabaseStatus = document.querySelector("[data-state-db-status]");
   const stateDatabaseEnabled = document.querySelector("[data-state-db-enabled]");
   const stateDatabaseHost = document.querySelector("[data-state-db-host]");
@@ -641,6 +644,19 @@
     });
   }
 
+  function renderSemanticSettings(config) {
+    if (!config) return;
+    if (semanticProviderInput) semanticProviderInput.value = config.provider;
+    if (semanticProviderHelp) {
+      const ready = config.wren_project_configured && config.wren_executable_configured;
+      semanticProviderHelp.textContent = config.provider === "wren"
+        ? (ready
+          ? "Wren 已就绪：MDL 会生成语义上下文，并在 SQLGlot 校验前执行 dry-plan。"
+          : "Wren 尚未就绪；请重新运行安装依赖后再启用。")
+        : "原生语义层是稳定基线，可随时从 Wren 一键切回。";
+    }
+  }
+
   function captureRoutingSettings() {
     roleProviderInputs.forEach((input) => {
       const role = input.dataset.roleProvider;
@@ -784,9 +800,11 @@
       activeProvider = data.selected_provider;
       renderActiveProvider();
       renderRoutingSettings(data.routing);
+      if (sqlThinkingModeInput) sqlThinkingModeInput.value = data.sql_thinking_mode || "disabled";
       renderLangfuseStatus(data.langfuse);
       renderDatabaseSettings(data.database);
       renderStateDatabaseSettings(data.state_database);
+      renderSemanticSettings(data.semantic);
       showSettingsFeedback("配置已从本机后端读取。密钥只显示状态，不会回显明文。");
       loadProviderModels({ quiet: true });
       refreshDatabaseStatus();
@@ -827,7 +845,11 @@
         secret_key: secretKey || null
       },
       database: databasePayload(),
-      state_database: stateDatabasePayload()
+      state_database: stateDatabasePayload(),
+      semantic: {
+        provider: semanticProviderInput?.value || "native"
+      },
+      sql_thinking_mode: sqlThinkingModeInput?.value || "disabled"
     };
 
     const data = await apiRequest("/settings", {
@@ -839,9 +861,11 @@
     });
     renderActiveProvider();
     renderRoutingSettings(data.routing);
+    if (sqlThinkingModeInput) sqlThinkingModeInput.value = data.sql_thinking_mode || "disabled";
     renderLangfuseStatus(data.langfuse);
     renderDatabaseSettings(data.database);
     renderStateDatabaseSettings(data.state_database);
+    renderSemanticSettings(data.semantic);
     const message = data.restart_required
       ? "配置已保存。你更换了 Langfuse 连接信息，请关闭后端窗口并重新双击 BAT。"
       : "配置已保存，并已对新的模型请求生效。";

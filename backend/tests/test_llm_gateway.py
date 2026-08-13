@@ -64,6 +64,7 @@ class LLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["api_base"], "https://api.deepseek.com")
         self.assertEqual(call["api_key"], "sensitive-value")
         self.assertNotIn("name", call)
+        self.assertNotIn("thinking", call)
         trace.assert_called_once_with(
             name="generate-model-response",
             model="deepseek-v4-pro",
@@ -115,6 +116,44 @@ class LLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["api_base"], "https://api.siliconflow.cn/v1")
         self.assertEqual(call["response_format"], {"type": "json_object"})
         self.assertEqual(result.provider, "siliconflow")
+
+    async def test_sql_role_can_disable_deepseek_thinking(self) -> None:
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
+            model="deepseek-v4-pro",
+            usage=None,
+        )
+        config = ProviderConfig(
+            name="deepseek",
+            api_key="sensitive-value",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-pro",
+            timeout_seconds=30,
+            thinking_mode="disabled",
+        )
+
+        @contextmanager
+        def fake_generation(**_kwargs):
+            yield Mock()
+
+        with (
+            patch(
+                "app.llm.gateway.litellm.acompletion",
+                new=AsyncMock(return_value=completion),
+            ) as complete,
+            patch("app.llm.gateway.trace_generation", side_effect=fake_generation),
+        ):
+            await LLMGateway(config).complete(
+                messages=[{"role": "user", "content": "SQL"}],
+                generation_name="generate-sales-sql",
+                generation_role="sql",
+                json_mode=True,
+            )
+
+        self.assertEqual(
+            complete.await_args.kwargs["thinking"],
+            {"type": "disabled"},
+        )
 
 
 if __name__ == "__main__":

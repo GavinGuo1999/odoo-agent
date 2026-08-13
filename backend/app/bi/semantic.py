@@ -19,13 +19,17 @@ class SemanticContext:
     relations: list[str]
     metrics: dict[str, dict[str, Any]]
     examples: list[dict[str, str]]
+    provider: str = "native"
+    compiled_schema: str | None = None
+    business_rules: str | None = None
 
     @property
     def metric_ids(self) -> list[str]:
         return list(self.metrics)
 
     def as_prompt(self) -> str:
-        payload = {
+        payload: dict[str, Any] = {
+            "semantic_provider": self.provider,
             "semantic_version": self.version,
             "timezone": self.timezone,
             "required_company_id": self.company_id,
@@ -34,6 +38,15 @@ class SemanticContext:
             "metrics": self.metrics,
             "verified_examples": self.examples,
         }
+        if self.compiled_schema:
+            payload["wren_mdl_schema"] = self.compiled_schema
+            payload["wren_business_rules"] = self.business_rules or ""
+            payload["sql_namespace"] = (
+                "Generate SQL against Wren MDL model names. "
+                "The next graph node compiles it to physical PostgreSQL SQL."
+            )
+            payload.pop("tables", None)
+            payload.pop("relations", None)
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
 

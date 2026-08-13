@@ -1,0 +1,10 @@
+name: product_product
+table_reference: {schema: public, table: product_product}
+primary_key: id
+columns:
+  - {name: id, type: BIGINT, is_primary_key: true, not_null: true}
+  - {name: product_tmpl_id, type: BIGINT, properties: {description: "产品模板 product_template.id"}}
+  - {name: default_code, type: VARCHAR}
+  - {name: active, type: BOOLEAN}
+cached: false
+properties: {description: "Odoo 产品变体；名称位于产品模板"}

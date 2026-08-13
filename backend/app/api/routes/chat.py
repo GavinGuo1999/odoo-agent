@@ -111,6 +111,7 @@ def _agent(settings: Settings, routing: ModelRoutingConfig) -> SalesAgent:
         settings.database(),
         routing=routing,
         checkpointer=get_state_store().checkpointer,
+        semantic_config=settings.semantic(),
     )
 
 

@@ -5,6 +5,7 @@
 > 适用应用版本：0.2.0
 >
 > 最后更新：2026-08-06
+>
 > 文档状态：正式
 
 本目录是 Odoo Sales Agent 的正式文档入口。项目当前面向单用户、单公司、只读销售分析场景，通过自然语言查询 Odoo PostgreSQL 实时数据，并以结论、表格、ECharts 图表和只读 SQL 返回结果。
@@ -69,6 +70,10 @@
 
     SQLGlot、Pydantic/Instructor、Langfuse、dbt Core 和 LiteLLM 的用途、落地状态与后续边界。
 
+13. [Wren AI 语义编译集成](13-wren-semantic-integration.md)
+
+    Wren MDL 的职责边界、LangGraph 固定节点、QueryPlan 合同、切换与验证方法。
+
 ## 3. 当前能力快照
 
 | 能力 | 状态 |
@@ -76,6 +81,7 @@
 | LiteLLM + DeepSeek / 硅基流动 | 已支持，LiteLLM SDK 统一调用，可按节点选择供应商和模型 |
 | Odoo 实时销售数据 | 已支持，PostgreSQL 强制只读 |
 | Text2SQL | 已支持，Pydantic QueryPlan + SQLGlot 校验 + 最多两次修复 |
+| Wren AI | 已支持实验切换，使用 MDL 上下文和 dry-plan，不直接执行 Odoo 查询 |
 | 图表 | 已支持，后端白名单 ChartSpec，前端本地 ECharts 渲染 |
 | 会话恢复 | 已支持，独立 PostgreSQL Checkpointer |
 | 人工确认 | 已支持，LangGraph Interrupt / Resume |

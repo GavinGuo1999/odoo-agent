@@ -12,6 +12,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.bi.chart import build_chart_spec  # noqa: E402
 from app.bi.semantic import SalesSemanticLayer  # noqa: E402
 from app.database import ReadOnlySqlGuard  # noqa: E402
+from app.schemas.query_plan import QueryPlan  # noqa: E402
 
 
 class SqlGuardTests(unittest.TestCase):
@@ -59,6 +60,54 @@ class SqlGuardTests(unittest.TestCase):
         )
         self.assertFalse(result.safe)
         self.assertTrue(any("company_id = 1" in error for error in result.errors))
+
+    def test_query_plan_contract_checks_output_and_filter_source(self) -> None:
+        plan = QueryPlan.model_validate(
+            {
+                "query_type": "ranking",
+                "metric_ids": ["sales_amount"],
+                "dimensions": ["customer"],
+                "filters": [
+                    {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
+                    {"field": "state", "operator": "in", "value": ["sale", "done"], "source": "metric_rule"},
+                ],
+                "result_shape": "ranking",
+                "select_columns": ["customer", "sales_amount"],
+                "sort": [{"field": "sales_amount", "direction": "desc"}],
+                "row_limit": 10,
+            }
+        )
+        safe = self.guard.validate(
+            "SELECT rp.name AS customer, SUM(so.amount_untaxed) AS sales_amount "
+            "FROM sale_order so JOIN res_partner rp ON rp.id = so.partner_id "
+            "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+            "GROUP BY rp.name ORDER BY sales_amount DESC LIMIT 10",
+            plan=plan,
+            question="销售额最高的十个客户是谁？",
+        )
+        self.assertTrue(safe.safe, safe.errors)
+
+        unsafe = self.guard.validate(
+            "SELECT rp.name AS customer, SUM(so.amount_untaxed) AS sales_amount "
+            "FROM sale_order so JOIN res_partner rp ON rp.id = so.partner_id "
+            "WHERE so.company_id = 1 AND so.state IN ('sale','done') AND rp.active = TRUE "
+            "GROUP BY rp.name ORDER BY sales_amount DESC LIMIT 10",
+            plan=plan,
+            question="销售额最高的十个客户是谁？",
+        )
+        self.assertFalse(unsafe.safe)
+        self.assertTrue(any("未声明" in error for error in unsafe.errors))
+
+    def test_wren_cte_can_wrap_a_same_named_physical_table(self) -> None:
+        result = self.guard.validate(
+            'WITH sale_order AS ('
+            'SELECT __source.amount_untaxed, __source.company_id, __source.state '
+            'FROM "public".sale_order AS __source) '
+            'SELECT SUM(amount_untaxed) AS sales_amount FROM sale_order '
+            "WHERE company_id = 1 AND state IN ('sale', 'done')"
+        )
+        self.assertTrue(result.safe, result.errors)
+        self.assertEqual(result.tables, ["sale_order"])
 
 
 class SemanticAndChartTests(unittest.TestCase):

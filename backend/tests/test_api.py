@@ -448,6 +448,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 "user": "odoo_agent_state",
                 "password": None,
             },
+            "semantic": {"provider": "wren"},
+            "sql_thinking_mode": "disabled",
         }
 
         with (
@@ -472,6 +474,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved["ODOO_COMPANY_ID"], "1")
         self.assertEqual(saved["SQL_LLM_PROVIDER"], "siliconflow")
         self.assertEqual(saved["ANSWER_LLM_PROVIDER"], "deepseek")
+        self.assertEqual(saved["SEMANTIC_PROVIDER"], "wren")
+        self.assertEqual(saved["SQL_LLM_THINKING_MODE"], "disabled")
         self.assertTrue(response.json()["providers"]["siliconflow"]["configured"])
         self.assertNotIn("new-secret-marker", response.text)
         self.assertNotIn("new-public-marker", response.text)

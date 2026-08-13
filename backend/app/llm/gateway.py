@@ -55,6 +55,8 @@ class LLMGateway:
         request_options: dict[str, Any] = {}
         if json_mode:
             request_options["response_format"] = {"type": "json_object"}
+        if active_config.thinking_mode != "auto":
+            request_options["thinking"] = {"type": active_config.thinking_mode}
 
         # LiteLLM requires an explicit provider prefix. DeepSeek has a native
         # adapter; SiliconFlow exposes an OpenAI-compatible endpoint.
@@ -71,6 +73,7 @@ class LLMGateway:
             "generation_role": generation_role or generation_name,
             "pricing_currency": active_config.pricing_currency,
             "pricing_is_estimate": True,
+            "thinking_mode": active_config.thinking_mode,
             **(metadata or {}),
         }
         with trace_generation(

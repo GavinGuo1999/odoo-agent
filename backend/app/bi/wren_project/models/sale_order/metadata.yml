@@ -1,0 +1,21 @@
+name: sale_order
+table_reference: {schema: public, table: sale_order}
+primary_key: id
+columns:
+  - {name: id, type: BIGINT, is_primary_key: true, not_null: true}
+  - {name: name, type: VARCHAR}
+  - {name: state, type: VARCHAR, properties: {description: "sale/done 才是已确认销售订单"}}
+  - {name: company_id, type: BIGINT, properties: {description: "必须等于上下文 required_company_id"}}
+  - {name: partner_id, type: BIGINT, properties: {description: "客户 res_partner.id"}}
+  - {name: user_id, type: BIGINT, properties: {description: "销售员 res_users.id"}}
+  - {name: currency_id, type: BIGINT}
+  - {name: amount_untaxed, type: DECIMAL, properties: {description: "未税销售额，默认销售额口径"}}
+  - {name: amount_tax, type: DECIMAL}
+  - {name: amount_total, type: DECIMAL, properties: {description: "含税总额"}}
+  - {name: date_order, type: TIMESTAMP, properties: {description: "销售分析时间字段"}}
+  - {name: commitment_date, type: TIMESTAMP}
+  - {name: effective_date, type: TIMESTAMP}
+  - {name: delivery_status, type: VARCHAR}
+  - {name: invoice_status, type: VARCHAR}
+cached: false
+properties: {description: "Odoo 销售订单头；销售查询必须限制公司和已确认状态"}

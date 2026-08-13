@@ -1,0 +1,9 @@
+name: res_company
+table_reference: {schema: public, table: res_company}
+primary_key: id
+columns:
+  - {name: id, type: BIGINT, is_primary_key: true, not_null: true}
+  - {name: name, type: VARCHAR}
+  - {name: currency_id, type: BIGINT}
+cached: false
+properties: {description: "Odoo 公司；事实查询的公司隔离来源"}

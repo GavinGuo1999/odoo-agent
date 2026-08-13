@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import AnyHttpUrl, BaseModel, Field, SecretStr, field_validator
 
-from app.config import ProviderName
+from app.config import ProviderName, SemanticProviderName, ThinkingMode
 
 
 class ProviderSettingsUpdate(BaseModel):
@@ -61,6 +61,10 @@ class StateDatabaseSettingsUpdate(BaseModel):
     password: SecretStr | None = None
 
 
+class SemanticSettingsUpdate(BaseModel):
+    provider: SemanticProviderName = "native"
+
+
 class SettingsUpdateRequest(BaseModel):
     selected_provider: ProviderName
     deepseek: ProviderSettingsUpdate
@@ -69,6 +73,8 @@ class SettingsUpdateRequest(BaseModel):
     langfuse: LangfuseSettingsUpdate
     database: DatabaseSettingsUpdate
     state_database: StateDatabaseSettingsUpdate
+    semantic: SemanticSettingsUpdate = Field(default_factory=SemanticSettingsUpdate)
+    sql_thinking_mode: ThinkingMode = "disabled"
 
 
 class ProviderSettingsView(BaseModel):
@@ -127,6 +133,14 @@ class StateDatabaseSettingsView(BaseModel):
     error_type: str | None = None
 
 
+class SemanticSettingsView(BaseModel):
+    provider: SemanticProviderName
+    native_version: str
+    wren_project_path: str
+    wren_project_configured: bool
+    wren_executable_configured: bool
+
+
 class SettingsView(BaseModel):
     selected_provider: ProviderName
     providers: dict[ProviderName, ProviderSettingsView]
@@ -134,5 +148,7 @@ class SettingsView(BaseModel):
     langfuse: LangfuseSettingsView
     database: DatabaseSettingsView
     state_database: StateDatabaseSettingsView
+    semantic: SemanticSettingsView
+    sql_thinking_mode: ThinkingMode
     persistence: Literal["windows-user-environment"] = "windows-user-environment"
     restart_required: bool = False

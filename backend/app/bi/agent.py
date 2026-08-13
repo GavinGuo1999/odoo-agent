@@ -23,9 +23,9 @@ from app.bi.prompts import (
     sql_generation_prompt,
     sql_repair_prompt,
 )
-from app.bi.semantic import SalesSemanticLayer
+from app.bi.semantic_provider import SemanticContextProvider, build_semantic_provider
 from app.bi.time_series import complete_year_months
-from app.config import DatabaseConfig, ModelRoutingConfig, ProviderConfig
+from app.config import DatabaseConfig, ModelRoutingConfig, ProviderConfig, SemanticConfig
 from app.database import OdooDatabase, ReadOnlySqlGuard
 from app.llm import LLMGateway, LLMResult
 from app.observability import trace_agent, trace_retrieval, trace_tool, update_observation
@@ -50,8 +50,11 @@ class AgentState(TypedDict, total=False):
     model: str
     model_roles: dict[str, dict[str, str]]
     semantic_context: str
+    semantic_provider: str
+    semantic_version: str
     metric_ids: list[str]
     query_plan: dict[str, Any] | None
+    logical_sql: str
     sql: str
     safe_sql: str
     sql_errors: list[str]
@@ -151,6 +154,38 @@ def parse_sql_generation_payload(
     allowed_metric_ids: list[str],
 ) -> SqlGenerationPayload:
     payload = SqlGenerationPayload.model_validate(_json_object(content))
+    required_contract_fields = {"result_shape", "select_columns", "sort", "row_limit"}
+    missing_fields = required_contract_fields - payload.plan.model_fields_set
+    if missing_fields:
+        raise ValueError(
+            "QueryPlanMissingContractFields:" + ",".join(sorted(missing_fields))
+        )
+    if any("source" not in item.model_fields_set for item in payload.plan.filters):
+        raise ValueError("QueryPlanFilterSourceMissing")
+    if payload.sql.strip() and not payload.plan.select_columns:
+        raise ValueError("QueryPlanSelectColumnsMissing")
+    expected_shape = {
+        "trend": "time_series",
+        "ranking": "ranking",
+        "detail": "table",
+        "comparison": "table",
+    }.get(payload.plan.query_type)
+    if expected_shape and payload.plan.result_shape != expected_shape:
+        raise ValueError("QueryPlanResultShapeMismatch")
+    if payload.plan.query_type == "ranking" and payload.plan.row_limit is None:
+        raise ValueError("QueryPlanRankingLimitMissing")
+    if payload.sql.strip() and not payload.plan.requires_clarification:
+        filter_sources = {
+            (item.field.rsplit(".", 1)[-1].casefold(), item.source)
+            for item in payload.plan.filters
+        }
+        if ("company_id", "system_required") not in filter_sources:
+            raise ValueError("QueryPlanCompanyFilterMissing")
+        if any(metric_id in payload.plan.metric_ids for metric_id in allowed_metric_ids) and (
+            "state",
+            "metric_rule",
+        ) not in filter_sources:
+            raise ValueError("QueryPlanStateFilterMissing")
     allowed = set(allowed_metric_ids)
     filtered_metrics = [item for item in payload.plan.metric_ids if item in allowed]
     plan = payload.plan.model_copy(update={"metric_ids": filtered_metrics})
@@ -191,6 +226,8 @@ class SalesAgent:
         *,
         routing: ModelRoutingConfig | None = None,
         checkpointer: Any | None = None,
+        semantic_config: SemanticConfig | None = None,
+        semantic_provider: SemanticContextProvider | None = None,
     ) -> None:
         self._provider = provider
         self._routing = routing or ModelRoutingConfig(
@@ -201,7 +238,7 @@ class SalesAgent:
         self._database_config = database
         self._gateway = LLMGateway(provider)
         self._database = OdooDatabase(database)
-        self._semantics = SalesSemanticLayer.load()
+        self._semantics = semantic_provider or build_semantic_provider(semantic_config)
         self._guard = ReadOnlySqlGuard(
             table_columns=self._semantics.table_columns,
             company_id=database.company_id,
@@ -218,6 +255,7 @@ class SalesAgent:
         builder.add_node("retrieve_sales_context", self._retrieve_sales_context)
         builder.add_node("generate_sales_sql", self._generate_sales_sql)
         builder.add_node("clarify_query_plan", self._clarify_query_plan)
+        builder.add_node("compile_semantic_sql", self._compile_semantic_sql)
         builder.add_node("validate_sales_sql", self._validate_sales_sql)
         builder.add_node("repair_sales_sql", self._repair_sales_sql)
         builder.add_node("execute_sales_sql", self._execute_sales_sql)
@@ -246,9 +284,18 @@ class SalesAgent:
         builder.add_conditional_edges(
             "generate_sales_sql",
             self._route_after_planning,
-            {"clarify": "clarify_query_plan", "validate": "validate_sales_sql"},
+            {"clarify": "clarify_query_plan", "compile": "compile_semantic_sql"},
         )
         builder.add_edge("clarify_query_plan", "retrieve_sales_context")
+        builder.add_conditional_edges(
+            "compile_semantic_sql",
+            self._route_after_semantic_compilation,
+            {
+                "validate": "validate_sales_sql",
+                "repair": "repair_sales_sql",
+                "fail": "safe_failure_answer",
+            },
+        )
         builder.add_conditional_edges(
             "validate_sales_sql",
             self._route_after_validation,
@@ -258,7 +305,7 @@ class SalesAgent:
                 "fail": "safe_failure_answer",
             },
         )
-        builder.add_edge("repair_sales_sql", "validate_sales_sql")
+        builder.add_edge("repair_sales_sql", "compile_semantic_sql")
         builder.add_conditional_edges(
             "execute_sales_sql",
             self._route_after_execution,
@@ -320,8 +367,11 @@ class SalesAgent:
             "model": self._routing.general.model,
             "model_roles": {},
             "semantic_context": "",
+            "semantic_provider": self._semantics.name,
+            "semantic_version": self._semantics.version,
             "metric_ids": [],
             "query_plan": None,
+            "logical_sql": "",
             "sql": "",
             "safe_sql": "",
             "sql_errors": [],
@@ -582,11 +632,12 @@ class SalesAgent:
             input_data={
                 "question": state["question"],
                 "semantic_version": self._semantics.version,
+                "semantic_provider": self._semantics.name,
                 "company_id": self._database_config.company_id,
             },
         ) as observation:
             discovered = await self._database.discover_columns(self._semantics.table_columns)
-            context = self._semantics.retrieve(
+            context = await self._semantics.retrieve(
                 state["question"],
                 company_id=self._database_config.company_id,
                 discovered_columns=discovered,
@@ -597,12 +648,15 @@ class SalesAgent:
                     "tables": list(context.tables),
                     "metric_ids": context.metric_ids,
                     "semantic_version": context.version,
+                    "semantic_provider": context.provider,
                 },
             )
         return {
             "database_ready": True,
             "currency": health.currency,
             "semantic_context": context.as_prompt(),
+            "semantic_provider": context.provider,
+            "semantic_version": context.version,
             "metric_ids": context.metric_ids,
         }
 
@@ -621,7 +675,11 @@ class SalesAgent:
             ],
             generation_name="generate-sales-sql",
             generation_role="sql",
-            metadata={"feature": "text2sql", "semantic_version": self._semantics.version},
+            metadata={
+                "feature": "text2sql",
+                "semantic_version": state.get("semantic_version", self._semantics.version),
+                "semantic_provider": state.get("semantic_provider", self._semantics.name),
+            },
             json_mode=True,
             config=self._routing.sql,
         )
@@ -630,17 +688,18 @@ class SalesAgent:
                 result.content,
                 allowed_metric_ids=state.get("metric_ids", []),
             )
-            sql = payload.sql
+            logical_sql = payload.sql
             plan = payload.plan.model_dump(mode="json")
             metric_ids = payload.plan.metric_ids or state.get("metric_ids", [])
             parse_errors: list[str] = []
         except (ValueError, TypeError, json.JSONDecodeError, ValidationError) as exc:
-            sql = ""
+            logical_sql = ""
             plan = None
             metric_ids = state.get("metric_ids", [])
             parse_errors = [f"查询计划格式无效：{type(exc).__name__}。"]
         return {
-            "sql": sql,
+            "logical_sql": logical_sql,
+            "sql": "",
             "query_plan": plan,
             "metric_ids": metric_ids,
             "sql_errors": parse_errors,
@@ -652,7 +711,7 @@ class SalesAgent:
             plan = QueryPlan.model_validate(state["query_plan"])
             if plan.requires_clarification:
                 return "clarify"
-        return "validate"
+        return "compile"
 
     def _clarify_query_plan(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("clarification", "需要你补充一个关键条件")
@@ -675,11 +734,61 @@ class SalesAgent:
             "question": f"{state['display_question']}\n用户补充条件：{answer}",
             "clarification_answer": answer,
             "query_plan": updated_plan.model_dump(mode="json"),
+            "logical_sql": "",
             "sql": "",
             "safe_sql": "",
             "sql_errors": [],
             "repair_count": 0,
         }
+
+    async def _compile_semantic_sql(self, state: AgentState) -> dict[str, Any]:
+        provider_name = state.get("semantic_provider", self._semantics.name)
+        _emit_stage(
+            "semantic-compile",
+            "正在用 Wren MDL 编译语义 SQL"
+            if provider_name == "wren"
+            else "正在准备物理 SQL",
+        )
+        logical_sql = state.get("logical_sql", "").strip()
+        if not logical_sql:
+            return {
+                "sql": "",
+                "sql_errors": state.get("sql_errors", []) or ["模型没有返回可用 SQL。"],
+            }
+
+        with trace_tool(
+            name=(
+                "compile-wren-semantic-sql"
+                if provider_name == "wren"
+                else "prepare-native-sql"
+            ),
+            input_data={
+                "semantic_provider": provider_name,
+                "semantic_version": state.get("semantic_version"),
+                "logical_sql": logical_sql,
+            },
+        ) as observation:
+            try:
+                planned_sql = await self._semantics.plan_sql(logical_sql)
+                errors: list[str] = []
+            except Exception as exc:
+                planned_sql = ""
+                errors = [f"语义 SQL 编译失败：{type(exc).__name__}。"]
+            update_observation(
+                observation,
+                output={
+                    "compiled": bool(planned_sql),
+                    "semantic_provider": provider_name,
+                    "errors": errors,
+                },
+            )
+        return {"sql": planned_sql, "safe_sql": "", "sql_errors": errors}
+
+    @staticmethod
+    def _route_after_semantic_compilation(state: AgentState) -> str:
+        if state.get("sql") and not state.get("sql_errors"):
+            return "validate"
+        return "repair" if state.get("repair_count", 0) < 2 else "fail"
 
     def _validate_sales_sql(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("sql-validation", "正在执行只读 SQL 安全校验")
@@ -694,7 +803,16 @@ class SalesAgent:
                 tables: list[str] = []
                 safe = False
             else:
-                validation = self._guard.validate(sql)
+                plan = (
+                    QueryPlan.model_validate(state["query_plan"])
+                    if state.get("query_plan")
+                    else None
+                )
+                validation = self._guard.validate(
+                    sql,
+                    plan=plan,
+                    question=state.get("question", ""),
+                )
                 errors = validation.errors
                 safe_sql = validation.sql or ""
                 tables = validation.tables
@@ -716,7 +834,7 @@ class SalesAgent:
                     "content": sql_repair_prompt(
                         question=state["question"],
                         semantic_context=state["semantic_context"],
-                        previous_sql=state.get("sql", ""),
+                        previous_sql=state.get("logical_sql") or state.get("sql", ""),
                         previous_plan=state.get("query_plan") or {},
                         errors=state.get("sql_errors", []),
                     ),
@@ -736,15 +854,16 @@ class SalesAgent:
                 result.content,
                 allowed_metric_ids=state.get("metric_ids", []),
             )
-            sql = payload.sql
+            logical_sql = payload.sql
             plan = payload.plan.model_dump(mode="json")
             errors: list[str] = []
         except (ValueError, TypeError, json.JSONDecodeError, ValidationError) as exc:
-            sql = ""
+            logical_sql = ""
             plan = state.get("query_plan")
             errors = [f"修复后的查询计划格式无效：{type(exc).__name__}。"]
         return {
-            "sql": sql,
+            "logical_sql": logical_sql,
+            "sql": "",
             "query_plan": plan,
             "safe_sql": "",
             "sql_errors": errors,

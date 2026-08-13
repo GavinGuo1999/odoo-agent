@@ -22,6 +22,7 @@ from app.config import get_settings  # noqa: E402
 from app.observability import langfuse_is_configured  # noqa: E402
 from app.schemas.query_plan import QueryType  # noqa: E402
 from app.state import get_state_store  # noqa: E402
+from app.windows_loop import selector_loop_factory  # noqa: E402
 
 
 DATASET_NAME = "odoo-agent/sales-golden-v1"
@@ -102,6 +103,7 @@ async def run_live(items: list[GoldenItem]) -> list[dict[str, object]]:
             settings.database(),
             routing=routing,
             checkpointer=state_store.checkpointer,
+            semantic_config=settings.semantic(),
         )
         results = []
         for item in items:
@@ -155,6 +157,7 @@ async def run_live(items: list[GoldenItem]) -> list[dict[str, object]]:
                         "answer_mode": outcome.answer_mode,
                         "total_tokens": outcome.total_tokens,
                         "estimated_cost_usd": outcome.estimated_cost_usd,
+                        "semantic_provider": settings.semantic_provider,
                     },
                 }
             )
@@ -215,7 +218,11 @@ def main() -> int:
         sync_langfuse_dataset(items)
 
     mode = "live" if args.live else "static"
-    results = asyncio.run(run_live(items)) if args.live else validate_static(items)
+    if args.live:
+        with asyncio.Runner(loop_factory=selector_loop_factory) as runner:
+            results = runner.run(run_live(items))
+    else:
+        results = validate_static(items)
     payload = report(results, mode)
     rendered = json.dumps(payload, ensure_ascii=False, indent=2)
     print(rendered)
