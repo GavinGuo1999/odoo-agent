@@ -102,6 +102,13 @@ class SemanticConfig:
     timeout_seconds: float
 
 
+@dataclass(frozen=True, slots=True)
+class SemanticSyncConfig:
+    source_path: Path
+    output_path: Path
+    formal_wren_project_path: Path
+
+
 class Settings(BaseSettings):
     """Settings intentionally avoid `.env` files so credentials stay out of Git."""
 
@@ -229,6 +236,14 @@ class Settings(BaseSettings):
         ge=1.0,
         le=120.0,
         validation_alias="WREN_TIMEOUT_SECONDS",
+    )
+    odoo_source_path: str | None = Field(
+        default=None,
+        validation_alias="ODOO_SOURCE_PATH",
+    )
+    semantic_sync_output_path: str | None = Field(
+        default=None,
+        validation_alias="SEMANTIC_SYNC_OUTPUT_PATH",
     )
 
     odoo_db_host: str = Field(
@@ -415,6 +430,25 @@ class Settings(BaseSettings):
             wren_project_path=project_path,
             wren_executable=executable or None,
             timeout_seconds=self.wren_timeout_seconds,
+        )
+
+    def semantic_sync(self) -> SemanticSyncConfig:
+        project_path = Path(__file__).resolve().parents[2]
+        workspace_path = project_path.parent
+        source_path = (
+            Path(self.odoo_source_path).expanduser().resolve()
+            if self.odoo_source_path
+            else workspace_path / "odoo-19.0+e.20250917"
+        )
+        output_path = (
+            Path(self.semantic_sync_output_path).expanduser().resolve()
+            if self.semantic_sync_output_path
+            else project_path / ".semantic-sync"
+        )
+        return SemanticSyncConfig(
+            source_path=source_path,
+            output_path=output_path,
+            formal_wren_project_path=self.semantic().wren_project_path,
         )
 
 

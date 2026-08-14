@@ -4,7 +4,7 @@
 >
 > 适用应用版本：0.2.0
 >
-> 最后更新：2026-08-06
+> 最后更新：2026-08-14
 >
 > 文档状态：正式
 
@@ -74,6 +74,10 @@
 
     Wren MDL 的职责边界、LangGraph 固定节点、QueryPlan 合同、切换与验证方法。
 
+14. [Odoo 语义同步与一致性审计](14-odoo-semantic-sync-and-audit.md)
+
+    PostgreSQL、ORM、源码和正式 MDL 的只读对照、差异报告、隔离草稿与人工发布流程。
+
 ## 3. 当前能力快照
 
 | 能力 | 状态 |
@@ -82,6 +86,7 @@
 | Odoo 实时销售数据 | 已支持，PostgreSQL 强制只读 |
 | Text2SQL | 已支持，Pydantic QueryPlan + SQLGlot 校验 + 最多两次修复 |
 | Wren AI | 已支持实验切换，使用 MDL 上下文和 dry-plan，不直接执行 Odoo 查询 |
+| Odoo 语义审计 | 已支持，四源只读对照并生成版本化报告与隔离 Wren 草稿 |
 | 图表 | 已支持，后端白名单 ChartSpec，前端本地 ECharts 渲染 |
 | 会话恢复 | 已支持，独立 PostgreSQL Checkpointer |
 | 人工确认 | 已支持，LangGraph Interrupt / Resume |

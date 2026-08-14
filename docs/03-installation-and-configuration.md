@@ -280,6 +280,19 @@ Set-Location D:\odoo19e\odoo-agent
 | `LANGFUSE_ENABLED` | 是否启用项目侧 Trace |
 | `LANGFUSE_TRACING_ENABLED` | Langfuse SDK Trace 开关 |
 
+### 6.8 语义引擎与 Odoo 源码审计
+
+| 变量 | 默认值 / 说明 |
+| --- | --- |
+| `SEMANTIC_PROVIDER` | `native`；可切换为 `wren` |
+| `WREN_PROJECT_PATH` | 内置 `backend/app/bi/wren_project` |
+| `WREN_EXECUTABLE` | 项目虚拟环境中的 Wren CLI |
+| `WREN_TIMEOUT_SECONDS` | `20` |
+| `ODOO_SOURCE_PATH` | 当前工作区的本地 Odoo 发行版根目录 |
+| `SEMANTIC_SYNC_OUTPUT_PATH` | 项目根目录 `.semantic-sync`；不提交 Git |
+
+语义审计只读取数据库结构、ORM 元数据和本地源码，不读取销售事实行；生成的 Wren 草稿必须人工审核，不会自动覆盖正式项目。详见 [Odoo 语义同步与一致性审计](14-odoo-semantic-sync-and-audit.md)。
+
 ## 7. 启动与停止
 
 ### 7.1 一键启动

@@ -91,6 +91,22 @@
                 </table>
               </div>
             </section>
+
+            <section class="card panel settings-section">
+              <div class="section-heading">
+                <div><h2>Odoo 语义一致性审计</h2><p>对照 PostgreSQL、Odoo ORM、本地源码与正式 Wren MDL，生成只读差异报告和待审核草稿</p></div>
+                <span class="badge neutral" data-semantic-audit-status>尚未审计</span>
+              </div>
+              <div class="context-list">
+                <div class="context-item"><span class="context-key">最近审计</span><span class="context-value" data-semantic-audit-time>暂无</span></div>
+                <div class="context-item"><span class="context-key">覆盖范围</span><span class="context-value" data-semantic-audit-scope>暂无</span></div>
+                <div class="context-item"><span class="context-key">差异统计</span><span class="context-value" data-semantic-audit-counts>暂无</span></div>
+                <div class="context-item"><span class="context-key">审核状态</span><span class="context-value">仅生成草稿 · 必须人工审核 · 不覆盖正式 MDL</span></div>
+              </div>
+              <p class="help-text" data-semantic-audit-summary style="margin-top:14px">首次运行会扫描当前销售白名单对应的 Odoo 源码和元数据。</p>
+              <p class="help-text" data-semantic-audit-report style="margin-top:8px"></p>
+              <button class="btn primary" type="button" style="margin-top:16px" data-run-semantic-audit>运行只读审计</button>
+            </section>
           </div>
 
           <aside>

@@ -36,6 +36,8 @@
 | GET | `/settings` | 安全读取设置状态 |
 | PUT | `/settings` | 保存设置到 Windows 用户环境 |
 | GET | `/settings/models/{provider}` | 读取供应商模型目录 |
+| GET | `/semantic-audit/latest` | 读取最近一次 Odoo 语义一致性审计 |
+| POST | `/semantic-audit` | 运行一次只读语义一致性审计 |
 
 ## 3. 系统接口
 
@@ -469,7 +471,19 @@ QueryPlan：
 
 `provider` 只允许 `deepseek` 或 `siliconflow`。后端使用已保存 Key 请求供应商模型目录，最多返回 500 个唯一 Model ID。Key 不会返回客户端。
 
-## 13. HTTP 状态码
+## 13. 语义审计接口
+
+### 13.1 GET `/semantic-audit/latest`
+
+返回最近一次 PostgreSQL、Odoo ORM、本地源码和正式 Wren MDL 的一致性审计摘要。首次审计前返回 `404`。
+
+### 13.2 POST `/semantic-audit`
+
+运行只读审计并返回摘要。响应包含 `status`、错误/警告/提示数量、扫描统计、报告路径、快照路径、隔离 Wren 草稿路径和差异明细。正式 MDL 不会被修改；已有审计运行时返回 `409`，数据库或源码不可用时返回 `503`。
+
+完整工作流见 [Odoo 语义同步与一致性审计](14-odoo-semantic-sync-and-audit.md)。
+
+## 14. HTTP 状态码
 
 | 状态码 | 场景 |
 | --- | --- |
@@ -478,10 +492,10 @@ QueryPlan：
 | 404 | 不支持供应商、非白名单 UI 文件等 |
 | 422 | Pydantic 校验失败、Langfuse Key 不成对、状态库与 Odoo 同库 |
 | 502 | 模型调用、模型目录或 Langfuse Feedback 失败 |
-| 503 | 所需模型 Key 未配置、Langfuse 未配置 |
+| 503 | 所需模型 Key 未配置、Langfuse 未配置，或语义审计的数据源/源码不可用 |
 | 500 | Windows 用户环境保存失败 |
 
-## 14. 兼容性规则
+## 15. 兼容性规则
 
 - 调用方必须忽略未知响应字段，以便后续扩展；
 - SSE 客户端必须兼容未知 `stage`；
@@ -489,7 +503,7 @@ QueryPlan：
 - SQL 和 QueryPlan 是可观测输出，不应作为写操作输入；
 - API 当前未做版本前缀，破坏性变更前应先引入 `/api/v1`。
 
-## 15. 相关文档
+## 16. 相关文档
 
 - [系统架构](02-system-architecture.md)
 - [用户使用手册](04-user-guide.md)

@@ -46,6 +46,10 @@
 
 语义层真源为 `backend/app/bi/sales_semantics.json`。修改指标必须提升其中 `version`，并增加黄金问题和测试。
 
+### 2.3 语义一致性审计
+
+设置页可对照 PostgreSQL 物理结构、`ir.model.fields` 运行时元数据、本地 Odoo 源码和正式 Wren MDL。审计严格限定为当前开放表和字段，不读取业务数据行；产物写入 Git 忽略的 `.semantic-sync/`，只生成待审核草稿，不自动扩大白名单或覆盖正式语义模型。详见 [Odoo 语义同步与一致性审计](14-odoo-semantic-sync-and-audit.md)。
+
 ## 3. 开放字段
 
 ### 3.1 `sale_order`

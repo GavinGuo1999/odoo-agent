@@ -224,3 +224,156 @@ class OdooDatabase:
                     for row in rows
                 ]
         return discovered
+
+    async def inspect_semantic_metadata(
+        self,
+        scope: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Inspect allow-listed physical and ORM metadata without reading row values."""
+
+        return await asyncio.to_thread(self._inspect_semantic_metadata_sync, scope)
+
+    def _inspect_semantic_metadata_sync(
+        self,
+        scope: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        tables = sorted(scope)
+        models = sorted({str(item["odoo_model"]) for item in scope.values()})
+        expected_by_table = {
+            table: set(map(str, item["columns"])) for table, item in scope.items()
+        }
+        expected_by_model = {
+            str(item["odoo_model"]): set(map(str, item["columns"]))
+            for item in scope.values()
+        }
+
+        with self._connect() as connection:
+            read_only_row = connection.execute(
+                "SELECT current_setting('transaction_read_only') = 'on' AS read_only"
+            ).fetchone()
+            physical_rows = connection.execute(
+                """
+                SELECT
+                    table_name,
+                    column_name,
+                    data_type,
+                    udt_name,
+                    is_nullable = 'NO' AS not_null,
+                    ordinal_position
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = ANY(%s)
+                ORDER BY table_name, ordinal_position
+                """,
+                (tables,),
+            ).fetchall()
+            orm_rows = connection.execute(
+                """
+                SELECT
+                    field.id,
+                    field.model,
+                    field.name,
+                    field.ttype,
+                    field.relation,
+                    field.relation_field,
+                    field.field_description,
+                    field.help,
+                    field.related,
+                    field.required,
+                    field.readonly,
+                    field.index,
+                    field.translate,
+                    field.company_dependent,
+                    field.state,
+                    field.store,
+                    field.currency_field,
+                    field.compute IS NOT NULL AND field.compute <> '' AS computed,
+                    (
+                        SELECT string_agg(DISTINCT model_data.module, ',' ORDER BY model_data.module)
+                        FROM ir_model_data AS model_data
+                        WHERE model_data.model = 'ir.model.fields'
+                          AND model_data.res_id = field.id
+                    ) AS modules
+                FROM ir_model_fields AS field
+                WHERE field.model = ANY(%s)
+                ORDER BY field.model, field.name
+                """,
+                (models,),
+            ).fetchall()
+
+            selected_field_ids = [
+                int(row["id"])
+                for row in orm_rows
+                if str(row["name"]) in expected_by_model.get(str(row["model"]), set())
+            ]
+            selection_rows = (
+                connection.execute(
+                    """
+                    SELECT field_id, value, name, sequence
+                    FROM ir_model_fields_selection
+                    WHERE field_id = ANY(%s)
+                    ORDER BY field_id, sequence, id
+                    """,
+                    (selected_field_ids,),
+                ).fetchall()
+                if selected_field_ids
+                else []
+            )
+
+        selections: dict[int, list[dict[str, Any]]] = {}
+        for row in selection_rows:
+            selections.setdefault(int(row["field_id"]), []).append(
+                {
+                    "value": str(row["value"]),
+                    "label": _json_value(row["name"]),
+                }
+            )
+
+        physical: dict[str, dict[str, dict[str, Any]]] = {table: {} for table in tables}
+        for row in physical_rows:
+            table = str(row["table_name"])
+            column = str(row["column_name"])
+            if column not in expected_by_table.get(table, set()):
+                continue
+            physical[table][column] = {
+                "data_type": str(row["data_type"]),
+                "udt_name": str(row["udt_name"]),
+                "not_null": bool(row["not_null"]),
+                "ordinal_position": int(row["ordinal_position"]),
+            }
+
+        orm: dict[str, dict[str, dict[str, Any]]] = {model: {} for model in models}
+        for row in orm_rows:
+            model = str(row["model"])
+            field_name = str(row["name"])
+            if field_name not in expected_by_model.get(model, set()):
+                continue
+            field_id = int(row["id"])
+            orm[model][field_name] = {
+                key: _json_value(row[key])
+                for key in (
+                    "ttype",
+                    "relation",
+                    "relation_field",
+                    "field_description",
+                    "help",
+                    "related",
+                    "required",
+                    "readonly",
+                    "index",
+                    "translate",
+                    "company_dependent",
+                    "state",
+                    "modules",
+                    "store",
+                    "currency_field",
+                    "computed",
+                )
+            }
+            orm[model][field_name]["selection"] = selections.get(field_id, [])
+
+        return {
+            "read_only": bool(read_only_row and read_only_row["read_only"]),
+            "physical": physical,
+            "orm": orm,
+        }

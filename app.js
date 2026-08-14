@@ -39,7 +39,9 @@
       const message = typeof payload.detail === "string"
         ? payload.detail
         : `请求失败（HTTP ${response.status}）`;
-      throw new Error(message);
+      const error = new Error(message);
+      error.status = response.status;
+      throw error;
     }
     return payload;
   }
@@ -439,6 +441,13 @@
   const semanticVersion = document.querySelector("[data-semantic-version]");
   const semanticProviderInput = document.querySelector("[data-semantic-provider]");
   const semanticProviderHelp = document.querySelector("[data-semantic-provider-help]");
+  const semanticAuditStatus = document.querySelector("[data-semantic-audit-status]");
+  const semanticAuditTime = document.querySelector("[data-semantic-audit-time]");
+  const semanticAuditScope = document.querySelector("[data-semantic-audit-scope]");
+  const semanticAuditCounts = document.querySelector("[data-semantic-audit-counts]");
+  const semanticAuditSummary = document.querySelector("[data-semantic-audit-summary]");
+  const semanticAuditReport = document.querySelector("[data-semantic-audit-report]");
+  const runSemanticAuditButton = document.querySelector("[data-run-semantic-audit]");
   const schemaList = document.querySelector("[data-schema-list]");
   const queryMaxRows = document.querySelector("[data-query-max-rows]");
   const queryTimeout = document.querySelector("[data-query-timeout]");
@@ -775,6 +784,52 @@
     }
   }
 
+  function renderSemanticAudit(result) {
+    if (!result) {
+      setStatusBadge(semanticAuditStatus, "尚未审计", "neutral");
+      if (semanticAuditTime) semanticAuditTime.textContent = "暂无";
+      if (semanticAuditScope) semanticAuditScope.textContent = "暂无";
+      if (semanticAuditCounts) semanticAuditCounts.textContent = "暂无";
+      if (semanticAuditSummary) semanticAuditSummary.textContent = "点击“运行只读审计”生成第一份报告。";
+      if (semanticAuditReport) semanticAuditReport.textContent = "";
+      return;
+    }
+    const clean = result.status === "clean";
+    setStatusBadge(semanticAuditStatus, clean ? "一致" : "发现差异", clean ? "success" : "warning");
+    if (semanticAuditTime) {
+      semanticAuditTime.textContent = new Date(result.generated_at).toLocaleString("zh-CN");
+    }
+    if (semanticAuditScope) {
+      semanticAuditScope.textContent = `${result.model_count} 个模型 · ${result.field_count} 个开放字段 · 数据库只读`;
+    }
+    if (semanticAuditCounts) {
+      semanticAuditCounts.textContent = `${result.error_count} 错误 · ${result.warning_count} 警告 · ${result.info_count} 提示`;
+    }
+    if (semanticAuditSummary) {
+      const actionable = result.issues.filter((issue) => issue.severity !== "info").slice(0, 3);
+      semanticAuditSummary.textContent = actionable.length
+        ? `优先检查：${actionable.map((issue) => `${issue.table}${issue.field ? `.${issue.field}` : ""}（${issue.message}）`).join("；")}`
+        : "未发现需要处理的结构或类型差异；源码定位提示可按需查看报告。";
+    }
+    if (semanticAuditReport) {
+      semanticAuditReport.textContent = `报告：${result.report_path} · Wren 草稿：${result.draft_path}`;
+    }
+  }
+
+  async function loadSemanticAudit() {
+    if (!semanticAuditStatus) return;
+    try {
+      renderSemanticAudit(await apiRequest("/semantic-audit/latest"));
+    } catch (error) {
+      if (error.status === 404) {
+        renderSemanticAudit(null);
+        return;
+      }
+      setStatusBadge(semanticAuditStatus, "读取失败", "warning");
+      if (semanticAuditSummary) semanticAuditSummary.textContent = error.message;
+    }
+  }
+
   function databasePayload() {
     return {
       host: databaseHostInput?.value.trim() || "127.0.0.1",
@@ -809,6 +864,7 @@
       loadProviderModels({ quiet: true });
       refreshDatabaseStatus();
       loadSemanticConfiguration();
+      loadSemanticAudit();
     } catch (error) {
       showSettingsFeedback(`读取失败：${error.message}。请从 start-odoo-agent.bat 启动应用。`, "error");
     } finally {
@@ -917,6 +973,30 @@
       }
     });
     loadSettings();
+  }
+
+  if (runSemanticAuditButton) {
+    runSemanticAuditButton.addEventListener("click", async () => {
+      const original = runSemanticAuditButton.textContent;
+      runSemanticAuditButton.disabled = true;
+      runSemanticAuditButton.textContent = "正在审计…";
+      setStatusBadge(semanticAuditStatus, "运行中", "neutral");
+      if (semanticAuditSummary) {
+        semanticAuditSummary.textContent = "正在读取数据库元数据，并按实际 Addon 范围扫描 Odoo 源码，通常需要数秒。";
+      }
+      try {
+        const result = await apiRequest("/semantic-audit", { method: "POST" });
+        renderSemanticAudit(result);
+        showToast(result.status === "clean" ? "语义审计完成：一致" : "语义审计完成：发现差异");
+      } catch (error) {
+        setStatusBadge(semanticAuditStatus, "审计失败", "warning");
+        if (semanticAuditSummary) semanticAuditSummary.textContent = error.message;
+        showToast("语义审计失败");
+      } finally {
+        runSemanticAuditButton.disabled = false;
+        runSemanticAuditButton.textContent = original;
+      }
+    });
   }
 
   if (testModelButton) {
