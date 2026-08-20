@@ -9,7 +9,7 @@
 
 SalesAgent 使用 LangGraph 作为唯一编排层，目标是：
 
-- 普通聊天、指标解释和数据分析自动路由；
+- 普通聊天、指标解释、Wiki 知识、源码知识、数据分析和混合分析自动路由；
 - Text2SQL 的每个高风险步骤可观察、可校验、可重试；
 - 模型输出先进入 Pydantic 协议，再进入 SQL AST Guard；
 - 关键歧义可 Interrupt，用户补充后从 Checkpoint 恢复；
@@ -21,8 +21,10 @@ SalesAgent 使用 LangGraph 作为唯一编排层，目标是：
 
 | 节点 | 类型 | 是否调用模型 | 作用 |
 | --- | --- | --- | --- |
-| `classify_intent` | 确定性 | 否 | 根据问题和历史判断 general/semantic/data |
+| `classify_intent` | 确定性 | 否 | 判断 general/knowledge/source/semantic/data/hybrid |
 | `answer_general` | Generation | 是，general | 普通聊天 |
+| `retrieve_wiki_context` | Retriever | 否 | 只读检索 learn_odoo 已审核笔记 |
+| `answer_knowledge` | Generation | 是，answer | 根据 Wiki 回答并附来源 |
 | `explain_metric` | 确定性 | 否 | 从语义层解释指标 |
 | `retrieve_sales_context` | Retriever + Tool | 否 | 检查数据库、发现字段、检索指标/表/示例 |
 | `generate_sales_sql` | Generation | 是，sql | 一次返回 QueryPlan + SQL |
@@ -53,9 +55,9 @@ Graph 状态按功能可分为以下组。
 
 | 字段 | 说明 |
 | --- | --- |
-| `intent` | `general/semantic/data` |
+| `intent` | `general/knowledge/source/semantic/data/hybrid` |
 | `answer` | 最终文本 |
-| `answer_mode` | `llm/deterministic/semantic/failure` |
+| `answer_mode` | `llm/deterministic/knowledge/semantic/failure` |
 | `provider`, `model` | 最后一次模型执行信息 |
 | `model_roles` | 实际执行过的角色及 provider/model |
 
@@ -64,6 +66,9 @@ Graph 状态按功能可分为以下组。
 | 字段 | 说明 |
 | --- | --- |
 | `semantic_context` | 本轮检索到的开放表、指标、关系、示例 |
+| `knowledge_context` | Wiki 检索后供知识回答或混合解释使用的受限上下文 |
+| `knowledge_citations` | 可序列化的 Wiki 引用列表 |
+| `knowledge_index_fingerprint` | 本轮使用的 Wiki 索引版本指纹 |
 | `metric_ids` | 识别到且在白名单内的指标 |
 | `query_plan` | Pydantic QueryPlan 的 JSON 可序列化形式 |
 | `sql` | 模型生成 SQL |
@@ -103,11 +108,13 @@ Graph 状态按功能可分为以下组。
 
 ```text
 general  -> answer_general
+knowledge/source -> retrieve_wiki_context -> answer_knowledge
 semantic -> explain_metric
 data     -> retrieve_sales_context
+hybrid   -> retrieve_wiki_context -> retrieve_sales_context -> Text2SQL -> synthesis
 ```
 
-这样普通问答和明确指标解释不承担 Text2SQL 的延迟和成本。分类错误会直接影响后续路径，因此黄金集同时覆盖普通、语义和数据问题。
+这样普通问答、知识问答和明确指标解释不承担 Text2SQL 的延迟和成本。混合问题先获取知识证据，但知识正文不会进入 SQL Prompt，只在查询完成后的解释节点使用。分类错误会直接影响后续路径，因此黄金集应覆盖六类问题。
 
 ## 5. QueryPlan 协议
 

@@ -109,6 +109,14 @@ class SemanticSyncConfig:
     formal_wren_project_path: Path
 
 
+@dataclass(frozen=True, slots=True)
+class WikiConfig:
+    root_path: Path
+    index_path: Path
+    allowed_statuses: tuple[str, ...]
+    max_results: int
+
+
 class Settings(BaseSettings):
     """Settings intentionally avoid `.env` files so credentials stay out of Git."""
 
@@ -244,6 +252,20 @@ class Settings(BaseSettings):
     semantic_sync_output_path: str | None = Field(
         default=None,
         validation_alias="SEMANTIC_SYNC_OUTPUT_PATH",
+    )
+    wiki_path: str | None = Field(
+        default=None,
+        validation_alias="WIKI_PATH",
+    )
+    wiki_index_path: str | None = Field(
+        default=None,
+        validation_alias="WIKI_INDEX_PATH",
+    )
+    wiki_max_results: int = Field(
+        default=6,
+        ge=1,
+        le=12,
+        validation_alias="WIKI_MAX_RESULTS",
     )
 
     odoo_db_host: str = Field(
@@ -449,6 +471,26 @@ class Settings(BaseSettings):
             source_path=source_path,
             output_path=output_path,
             formal_wren_project_path=self.semantic().wren_project_path,
+        )
+
+    def wiki(self) -> WikiConfig:
+        project_path = Path(__file__).resolve().parents[2]
+        workspace_path = project_path.parent
+        root_path = (
+            Path(self.wiki_path).expanduser().resolve()
+            if self.wiki_path
+            else workspace_path / "learn_odoo"
+        )
+        index_path = (
+            Path(self.wiki_index_path).expanduser().resolve()
+            if self.wiki_index_path
+            else project_path / ".wiki-index" / "wiki.db"
+        )
+        return WikiConfig(
+            root_path=root_path,
+            index_path=index_path,
+            allowed_statuses=("reviewed", "evergreen"),
+            max_results=self.wiki_max_results,
         )
 
 

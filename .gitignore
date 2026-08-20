@@ -14,3 +14,4 @@ evals/reports/
 backend/app/bi/wren_project/target/
 backend/app/bi/wren_project/.wren/
 .semantic-sync/
+.wiki-index/

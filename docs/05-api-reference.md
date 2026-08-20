@@ -38,6 +38,9 @@
 | GET | `/settings/models/{provider}` | 读取供应商模型目录 |
 | GET | `/semantic-audit/latest` | 读取最近一次 Odoo 语义一致性审计 |
 | POST | `/semantic-audit` | 运行一次只读语义一致性审计 |
+| GET | `/wiki/status` | 读取或自动更新 Wiki 索引状态 |
+| GET | `/wiki/search` | 检索已审核 Wiki 笔记 |
+| POST | `/wiki/reindex` | 强制重建 BI 项目侧 Wiki 索引 |
 
 ## 3. 系统接口
 
@@ -240,6 +243,8 @@ data: {"type":"progress","stage":"sql-generation","label":"正在生成查询计
 | `classify` | 判断问题类型 |
 | `general` | 普通回答 |
 | `semantic` | 指标解释 |
+| `knowledge-retrieval` | 检索已审核 Odoo Wiki |
+| `knowledge-answer` | 根据 Wiki 组织带引用回答 |
 | `database-check` | Odoo 只读连接检查 |
 | `semantic-retrieval` | 销售语义和 Schema 检索 |
 | `sql-generation` | QueryPlan + SQL 生成 |
@@ -284,8 +289,8 @@ SSE HTTP 连接建立成功后，Graph 错误通过事件返回，调用方不�
 | `status` | `completed/interrupted` | 是否等待用户恢复 |
 | `interrupt` | nullable object | 澄清问题和歧义列表 |
 | `data_accessed` | boolean | 是否真实执行 Odoo SQL |
-| `phase` | `general-chat/semantic-layer/text2sql` | 处理阶段 |
-| `intent` | `general/semantic/data` | 问题类型 |
+| `phase` | `general-chat/knowledge-base/semantic-layer/text2sql` | 处理阶段 |
+| `intent` | `general/knowledge/source/semantic/data/hybrid` | 问题类型 |
 | `sql` | nullable string | 通过 Guard 的最终 SQL |
 | `columns`, `rows` | array | 查询结果 |
 | `chart` | nullable object | 白名单图表协议 |
@@ -294,8 +299,9 @@ SSE HTTP 连接建立成功后，Graph 错误通过事件返回，调用方不�
 | `truncated` | boolean | 是否因行数上限截断 |
 | `warnings` | array | 补零、截断等提醒 |
 | `query_plan` | nullable object | 结构化查询计划 |
-| `answer_mode` | string | `llm/deterministic/semantic/failure` |
+| `answer_mode` | string | `llm/deterministic/knowledge/semantic/failure` |
 | `model_roles` | object | 每个实际执行角色的 provider/model |
+| `citations` | array | Wiki 标题、章节、摘要、路径和 Obsidian URI |
 
 QueryPlan：
 

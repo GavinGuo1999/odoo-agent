@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 智能助手</title>
-  <link rel="stylesheet" href="styles.css?v=14">
+  <link rel="stylesheet" href="styles.css?v=15">
   <script src="echarts.min.js?v=6.1.0" defer></script>
-  <script src="app.js?v=14" defer></script>
+  <script src="app.js?v=15" defer></script>
 </head>
 <body data-page="chat">
   <div class="app-shell">
@@ -17,6 +17,7 @@
         <a class="nav-link" data-nav="home" href="index.html"><span class="nav-icon">⌂</span><span>工作台</span></a>
         <a class="nav-link" data-nav="chat" href="chat.html"><span class="nav-icon">✦</span><span>智能助手</span></a>
         <a class="nav-link" data-nav="dashboard" href="dashboard.html"><span class="nav-icon">▥</span><span>销售看板</span></a>
+        <a class="nav-link" data-nav="wiki" href="wiki.html"><span class="nav-icon">◇</span><span>Odoo Wiki</span></a>
       </nav>
       <div class="nav-label">系统</div>
       <nav class="nav-list" aria-label="系统导航"><a class="nav-link" data-nav="settings" href="settings.html"><span class="nav-icon">⚙</span><span>数据与模型</span></a></nav>
@@ -29,7 +30,7 @@
 
     <main class="main-area">
       <header class="topbar">
-        <div class="topbar-left"><button class="btn btn-icon mobile-menu" type="button" data-menu-toggle aria-label="打开导航">☰</button><div><h1 class="page-title">智能助手</h1><div class="page-subtitle">普通问答与 Odoo 数据分析，自动识别意图</div></div></div>
+        <div class="topbar-left"><button class="btn btn-icon mobile-menu" type="button" data-menu-toggle aria-label="打开导航">☰</button><div><h1 class="page-title">智能助手</h1><div class="page-subtitle">普通问答、Odoo Wiki 与实时数据分析，自动识别意图</div></div></div>
         <div class="topbar-right"><a class="btn" href="settings.html#model-settings">切换模型</a><span class="top-status" data-chat-provider-status><span class="status-dot"></span>读取模型状态…</span><span class="avatar">我</span></div>
       </header>
 
@@ -44,7 +45,7 @@
             <div class="chat-thread" data-chat-thread aria-live="polite">
               <div class="message">
                 <div class="message-avatar">AI</div>
-                <div class="message-bubble"><p class="assistant-answer">你好，我可以正常聊天、解释指标口径，也可以查询 Odoo 的实时销售数据。数据查询会经过只读安全校验，并展示结果表格、图表和 SQL。</p></div>
+                <div class="message-bubble"><p class="assistant-answer">你好，我可以正常聊天、引用 learn_odoo Wiki 解释 Odoo 机制，也可以查询实时销售数据。数据查询会经过只读安全校验，并展示结果表格、图表和 SQL。</p></div>
               </div>
             </div>
 
@@ -61,6 +62,8 @@
                 <button class="suggestion-btn" type="button" data-question="今天是几月几号？">今天是几月几号？</button>
                 <button class="suggestion-btn" type="button" data-question="你现在使用的是什么模型？">你现在使用的是什么模型？</button>
                 <button class="suggestion-btn" type="button" data-question="Odoo 里的销售额应该如何定义？">Odoo 里的销售额应该如何定义？</button>
+                <button class="suggestion-btn" type="button" data-question="销售订单确认为什么会产生交货单？">销售订单确认为什么会产生交货单？</button>
+                <button class="suggestion-btn" type="button" data-question="qty_to_invoice 怎么计算？">qty_to_invoice 怎么计算？</button>
                 <button class="suggestion-btn" type="button" data-question="销售额最高的十个客户是谁？">销售额最高的十个客户是谁？</button>
                 <button class="suggestion-btn" type="button" data-question="今年每个月的销售趋势怎么样？">今年每个月的销售趋势怎么样？</button>
               </div>
@@ -78,7 +81,7 @@
               </div>
             </section>
 
-            <div class="empty-note">普通问题直接由模型回答；指标问题使用固定销售口径；数据问题执行经过检查的只读查询，并显示表格、ECharts 与 SQL。</div>
+            <div class="empty-note">知识问题引用已审核的 learn_odoo 笔记；数据问题执行经过检查的只读查询；“哪些……为什么”类问题会合并真实数据与 Wiki 规则。</div>
           </aside>
         </section>
       </div>

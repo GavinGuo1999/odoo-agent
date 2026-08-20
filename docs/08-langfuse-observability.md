@@ -90,6 +90,17 @@ Trace: odoo-chat-turn
 
 指标解释主要读取本地语义层，不一定出现 Generation。根 Trace 的 `answer_mode=semantic`。
 
+### 4.4 Wiki 知识与混合分析
+
+知识问题新增：
+
+```text
+Retriever: retrieve-odoo-wiki-context
+Generation: answer-odoo-knowledge-question
+```
+
+混合问题会先出现 Wiki Retriever，再执行完整 Text2SQL 路径。Retriever Output 只记录命中标题、章节、数量和索引指纹，不上传完整 Wiki 正文；根输出记录 `citation_count`。这可以检查知识回答是否真正带有依据，并将检索延迟与模型解释延迟分开分析。
+
 ## 5. Observation 命名规则
 
 当前名称使用动词开头、低基数、与模型无关的稳定名称。原因：

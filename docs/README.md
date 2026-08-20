@@ -4,11 +4,11 @@
 >
 > 适用应用版本：0.2.0
 >
-> 最后更新：2026-08-14
+> 最后更新：2026-08-20
 >
 > 文档状态：正式
 
-本目录是 Odoo Sales Agent 的正式文档入口。项目当前面向单用户、单公司、只读销售分析场景，通过自然语言查询 Odoo PostgreSQL 实时数据，并以结论、表格、ECharts 图表和只读 SQL 返回结果。
+本目录是 Odoo Sales Agent 的正式文档入口。项目当前面向单用户、单公司、只读销售分析场景，通过自然语言查询 Odoo PostgreSQL 实时数据，并结合已审核的 `learn_odoo` Wiki 提供有引用的 Odoo 业务与源码知识解释。
 
 ## 1. 阅读导航
 
@@ -78,6 +78,10 @@
 
     PostgreSQL、ORM、源码和正式 MDL 的只读对照、差异报告、隔离草稿与人工发布流程。
 
+15. [learn_odoo Wiki 与 ChatBI 知识集成](15-wiki-bi-knowledge-integration.md)
+
+    Wiki 只读索引、知识/源码/混合意图、引用协议、LangGraph 与 Langfuse 集成边界。
+
 ## 3. 当前能力快照
 
 | 能力 | 状态 |
@@ -87,6 +91,7 @@
 | Text2SQL | 已支持，Pydantic QueryPlan + SQLGlot 校验 + 最多两次修复 |
 | Wren AI | 已支持实验切换，使用 MDL 上下文和 dry-plan，不直接执行 Odoo 查询 |
 | Odoo 语义审计 | 已支持，四源只读对照并生成版本化报告与隔离 Wren 草稿 |
+| learn_odoo Wiki | 已支持，只索引已审核笔记，提供知识引用和实时数据混合解释 |
 | 图表 | 已支持，后端白名单 ChartSpec，前端本地 ECharts 渲染 |
 | 会话恢复 | 已支持，独立 PostgreSQL Checkpointer |
 | 人工确认 | 已支持，LangGraph Interrupt / Resume |

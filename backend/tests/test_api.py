@@ -540,11 +540,14 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
                 base_url="http://test",
             ) as client:
                 settings_page = await client.get("/ui/settings.html")
+                wiki_page = await client.get("/ui/wiki.html")
                 chart_library = await client.get("/ui/echarts.min.js")
                 private_path = await client.get("/ui/.git/config")
 
         self.assertEqual(settings_page.status_code, 200)
         self.assertIn("Langfuse 可观测性", settings_page.text)
+        self.assertEqual(wiki_page.status_code, 200)
+        self.assertIn("让 BI 的解释有据可查", wiki_page.text)
         self.assertEqual(chart_library.status_code, 200)
         self.assertGreater(len(chart_library.content), 1_000_000)
         self.assertEqual(private_path.status_code, 404)

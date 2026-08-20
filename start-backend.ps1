@@ -10,7 +10,7 @@ $pythonPath = Join-Path $projectDirectory '.venv\Scripts\python.exe'
 
 # A terminal opened before the settings were saved still has an old process
 # environment. Refresh only Odoo Agent-managed user variables before startup.
-$managedVariablePattern = '^(AGENT_STATE_|ANSWER_LLM_|DEEPSEEK_|GENERAL_LLM_|LANGFUSE_|LLM_PROVIDER$|ODOO_|SEMANTIC_PROVIDER$|SILICONFLOW_|SQL_LLM_|WREN_)'
+$managedVariablePattern = '^(AGENT_STATE_|ANSWER_LLM_|DEEPSEEK_|GENERAL_LLM_|LANGFUSE_|LLM_PROVIDER$|ODOO_|SEMANTIC_PROVIDER$|SILICONFLOW_|SQL_LLM_|WIKI_|WREN_)'
 $savedEnvironment = Get-ItemProperty -Path 'HKCU:\Environment' -ErrorAction SilentlyContinue
 if ($savedEnvironment) {
     foreach ($property in $savedEnvironment.PSObject.Properties) {

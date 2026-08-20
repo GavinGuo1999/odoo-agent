@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
@@ -20,21 +21,29 @@ from app.bi.deterministic_answer import (
 from app.bi.prompts import (
     answer_synthesis_prompt,
     general_system_prompt,
+    knowledge_answer_prompt,
     sql_generation_prompt,
     sql_repair_prompt,
 )
 from app.bi.semantic_provider import SemanticContextProvider, build_semantic_provider
 from app.bi.time_series import complete_year_months
-from app.config import DatabaseConfig, ModelRoutingConfig, ProviderConfig, SemanticConfig
+from app.config import (
+    DatabaseConfig,
+    ModelRoutingConfig,
+    ProviderConfig,
+    SemanticConfig,
+    WikiConfig,
+)
 from app.database import OdooDatabase, ReadOnlySqlGuard
 from app.llm import LLMGateway, LLMResult
 from app.observability import trace_agent, trace_retrieval, trace_tool, update_observation
 from app.schemas.query_plan import QueryPlan, SqlGenerationPayload
+from app.services.wiki_knowledge import WikiKnowledgeService, get_wiki_service
 from app.state import get_state_store
 
 
-Intent = Literal["general", "semantic", "data"]
-AnswerMode = Literal["llm", "deterministic", "semantic", "failure"]
+Intent = Literal["general", "knowledge", "source", "semantic", "data", "hybrid"]
+AnswerMode = Literal["llm", "deterministic", "knowledge", "semantic", "failure"]
 
 
 class AgentState(TypedDict, total=False):
@@ -52,6 +61,9 @@ class AgentState(TypedDict, total=False):
     semantic_context: str
     semantic_provider: str
     semantic_version: str
+    knowledge_context: str
+    knowledge_citations: list[dict[str, Any]]
+    knowledge_index_fingerprint: str
     metric_ids: list[str]
     query_plan: dict[str, Any] | None
     logical_sql: str
@@ -102,37 +114,88 @@ class AgentOutcome:
     interrupted: bool = False
     interrupt_payload: dict[str, Any] | None = None
     conversation: list[dict[str, str]] = field(default_factory=list)
+    citations: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def phase(self) -> str:
         return {
             "general": "general-chat",
+            "knowledge": "knowledge-base",
+            "source": "knowledge-base",
             "semantic": "semantic-layer",
             "data": "text2sql",
+            "hybrid": "text2sql",
         }[self.intent]
 
 
 _DATA_WORDS = (
     "销售", "订单", "客户", "产品", "商品", "销量", "业绩", "收入", "交付",
     "发货", "开票", "报价", "成交", "销售员", "业务员", "排行榜", "趋势", "同比",
-    "环比", "本月", "上月", "本年", "今年", "去年", "odoo", "sql",
+    "环比", "本月", "上月", "本年", "今年", "去年", "采购", "库存", "odoo", "sql",
 )
-_SEMANTIC_WORDS = ("口径", "定义", "怎么算", "怎么计算", "什么意思", "包括什么")
+_SEMANTIC_WORDS = (
+    "口径", "定义", "怎么算", "怎么计算", "什么意思", "包括什么", "是什么", "含义",
+)
+_METRIC_WORDS = (
+    "销售额", "含税销售额", "订单数", "平均订单额", "销量", "销售数量", "交付数量", "开票数量",
+)
+_TECHNICAL_WORDS = (
+    "qty_to_invoice", "qty_delivered", "qty_invoiced", "sale.order", "sale.order.line",
+    "stock.move", "stock.picking", "account.move", "procurement", "invoice_status",
+)
+_KNOWLEDGE_WORDS = (
+    "为什么", "什么是", "是什么", "流程", "区别", "关系", "原理", "机制", "含义",
+    "怎么来的", "怎么生成", "怎么产生", "怎么工作", "如何工作", "如何生成", "如何产生",
+)
+_SOURCE_WORDS = ("源码", "代码", "调用链", "哪个方法", "哪个类", "在哪里定义", "字段在哪")
+_KNOWLEDGE_STRUCTURE_WORDS = (
+    "有哪些模块", "有哪些模型", "有哪些字段", "包括哪些字段", "包含哪些字段",
+)
+_HYBRID_EXPLANATION_WORDS = (
+    "为什么", "原因", "怎么来的", "怎么生成", "怎么产生", "如何工作", "如何生成", "如何产生",
+)
+_DATA_REQUEST_WORDS = (
+    "多少", "最高", "最低", "排名", "趋势", "同比", "环比", "本月", "上月", "今年", "去年",
+    "哪些", "列出", "明细", "每月", "每天", "每周", "汇总", "统计",
+)
 _FOLLOW_UP_WORDS = ("那", "再", "呢", "上个月", "去年", "同比", "环比", "换成")
 
 
 def classify_intent(question: str, history: list[dict[str, str]]) -> Intent:
     normalized = question.lower().strip()
     has_business_term = any(word in normalized for word in _DATA_WORDS)
-    if has_business_term and any(word in normalized for word in _SEMANTIC_WORDS):
+    has_technical_term = any(word in normalized for word in _TECHNICAL_WORDS)
+    has_knowledge_cue = any(word in normalized for word in _KNOWLEDGE_WORDS) or (
+        has_technical_term and any(word in normalized for word in _SEMANTIC_WORDS)
+    )
+    has_data_request = any(word in normalized for word in _DATA_REQUEST_WORDS)
+    if (has_business_term or has_technical_term) and any(
+        word in normalized for word in _SOURCE_WORDS
+    ):
+        return "source"
+    if not has_data_request and any(word in normalized for word in _METRIC_WORDS) and any(
+        word in normalized for word in _SEMANTIC_WORDS
+    ):
         return "semantic"
-    if has_business_term:
+    if (has_business_term or has_technical_term) and any(
+        word in normalized for word in _KNOWLEDGE_STRUCTURE_WORDS
+    ):
+        return "knowledge"
+    if (has_business_term or has_technical_term) and has_data_request and any(
+        word in normalized for word in _HYBRID_EXPLANATION_WORDS
+    ):
+        return "hybrid"
+    if (has_business_term or has_technical_term) and has_knowledge_cue and not has_data_request:
+        return "knowledge"
+    if has_business_term or has_technical_term:
         return "data"
 
     previous_context = " ".join(item.get("content", "") for item in history[-4:]).lower()
     if any(word in normalized for word in _FOLLOW_UP_WORDS) and any(
-        word in previous_context for word in _DATA_WORDS
+        word in previous_context for word in (*_DATA_WORDS, *_TECHNICAL_WORDS)
     ):
+        if has_knowledge_cue:
+            return "knowledge"
         return "data"
     return "general"
 
@@ -228,6 +291,8 @@ class SalesAgent:
         checkpointer: Any | None = None,
         semantic_config: SemanticConfig | None = None,
         semantic_provider: SemanticContextProvider | None = None,
+        wiki_config: WikiConfig | None = None,
+        wiki_service: WikiKnowledgeService | None = None,
     ) -> None:
         self._provider = provider
         self._routing = routing or ModelRoutingConfig(
@@ -239,6 +304,7 @@ class SalesAgent:
         self._gateway = LLMGateway(provider)
         self._database = OdooDatabase(database)
         self._semantics = semantic_provider or build_semantic_provider(semantic_config)
+        self._wiki = wiki_service or (get_wiki_service(wiki_config) if wiki_config else None)
         self._guard = ReadOnlySqlGuard(
             table_columns=self._semantics.table_columns,
             company_id=database.company_id,
@@ -251,6 +317,8 @@ class SalesAgent:
         builder = StateGraph(AgentState)
         builder.add_node("classify_intent", self._classify)
         builder.add_node("answer_general", self._answer_general)
+        builder.add_node("retrieve_wiki_context", self._retrieve_wiki_context)
+        builder.add_node("answer_knowledge", self._answer_knowledge)
         builder.add_node("explain_metric", self._explain_metric)
         builder.add_node("retrieve_sales_context", self._retrieve_sales_context)
         builder.add_node("generate_sales_sql", self._generate_sales_sql)
@@ -270,11 +338,20 @@ class SalesAgent:
             lambda state: state["intent"],
             {
                 "general": "answer_general",
+                "knowledge": "retrieve_wiki_context",
+                "source": "retrieve_wiki_context",
                 "semantic": "explain_metric",
                 "data": "retrieve_sales_context",
+                "hybrid": "retrieve_wiki_context",
             },
         )
         builder.add_edge("answer_general", "finalize_turn")
+        builder.add_conditional_edges(
+            "retrieve_wiki_context",
+            lambda state: "data" if state["intent"] == "hybrid" else "answer",
+            {"data": "retrieve_sales_context", "answer": "answer_knowledge"},
+        )
+        builder.add_edge("answer_knowledge", "finalize_turn")
         builder.add_edge("explain_metric", "finalize_turn")
         builder.add_conditional_edges(
             "retrieve_sales_context",
@@ -369,6 +446,9 @@ class SalesAgent:
             "semantic_context": "",
             "semantic_provider": self._semantics.name,
             "semantic_version": self._semantics.version,
+            "knowledge_context": "",
+            "knowledge_citations": [],
+            "knowledge_index_fingerprint": "",
             "metric_ids": [],
             "query_plan": None,
             "logical_sql": "",
@@ -455,6 +535,7 @@ class SalesAgent:
             interrupted=interrupted,
             interrupt_payload=interrupt_payload,
             conversation=state.get("conversation", []),
+            citations=state.get("knowledge_citations", []),
         )
 
     async def _invoke(
@@ -480,6 +561,7 @@ class SalesAgent:
                     "repair_count": state.get("repair_count", 0),
                     "interrupted": bool(interrupt_payload),
                     "answer_mode": state.get("answer_mode"),
+                    "citation_count": len(state.get("knowledge_citations", [])),
                 },
             )
         return self._outcome(state, interrupt_payload=interrupt_payload)
@@ -549,6 +631,7 @@ class SalesAgent:
                     "row_count": len(outcome.rows),
                     "interrupted": outcome.interrupted,
                     "answer_mode": outcome.answer_mode,
+                    "citation_count": len(outcome.citations),
                 },
             )
         yield {"type": "outcome", "outcome": outcome}
@@ -592,6 +675,80 @@ class SalesAgent:
             "answer": result.content,
             "answer_mode": "llm",
             **_usage_fields(state, result, role="general"),
+        }
+
+    async def _retrieve_wiki_context(self, state: AgentState) -> dict[str, Any]:
+        _emit_stage("knowledge-retrieval", "正在检索 Odoo Wiki")
+        if self._wiki is None:
+            return {
+                "knowledge_context": "",
+                "knowledge_citations": [],
+                "knowledge_index_fingerprint": "",
+                "warnings": state.get("warnings", []) + ["Odoo Wiki 当前未配置。"],
+            }
+
+        with trace_retrieval(
+            name="retrieve-odoo-wiki-context",
+            input_data={"question": state["question"], "intent": state["intent"]},
+        ) as observation:
+            result = await asyncio.to_thread(self._wiki.search, state["question"])
+            update_observation(
+                observation,
+                output={
+                    "hit_count": len(result.hits),
+                    "titles": [hit.title for hit in result.hits],
+                    "headings": [hit.heading for hit in result.hits],
+                    "index_fingerprint": result.index_fingerprint,
+                },
+            )
+        return {
+            "knowledge_context": result.context(),
+            "knowledge_citations": result.citations,
+            "knowledge_index_fingerprint": result.index_fingerprint,
+        }
+
+    async def _answer_knowledge(self, state: AgentState) -> dict[str, Any]:
+        _emit_stage("knowledge-answer", "正在根据 Odoo Wiki 组织回答")
+        context = state.get("knowledge_context", "")
+        if not context:
+            return {
+                "answer": (
+                    "我没有在已审核的 learn_odoo 笔记中找到足够依据，所以这次不凭记忆猜测。"
+                    "你可以换一个更具体的模型、字段或业务流程名称再问。"
+                ),
+                "answer_mode": "failure",
+                "data_accessed": False,
+                "warnings": state.get("warnings", []) + ["Odoo Wiki 未命中可引用内容。"],
+            }
+
+        result = await self._gateway.complete(
+            messages=[
+                {
+                    "role": "user",
+                    "content": knowledge_answer_prompt(
+                        question=state["question"],
+                        history=state.get("history", []),
+                        knowledge_context=context,
+                        source_mode=state["intent"] == "source",
+                    ),
+                }
+            ],
+            generation_name="answer-odoo-knowledge-question",
+            generation_role="answer",
+            metadata={
+                "feature": "wiki-knowledge",
+                "intent": state["intent"],
+                "citation_count": len(state.get("knowledge_citations", [])),
+                "knowledge_index_fingerprint": state.get("knowledge_index_fingerprint", ""),
+                "data_accessed": False,
+            },
+            config=self._routing.answer,
+        )
+        return {
+            "answer": result.content,
+            "answer_mode": "knowledge",
+            "data_accessed": False,
+            **_usage_fields(state, result, role="answer"),
         }
 
     def _explain_metric(self, state: AgentState) -> dict[str, Any]:
@@ -923,6 +1080,8 @@ class SalesAgent:
 
     def _route_after_execution(self, state: AgentState) -> str:
         if state.get("data_accessed"):
+            if state.get("intent") == "hybrid":
+                return "answer"
             plan = None
             if state.get("query_plan"):
                 plan = QueryPlan.model_validate(state["query_plan"])
@@ -962,6 +1121,8 @@ class SalesAgent:
                         columns=state.get("columns", []),
                         rows=state.get("rows", []),
                         truncated=state.get("truncated", False),
+                        knowledge_context=state.get("knowledge_context", ""),
+                        hybrid=state.get("intent") == "hybrid",
                     ),
                 }
             ],
@@ -971,6 +1132,8 @@ class SalesAgent:
                 "feature": "chatbi-answer",
                 "row_count": len(state.get("rows", [])),
                 "data_accessed": True,
+                "hybrid": state.get("intent") == "hybrid",
+                "citation_count": len(state.get("knowledge_citations", [])),
             },
             config=self._routing.answer,
         )

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Odoo Agent · Odoo Wiki</title>
+  <link rel="stylesheet" href="styles.css?v=15">
+  <script src="app.js?v=15" defer></script>
+</head>
+<body data-page="wiki">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><span class="brand-mark">O</span><span><span class="brand-name">Odoo Agent</span><br><span class="brand-subtitle">销售数据智能助手</span></span></a>
+      <div class="nav-label">工作空间</div>
+      <nav class="nav-list" aria-label="主导航">
+        <a class="nav-link" data-nav="home" href="index.html"><span class="nav-icon">⌂</span><span>工作台</span></a>
+        <a class="nav-link" data-nav="chat" href="chat.html"><span class="nav-icon">✦</span><span>智能助手</span></a>
+        <a class="nav-link" data-nav="dashboard" href="dashboard.html"><span class="nav-icon">▥</span><span>销售看板</span></a>
+        <a class="nav-link" data-nav="wiki" href="wiki.html"><span class="nav-icon">◇</span><span>Odoo Wiki</span></a>
+      </nav>
+      <div class="nav-label">系统</div>
+      <nav class="nav-list" aria-label="系统导航"><a class="nav-link" data-nav="settings" href="settings.html"><span class="nav-icon">⚙</span><span>数据与模型</span></a></nav>
+      <div class="sidebar-footer"><div class="db-mini-status" data-db-mini-status><span class="status-dot"></span><span>Odoo 19 · 正在检查数据库</span></div></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="topbar-left"><button class="btn btn-icon mobile-menu" type="button" data-menu-toggle aria-label="打开导航">☰</button><div><h1 class="page-title">Odoo Wiki</h1><div class="page-subtitle">检索 learn_odoo 中已审核的业务与源码笔记</div></div></div>
+        <div class="topbar-right"><span class="top-status" data-wiki-top-status><span class="status-dot"></span><span>正在读取索引</span></span><span class="avatar">我</span></div>
+      </header>
+
+      <div class="content wiki-content">
+        <section class="card wiki-hero">
+          <div>
+            <span class="eyebrow">READ-ONLY KNOWLEDGE</span>
+            <h2>让 BI 的解释有据可查</h2>
+            <p>这里只读取 <code>learn_odoo/01_Odoo</code> 中状态为 reviewed 或 evergreen 的笔记。索引保存在 BI 项目里，不会改动你的 Wiki。</p>
+          </div>
+          <div class="wiki-status-grid" data-wiki-status>
+            <div><span>笔记</span><strong>—</strong></div>
+            <div><span>知识片段</span><strong>—</strong></div>
+            <div><span>索引时间</span><strong>正在读取</strong></div>
+          </div>
+        </section>
+
+        <section class="card wiki-search-panel">
+          <form class="wiki-search-form" data-wiki-search-form>
+            <label class="sr-only" for="wiki-query">检索 Odoo Wiki</label>
+            <input class="input" id="wiki-query" data-wiki-query type="search" minlength="2" placeholder="例如：qty_to_invoice 怎么计算？" autocomplete="off">
+            <button class="btn btn-primary" type="submit" data-wiki-search>搜索 Wiki</button>
+            <button class="btn" type="button" data-wiki-reindex>重新建立索引</button>
+          </form>
+          <div class="wiki-search-help">搜索结果可直接在 Obsidian 中打开；聊天中的 Wiki 回答也会显示同样的知识依据。</div>
+        </section>
+
+        <section class="wiki-results" data-wiki-results aria-live="polite">
+          <div class="card wiki-empty">输入字段、模型、方法或业务流程，查看 AI 回答会引用哪些笔记。</div>
+        </section>
+      </div>
+    </main>
+  </div>
+  <div class="toast" data-toast role="status"></div>
+</body>
+</html>

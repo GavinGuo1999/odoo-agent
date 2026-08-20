@@ -404,6 +404,127 @@
   loadHomeData();
   loadDashboardData();
 
+  const wikiStatusElement = document.querySelector("[data-wiki-status]");
+  const wikiTopStatus = document.querySelector("[data-wiki-top-status]");
+  const wikiSearchForm = document.querySelector("[data-wiki-search-form]");
+  const wikiQueryInput = document.querySelector("[data-wiki-query]");
+  const wikiResults = document.querySelector("[data-wiki-results]");
+  const wikiReindexButton = document.querySelector("[data-wiki-reindex]");
+
+  function wikiDate(value) {
+    if (!value) return "尚未建立";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString("zh-CN");
+  }
+
+  function renderWikiStatus(status) {
+    if (!wikiStatusElement) return;
+    const values = wikiStatusElement.querySelectorAll("strong");
+    if (values[0]) values[0].textContent = formatNumber(status.note_count, 0);
+    if (values[1]) values[1].textContent = formatNumber(status.chunk_count, 0);
+    if (values[2]) values[2].textContent = wikiDate(status.indexed_at);
+    if (wikiTopStatus) {
+      const text = wikiTopStatus.querySelector("span:last-child");
+      if (text) text.textContent = status.available
+        ? `${status.note_count} 篇已审核笔记 · 索引可用`
+        : `Wiki 不可用${status.error_type ? ` · ${status.error_type}` : ""}`;
+      wikiTopStatus.classList.toggle("error", !status.available);
+    }
+  }
+
+  function wikiHitCard(hit, index) {
+    const article = document.createElement("article");
+    article.className = "card wiki-result-card";
+    const rank = document.createElement("span");
+    rank.className = "wiki-result-rank";
+    rank.textContent = String(index + 1).padStart(2, "0");
+    const body = document.createElement("div");
+    const heading = document.createElement("div");
+    heading.className = "wiki-result-heading";
+    const title = document.createElement("h3");
+    title.textContent = hit.title;
+    const badge = document.createElement("span");
+    badge.className = "badge neutral";
+    badge.textContent = hit.via_wikilink ? "关联笔记" : `相关度 ${Number(hit.score).toFixed(1)}`;
+    heading.append(title, badge);
+    const section = document.createElement("strong");
+    section.className = "wiki-result-section";
+    section.textContent = hit.heading || "概述";
+    const excerpt = document.createElement("p");
+    excerpt.textContent = hit.excerpt;
+    const footer = document.createElement("div");
+    footer.className = "wiki-result-footer";
+    const path = document.createElement("span");
+    path.textContent = hit.relative_path;
+    const open = document.createElement("a");
+    open.className = "btn btn-soft";
+    open.href = hit.obsidian_uri;
+    open.textContent = "在 Obsidian 打开 ↗";
+    footer.append(path, open);
+    body.append(heading, section, excerpt, footer);
+    article.append(rank, body);
+    return article;
+  }
+
+  async function loadWikiStatus() {
+    if (!wikiStatusElement) return;
+    try {
+      renderWikiStatus(await apiRequest("/wiki/status"));
+    } catch (error) {
+      if (wikiTopStatus) wikiTopStatus.textContent = `Wiki 状态读取失败：${error.message}`;
+    }
+  }
+
+  async function searchWiki(query) {
+    if (!wikiResults || !wikiQueryInput) return;
+    const value = (query || wikiQueryInput.value).trim();
+    if (value.length < 2) {
+      showToast("请至少输入两个字符");
+      return;
+    }
+    wikiQueryInput.value = value;
+    wikiResults.innerHTML = '<div class="card wiki-empty">正在检索已审核笔记…</div>';
+    try {
+      const result = await apiRequest(`/wiki/search?q=${encodeURIComponent(value)}&limit=8`);
+      wikiResults.innerHTML = "";
+      if (!result.hits.length) {
+        wikiResults.innerHTML = '<div class="card wiki-empty">没有找到可引用的已审核笔记。试试更具体的模型、字段或方法名。</div>';
+        return;
+      }
+      result.hits.forEach((hit, index) => wikiResults.appendChild(wikiHitCard(hit, index)));
+    } catch (error) {
+      wikiResults.textContent = `Wiki 检索失败：${error.message}`;
+    }
+  }
+
+  if (wikiSearchForm) {
+    wikiSearchForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      searchWiki();
+    });
+  }
+  if (wikiReindexButton) {
+    wikiReindexButton.addEventListener("click", async () => {
+      wikiReindexButton.disabled = true;
+      wikiReindexButton.textContent = "正在索引…";
+      try {
+        renderWikiStatus(await apiRequest("/wiki/reindex", { method: "POST" }));
+        showToast("Wiki 索引已更新");
+        if (wikiQueryInput?.value.trim()) await searchWiki();
+      } catch (error) {
+        showToast(`索引失败：${error.message}`);
+      } finally {
+        wikiReindexButton.disabled = false;
+        wikiReindexButton.textContent = "重新建立索引";
+      }
+    });
+  }
+  if (wikiStatusElement) {
+    loadWikiStatus();
+    const initialWikiQuery = new URLSearchParams(window.location.search).get("q");
+    if (initialWikiQuery) searchWiki(initialWikiQuery);
+  }
+
   const providerCards = document.querySelectorAll("[data-provider]");
   const providerUrlInput = document.querySelector("[data-provider-url]");
   const providerModelInput = document.querySelector("[data-provider-model]");
@@ -1317,6 +1438,39 @@
     container.appendChild(card);
   }
 
+  function appendKnowledgeCitations(container, citations) {
+    if (!Array.isArray(citations) || !citations.length) return;
+    const section = document.createElement("details");
+    section.className = "knowledge-citations";
+    section.open = true;
+    const summary = document.createElement("summary");
+    summary.textContent = `知识依据 ${citations.length} 条`;
+    section.appendChild(summary);
+    const list = document.createElement("div");
+    list.className = "knowledge-citation-list";
+    citations.forEach((citation, index) => {
+      const item = document.createElement("a");
+      item.className = "knowledge-citation";
+      item.href = citation.obsidian_uri;
+      const marker = document.createElement("span");
+      marker.className = "knowledge-citation-marker";
+      marker.textContent = String(index + 1);
+      const copy = document.createElement("span");
+      const title = document.createElement("strong");
+      title.textContent = citation.title;
+      const detail = document.createElement("small");
+      detail.textContent = `${citation.heading || "概述"} · ${citation.relative_path}`;
+      const excerpt = document.createElement("span");
+      excerpt.className = "knowledge-citation-excerpt";
+      excerpt.textContent = citation.excerpt;
+      copy.append(title, detail, excerpt);
+      item.append(marker, copy);
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+    container.appendChild(section);
+  }
+
   function appendChatMessage(role, text, metadata = null) {
     if (!chatInput || !chatThread) return;
     const message = document.createElement("div");
@@ -1337,11 +1491,15 @@
 
     if (metadata && role === "assistant") {
       appendResultCard(content, metadata);
+      appendKnowledgeCitations(content, metadata.citations);
       const meta = document.createElement("div");
       meta.className = "chat-response-meta";
-      const phaseLabel = { "general-chat": "普通问答", "semantic-layer": "指标口径", "text2sql": "Odoo 只读查询" }[metadata.phase] || "智能回答";
+      const phaseLabel = metadata.intent === "hybrid"
+        ? "Odoo 实时数据 + Wiki"
+        : ({ "general-chat": "普通问答", "knowledge-base": "Odoo Wiki", "semantic-layer": "指标口径", "text2sql": "Odoo 只读查询" }[metadata.phase] || "智能回答");
       meta.append(`${phaseLabel} · ${metadata.provider} · ${metadata.model}`);
       if (metadata.answer_mode === "deterministic") meta.append(" · 确定性摘要（省略第二次模型调用）");
+      if (metadata.answer_mode === "knowledge") meta.append(" · 已引用审核笔记");
       if (metadata.usage?.estimated_cost_usd > 0) {
         meta.append(` · 估算 $${Number(metadata.usage.estimated_cost_usd).toFixed(6)}`);
       }
@@ -1400,7 +1558,7 @@
   function appendWelcomeMessage() {
     appendChatMessage(
       "assistant",
-      "新会话已开始。你可以普通聊天、询问销售指标口径，或直接查询 Odoo 实时销售数据。"
+      "新会话已开始。你可以普通聊天、询问 Odoo 业务或源码知识，也可以直接查询实时销售数据。"
     );
   }
 

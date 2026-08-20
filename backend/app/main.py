@@ -24,6 +24,7 @@ _UI_FILES = {
     "index.html",
     "settings.html",
     "styles.css",
+    "wiki.html",
 }
 
 

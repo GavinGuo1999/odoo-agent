@@ -8,6 +8,7 @@
 - Odoo PostgreSQL 实时只读查询和版本化销售语义层；
 - 可切换原生语义层 / Wren MDL；Wren 只做上下文与 dry-plan，执行仍经过 SQLGlot 和 Odoo 只读事务；
 - PostgreSQL、Odoo ORM、本地源码和正式 MDL 的只读一致性审计，自动生成隔离草稿但不自动生效；
+- `learn_odoo` 已审核 Wiki 的本地只读检索、知识问答、Obsidian 引用和“实时数据 + 业务解释”混合分析；
 - Pydantic QueryPlan + Text2SQL + 最多两次安全修复；
 - SQL AST 白名单、公司过滤、超时、LIMIT 和数据库只读事务；
 - PostgreSQL Checkpointer、会话恢复和 LangGraph Interrupt；
@@ -57,6 +58,7 @@ Set-Location D:\odoo19e\odoo-agent
 - [演进路线](docs/11-roadmap.md)
 - [Wren AI 语义编译集成](docs/13-wren-semantic-integration.md)
 - [Odoo 语义同步与一致性审计](docs/14-odoo-semantic-sync-and-audit.md)
+- [learn_odoo Wiki 与 ChatBI 知识集成](docs/15-wiki-bi-knowledge-integration.md)
 
 ## 验证
 

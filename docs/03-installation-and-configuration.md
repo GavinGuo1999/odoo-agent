@@ -278,6 +278,16 @@ Set-Location D:\odoo19e\odoo-agent
 | `LANGFUSE_SECRET_KEY` | Secret Key |
 | `LANGFUSE_BASE_URL` | EU 默认 `https://cloud.langfuse.com` |
 | `LANGFUSE_ENABLED` | 是否启用项目侧 Trace |
+
+### 6.8 learn_odoo Wiki
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `WIKI_PATH` | `D:\odoo19e\learn_odoo` | Wiki 根目录；应用只读 |
+| `WIKI_INDEX_PATH` | `D:\odoo19e\odoo-agent\.wiki-index\wiki.db` | BI 项目侧 SQLite 检索索引 |
+| `WIKI_MAX_RESULTS` | `6` | Agent 默认召回条数，范围 1～12 |
+
+启动后访问 <http://127.0.0.1:8090/ui/wiki.html>。首次访问会自动建立索引；只有 `status: reviewed` 或 `status: evergreen` 的 Odoo 笔记会进入回答。完整边界见 [Wiki 与 ChatBI 集成](15-wiki-bi-knowledge-integration.md)。
 | `LANGFUSE_TRACING_ENABLED` | Langfuse SDK Trace 开关 |
 
 ### 6.8 语义引擎与 Odoo 源码审计

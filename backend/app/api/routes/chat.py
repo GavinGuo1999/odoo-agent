@@ -112,6 +112,7 @@ def _agent(settings: Settings, routing: ModelRoutingConfig) -> SalesAgent:
         routing=routing,
         checkpointer=get_state_store().checkpointer,
         semantic_config=settings.semantic(),
+        wiki_config=settings.wiki(),
     )
 
 
@@ -163,6 +164,7 @@ def _response_from_outcome(
         query_plan=outcome.query_plan,
         answer_mode=outcome.answer_mode,
         model_roles=outcome.model_roles,
+        citations=outcome.citations,
     )
 
 
@@ -183,6 +185,7 @@ def _update_turn(turn: object | None, response: ChatResponse) -> None:
             "row_count": len(response.rows),
             "metrics": response.metrics,
             "warnings": response.warnings,
+            "citation_count": len(response.citations),
             "estimated_cost_usd": response.usage.estimated_cost_usd,
         },
     )

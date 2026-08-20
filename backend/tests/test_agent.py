@@ -4,7 +4,7 @@ import os
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -16,6 +16,7 @@ from app.bi import SalesAgent, classify_intent  # noqa: E402
 from app.config import DatabaseConfig, ProviderConfig  # noqa: E402
 from app.database import DatabaseHealth, QueryResult  # noqa: E402
 from app.llm import LLMResult  # noqa: E402
+from app.services.wiki_knowledge import WikiHit, WikiSearchResult  # noqa: E402
 
 
 def llm_result(content: str, total: int = 10) -> LLMResult:
@@ -111,7 +112,121 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
     def test_intent_routes_general_semantic_and_data(self) -> None:
         self.assertEqual(classify_intent("你好，你是什么模型？", []), "general")
         self.assertEqual(classify_intent("销售额口径是什么？", []), "semantic")
+        self.assertEqual(classify_intent("销售额是什么？", []), "semantic")
         self.assertEqual(classify_intent("今年每个月销售趋势怎么样？", []), "data")
+        self.assertEqual(classify_intent("本月销售额最高的五个产品是什么？", []), "data")
+        self.assertEqual(classify_intent("sale.order 有哪些字段？", []), "knowledge")
+        self.assertEqual(classify_intent("qty_to_invoice 怎么计算？", []), "knowledge")
+        self.assertEqual(
+            classify_intent("查看 sale.order._action_confirm 的源码", []),
+            "source",
+        )
+        self.assertEqual(
+            classify_intent("本月哪些订单已交付但不能开票，为什么？", []),
+            "hybrid",
+        )
+
+    @staticmethod
+    def wiki_result(question: str) -> WikiSearchResult:
+        hit = WikiHit(
+            note_id="note-1",
+            title="Sale 源码主链路",
+            heading="qty_to_invoice 的计算",
+            excerpt="qty_to_invoice 由订单行的开票策略、交付数量与已开票数量共同决定。",
+            content="qty_to_invoice 由订单行的开票策略、交付数量与已开票数量共同决定。",
+            relative_path="01_Odoo/03_源码/Sale 源码主链路.md",
+            absolute_path="D:/odoo19e/learn_odoo/01_Odoo/03_源码/Sale 源码主链路.md",
+            obsidian_uri="obsidian://open?vault=learn_odoo&file=01_Odoo/03_源码/Sale%20源码主链路",
+            status="reviewed",
+            note_type="source",
+            module="sale",
+            topic="invoice",
+            updated="2026-08-20",
+            score=12.0,
+        )
+        return WikiSearchResult(query=question, index_fingerprint="wiki-v1", hits=[hit])
+
+    async def test_knowledge_question_uses_wiki_without_database(self) -> None:
+        wiki = Mock()
+        wiki.search.return_value = self.wiki_result("qty_to_invoice 怎么计算？")
+        with patch.dict(os.environ, self.environment, clear=True):
+            agent = SalesAgent(self.provider, self.database, wiki_service=wiki)
+            agent._gateway.complete = AsyncMock(
+                return_value=llm_result("它由开票策略、交付数量和已开票数量决定。[知识来源 1]")
+            )
+            agent._database.healthcheck = AsyncMock()
+            result = await agent.run(question="qty_to_invoice 怎么计算？", history=[])
+
+        self.assertEqual(result.intent, "knowledge")
+        self.assertEqual(result.phase, "knowledge-base")
+        self.assertEqual(result.answer_mode, "knowledge")
+        self.assertEqual(len(result.citations), 1)
+        self.assertFalse(result.data_accessed)
+        agent._database.healthcheck.assert_not_awaited()
+        prompt = agent._gateway.complete.await_args.kwargs["messages"][0]["content"]
+        self.assertIn("[知识来源 1]", prompt)
+
+    async def test_hybrid_question_keeps_wiki_out_of_sql_prompt(self) -> None:
+        wiki = Mock()
+        wiki.search.return_value = self.wiki_result("本月哪些订单已交付但不能开票，为什么？")
+        with patch.dict(os.environ, self.environment, clear=True):
+            agent = SalesAgent(self.provider, self.database, wiki_service=wiki)
+            agent._gateway.complete = AsyncMock(
+                side_effect=[
+                    llm_result(
+                        sql_payload(
+                            "SELECT so.name AS order_name, so.invoice_status FROM sale_order so "
+                            "WHERE so.company_id = 1 AND so.state IN ('sale','done')",
+                            query_type="detail",
+                            metrics=[],
+                            dimensions=["order_name", "invoice_status"],
+                            select_columns=["order_name", "invoice_status"],
+                        )
+                    ),
+                    llm_result("数据事实：SO001 尚未开票。Wiki 业务解释：需继续核查订单行。[知识来源 1]"),
+                ]
+            )
+            agent._database.healthcheck = AsyncMock(
+                return_value=DatabaseHealth(
+                    connected=True,
+                    user="codex_readonly",
+                    database="odoo19_dev",
+                    read_only=True,
+                    company_id=1,
+                    company_name="My Company",
+                    currency="USD",
+                    order_count=23,
+                    response_ms=2.0,
+                )
+            )
+            agent._database.discover_columns = AsyncMock(
+                return_value={
+                    table: [{"name": column, "type": "text"} for column in columns]
+                    for table, columns in agent._semantics.table_columns.items()
+                }
+            )
+            agent._database.execute_readonly = AsyncMock(
+                return_value=QueryResult(
+                    columns=["order_name", "invoice_status"],
+                    rows=[{"order_name": "SO001", "invoice_status": "to invoice"}],
+                    row_count=1,
+                    truncated=False,
+                    duration_ms=1.0,
+                )
+            )
+            result = await agent.run(
+                question="本月哪些订单已交付但不能开票，为什么？",
+                history=[],
+            )
+
+        self.assertEqual(result.intent, "hybrid")
+        self.assertTrue(result.data_accessed)
+        self.assertEqual(len(result.citations), 1)
+        self.assertEqual(agent._gateway.complete.await_count, 2)
+        sql_prompt = agent._gateway.complete.await_args_list[0].kwargs["messages"][0]["content"]
+        answer_prompt = agent._gateway.complete.await_args_list[1].kwargs["messages"][0]["content"]
+        self.assertNotIn("qty_to_invoice 由订单行", sql_prompt)
+        self.assertIn("qty_to_invoice 由订单行", answer_prompt)
 
     async def test_general_question_does_not_touch_database(self) -> None:
         with patch.dict(os.environ, self.environment, clear=True):

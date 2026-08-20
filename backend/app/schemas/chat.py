@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.config import ProviderName
 from app.schemas.query_plan import QueryPlan
+from app.schemas.wiki import WikiCitationResponse
 
 
 class ChatHistoryMessage(BaseModel):
@@ -69,8 +70,8 @@ class ChatResponse(BaseModel):
     status: Literal["completed", "interrupted"] = "completed"
     interrupt: InterruptInfo | None = None
     data_accessed: bool = False
-    phase: Literal["general-chat", "semantic-layer", "text2sql"] = "general-chat"
-    intent: Literal["general", "semantic", "data"] = "general"
+    phase: Literal["general-chat", "knowledge-base", "semantic-layer", "text2sql"] = "general-chat"
+    intent: Literal["general", "knowledge", "source", "semantic", "data", "hybrid"] = "general"
     sql: str | None = None
     columns: list[str] = Field(default_factory=list)
     rows: list[dict[str, Any]] = Field(default_factory=list)
@@ -84,8 +85,9 @@ class ChatResponse(BaseModel):
     truncated: bool = False
     warnings: list[str] = Field(default_factory=list)
     query_plan: QueryPlan | None = None
-    answer_mode: Literal["llm", "deterministic", "semantic", "failure"] = "llm"
+    answer_mode: Literal["llm", "deterministic", "knowledge", "semantic", "failure"] = "llm"
     model_roles: dict[str, ModelExecution] = Field(default_factory=dict)
+    citations: list[WikiCitationResponse] = Field(default_factory=list)
 
 
 class ChatSessionView(BaseModel):
