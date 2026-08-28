@@ -59,6 +59,7 @@ Set-Location D:\odoo19e\odoo-agent
 - [Wren AI 语义编译集成](docs/13-wren-semantic-integration.md)
 - [Odoo 语义同步与一致性审计](docs/14-odoo-semantic-sync-and-audit.md)
 - [learn_odoo Wiki 与 ChatBI 知识集成](docs/15-wiki-bi-knowledge-integration.md)
+- [TDD 测试与验收红绿灯](docs/16-tdd-test-and-acceptance-matrix.md)
 
 ## 验证
 

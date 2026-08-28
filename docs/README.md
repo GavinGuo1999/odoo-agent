@@ -4,7 +4,7 @@
 >
 > 适用应用版本：0.2.0
 >
-> 最后更新：2026-08-20
+> 最后更新：2026-08-28
 >
 > 文档状态：正式
 
@@ -19,6 +19,7 @@
 | 前端或接口开发者 | [API 参考](05-api-reference.md) → [Agent 工作流](07-langgraph-workflow.md) |
 | 数据负责人 | [数据语义与安全](06-data-and-security.md) → [评测与质量](09-evaluation-and-quality.md) |
 | 运维 / 开发人员 | [开发与运维](10-development-and-operations.md) → [Langfuse 可观测性](08-langfuse-observability.md) |
+| 测试 / 发布负责人 | [TDD 测试与验收红绿灯](16-tdd-test-and-acceptance-matrix.md) → [评测与质量](09-evaluation-and-quality.md) |
 
 ## 2. 文档目录
 
@@ -81,6 +82,10 @@
 15. [learn_odoo Wiki 与 ChatBI 知识集成](15-wiki-bi-knowledge-integration.md)
 
     Wiki 只读索引、知识/源码/混合意图、引用协议、LangGraph 与 Langfuse 集成边界。
+
+16. [TDD 测试与验收红绿灯](16-tdd-test-and-acceptance-matrix.md)
+
+    Red-Green-Refactor 流程、Codex 自动测试、协作测试、用户验收和发布门禁。
 
 ## 3. 当前能力快照
 
