@@ -14,7 +14,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.bi import SalesAgent, classify_intent  # noqa: E402
 from app.config import DatabaseConfig, ProviderConfig  # noqa: E402
-from app.database import DatabaseHealth, QueryResult  # noqa: E402
+from app.database import DatabaseConnectionError, DatabaseHealth, QueryResult  # noqa: E402
 from app.llm import LLMResult  # noqa: E402
 from app.services.wiki_knowledge import WikiHit, WikiSearchResult  # noqa: E402
 
@@ -79,6 +79,30 @@ def sql_payload(
                 "clarification_question": clarification_question,
             },
             "sql": sql,
+        },
+        ensure_ascii=False,
+    )
+
+
+def chart_payload(
+    *,
+    chart_type: str,
+    x_field: str | None,
+    series: list[str],
+    title: str = "查询结果",
+) -> str:
+    import json
+
+    return json.dumps(
+        {
+            "type": chart_type,
+            "title": title,
+            "x_field": x_field,
+            "series": [{"field": field, "label": None} for field in series],
+            "sort_by": x_field if chart_type == "line" else None,
+            "sort_order": "asc" if chart_type == "line" else None,
+            "top_n": None,
+            "reason": "根据结果字段类型选择",
         },
         ensure_ascii=False,
     )
@@ -243,17 +267,27 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
         with patch.dict(os.environ, self.environment, clear=True):
             agent = SalesAgent(self.provider, self.database)
             agent._gateway.complete = AsyncMock(
-                return_value=llm_result(
-                    sql_payload(
-                        "SELECT date_trunc('month', so.date_order)::date AS month, "
-                        "SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
-                        "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
-                        "GROUP BY 1 ORDER BY 1",
-                        query_type="trend",
-                        metrics=["sales_amount"],
-                        dimensions=["month"],
-                    )
-                )
+                side_effect=[
+                    llm_result(
+                        sql_payload(
+                            "SELECT date_trunc('month', so.date_order)::date AS month, "
+                            "SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
+                            "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+                            "GROUP BY 1 ORDER BY 1",
+                            query_type="trend",
+                            metrics=["sales_amount"],
+                            dimensions=["month"],
+                        )
+                    ),
+                    llm_result(
+                        chart_payload(
+                            chart_type="line",
+                            x_field="month",
+                            series=["sales_amount"],
+                            title="今年月度销售趋势",
+                        )
+                    ),
+                ]
             )
             agent._database.healthcheck = AsyncMock(
                 return_value=DatabaseHealth(
@@ -292,9 +326,10 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.intent, "data")
         self.assertEqual(result.chart["type"], "line")
         self.assertIn("LIMIT 500", result.sql or "")
-        self.assertEqual(result.total_tokens, 10)
+        self.assertEqual(result.total_tokens, 20)
         self.assertEqual(result.answer_mode, "deterministic")
-        self.assertEqual(agent._gateway.complete.await_count, 1)
+        self.assertEqual(agent._gateway.complete.await_count, 2)
+        self.assertIn("chart-planner", result.model_roles)
 
     async def test_invalid_sql_is_repaired_before_execution(self) -> None:
         with patch.dict(os.environ, self.environment, clear=True):
@@ -352,6 +387,149 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent._gateway.complete.await_count, 2)
         agent._database.execute_readonly.assert_awaited_once()
 
+    async def test_unsafe_sql_is_rejected_without_model_repair(self) -> None:
+        with patch.dict(os.environ, self.environment, clear=True):
+            agent = SalesAgent(self.provider, self.database)
+            agent._gateway.complete = AsyncMock(
+                return_value=llm_result(
+                    sql_payload(
+                        "DELETE FROM sale_order WHERE company_id = 1",
+                        query_type="kpi",
+                        metrics=["order_count"],
+                    )
+                )
+            )
+            agent._database.healthcheck = AsyncMock(
+                return_value=DatabaseHealth(
+                    connected=True,
+                    user="codex_readonly",
+                    database="odoo19_dev",
+                    read_only=True,
+                    company_id=1,
+                    company_name="My Company",
+                    currency="USD",
+                    order_count=23,
+                    response_ms=2.0,
+                )
+            )
+            agent._database.discover_columns = AsyncMock(
+                return_value={
+                    table: [{"name": column, "type": "text"} for column in columns]
+                    for table, columns in agent._semantics.table_columns.items()
+                }
+            )
+            agent._database.execute_readonly = AsyncMock()
+            result = await agent.run(question="删除全部销售订单", history=[])
+
+        self.assertEqual(result.answer_mode, "failure")
+        self.assertEqual(agent._gateway.complete.await_count, 1)
+        agent._database.execute_readonly.assert_not_awaited()
+
+    async def test_execution_error_is_analyzed_repaired_and_retried(self) -> None:
+        initial_sql = (
+            "SELECT SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
+            "WHERE so.company_id = 1 AND so.state IN ('sale','done')"
+        )
+        repaired_sql = (
+            "SELECT COALESCE(SUM(so.amount_untaxed), 0) AS sales_amount FROM sale_order so "
+            "WHERE so.company_id = 1 AND so.state IN ('sale','done')"
+        )
+        with patch.dict(os.environ, self.environment, clear=True):
+            agent = SalesAgent(self.provider, self.database)
+            agent._gateway.complete = AsyncMock(
+                side_effect=[
+                    llm_result(
+                        sql_payload(
+                            initial_sql,
+                            query_type="kpi",
+                            metrics=["sales_amount"],
+                        )
+                    ),
+                    llm_result(
+                        sql_payload(
+                            repaired_sql,
+                            query_type="kpi",
+                            metrics=["sales_amount"],
+                        )
+                    ),
+                ]
+            )
+            agent._database.healthcheck = AsyncMock(
+                return_value=DatabaseHealth(
+                    connected=True,
+                    user="codex_readonly",
+                    database="odoo19_dev",
+                    read_only=True,
+                    company_id=1,
+                    company_name="My Company",
+                    currency="USD",
+                    order_count=23,
+                    response_ms=2.0,
+                )
+            )
+            agent._database.discover_columns = AsyncMock(
+                return_value={
+                    table: [{"name": column, "type": "text"} for column in columns]
+                    for table, columns in agent._semantics.table_columns.items()
+                }
+            )
+            agent._database.execute_readonly = AsyncMock(
+                side_effect=[
+                    DatabaseConnectionError("UndefinedColumn"),
+                    QueryResult(
+                        columns=["sales_amount"],
+                        rows=[{"sales_amount": 8768.0}],
+                        row_count=1,
+                        truncated=False,
+                        duration_ms=1.2,
+                    ),
+                ]
+            )
+            result = await agent.run(question="销售额是多少？", history=[])
+
+        self.assertTrue(result.data_accessed)
+        self.assertEqual(result.answer_mode, "deterministic")
+        self.assertEqual(agent._gateway.complete.await_count, 2)
+        self.assertEqual(agent._database.execute_readonly.await_count, 2)
+
+    async def test_repeated_repair_sql_stops_the_loop(self) -> None:
+        repeated = sql_payload(
+            "SELECT * FROM sale_order",
+            query_type="kpi",
+            metrics=["order_count"],
+        )
+        with patch.dict(os.environ, self.environment, clear=True):
+            agent = SalesAgent(self.provider, self.database)
+            agent._gateway.complete = AsyncMock(
+                side_effect=[llm_result(repeated), llm_result(repeated)]
+            )
+            agent._database.healthcheck = AsyncMock(
+                return_value=DatabaseHealth(
+                    connected=True,
+                    user="codex_readonly",
+                    database="odoo19_dev",
+                    read_only=True,
+                    company_id=1,
+                    company_name="My Company",
+                    currency="USD",
+                    order_count=23,
+                    response_ms=2.0,
+                )
+            )
+            agent._database.discover_columns = AsyncMock(
+                return_value={
+                    table: [{"name": column, "type": "text"} for column in columns]
+                    for table, columns in agent._semantics.table_columns.items()
+                }
+            )
+            agent._database.execute_readonly = AsyncMock()
+            result = await agent.run(question="订单数是多少？", history=[])
+
+        self.assertEqual(result.answer_mode, "failure")
+        self.assertEqual(agent._gateway.complete.await_count, 2)
+        self.assertTrue(any("重复查询" in warning for warning in result.warnings))
+        agent._database.execute_readonly.assert_not_awaited()
+
     async def test_query_plan_interrupt_can_resume_with_same_thread(self) -> None:
         with patch.dict(os.environ, self.environment, clear=True):
             agent = SalesAgent(
@@ -373,9 +551,16 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
                     llm_result(
                         sql_payload(
                             "SELECT SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
-                            "WHERE so.company_id = 1 AND so.state IN ('sale','done')",
+                            "JOIN res_partner rp ON rp.id = so.partner_id "
+                            "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+                            "AND rp.name = 'CODEX Website Customer 20260627'",
                             query_type="kpi",
                             metrics=["sales_amount"],
+                            filters=[
+                                {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
+                                {"field": "state", "operator": "in", "value": ["sale", "done"], "source": "metric_rule"},
+                                {"field": "partner_id", "operator": "eq", "value": "CODEX Website Customer 20260627", "source": "user"},
+                            ],
                         )
                     ),
                 ]

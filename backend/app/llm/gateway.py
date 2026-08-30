@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,6 +10,25 @@ import litellm
 
 from app.config import ProviderConfig
 from app.observability import trace_generation, update_observation
+
+
+logger = logging.getLogger(__name__)
+
+
+_SILICONFLOW_THINKING_MODEL_MARKERS = (
+    "deepseek-v3.1",
+    "deepseek-v3.2",
+    "qwen3-",
+    "glm-4.6",
+    "glm-4.7",
+    "glm-5",
+    "hunyuan-a13b",
+)
+
+
+def _siliconflow_supports_thinking_switch(model: str) -> bool:
+    normalized = model.casefold()
+    return any(marker in normalized for marker in _SILICONFLOW_THINKING_MODEL_MARKERS)
 
 
 class ProviderNotConfiguredError(RuntimeError):
@@ -56,7 +76,18 @@ class LLMGateway:
         if json_mode:
             request_options["response_format"] = {"type": "json_object"}
         if active_config.thinking_mode != "auto":
-            request_options["thinking"] = {"type": active_config.thinking_mode}
+            if active_config.name == "siliconflow" and _siliconflow_supports_thinking_switch(
+                active_config.model
+            ):
+                # SiliconFlow exposes thinking control as an OpenAI-compatible
+                # extension on an explicit model allowlist. Passing LiteLLM's
+                # generic `thinking` parameter to the openai adapter is rejected,
+                # while unsupported SiliconFlow models reject enable_thinking.
+                request_options["extra_body"] = {
+                    "enable_thinking": active_config.thinking_mode == "enabled"
+                }
+            elif active_config.name != "siliconflow":
+                request_options["thinking"] = {"type": active_config.thinking_mode}
 
         # LiteLLM requires an explicit provider prefix. DeepSeek has a native
         # adapter; SiliconFlow exposes an OpenAI-compatible endpoint.
@@ -94,6 +125,15 @@ class LLMGateway:
                     **request_options,
                 )
             except Exception as exc:
+                logger.warning(
+                    "LLM request failed provider=%s model=%s error=%s status=%s code=%s param=%s",
+                    active_config.name,
+                    active_config.model,
+                    type(exc).__name__,
+                    getattr(exc, "status_code", None),
+                    getattr(exc, "code", None),
+                    getattr(exc, "param", None),
+                )
                 update_observation(
                     observation,
                     level="ERROR",

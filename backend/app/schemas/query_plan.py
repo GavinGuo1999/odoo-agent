@@ -13,7 +13,9 @@ FilterOperator = Literal[
     "neq",
     "in",
     "not_in",
+    "gt",
     "gte",
+    "lt",
     "lte",
     "contains",
 ]

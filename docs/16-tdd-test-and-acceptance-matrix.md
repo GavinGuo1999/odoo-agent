@@ -2,6 +2,8 @@
 
 > 基线日期：2026-08-28
 >
+> 最近增量验证：2026-08-30
+>
 > 适用应用版本：0.2.0
 >
 > 适用范围：`odoo-agent`、`custom_addons/custom_ai_siliconflow`、`text2sql-benchmark-lab` 和 `learn_odoo`
@@ -31,12 +33,12 @@
 
 | 仓库 | 基线提交 | 工作树 | 当前证据 |
 | --- | --- | --- | --- |
-| `odoo-agent` | `9144e61` | 基线检查时干净 | 后端 63 项测试通过；前端语法通过；静态黄金集 20/20 |
+| `odoo-agent` | `6a3a021` + 本轮待提交增量 | 当前有待提交的 LangGraph/GenBI 工作流增量 | 后端 90/90；前端语法通过；静态黄金集 20/20；真实黄金集 20/20 |
 | `custom_addons` | `7f8dda1` | 提交后干净 | SiliconFlow 模块 11 个 Python、2 个 XML 文件静态解析通过 |
 | `text2sql-benchmark-lab` | `3d7f01c` | 干净 | 7 项基准核心测试通过 |
 | `learn_odoo` | `a014c51` | 提交后干净 | Markdown 严格 UTF-8、Obsidian JSON 和 Canvas JSON 解析通过 |
 
-基线只证明自动化覆盖内的行为。Odoo/PostgreSQL 服务、真实模型、真实 Langfuse、模块安装和 UI 业务验收在本轮没有执行。
+本轮已在 `odoo19_dev`、`codex_readonly`、DeepSeek 真实模型和 Langfuse development 环境完成运行验证。Odoo 模块安装、一次性测试库 TransactionCase、三轮性能基准和用户业务验收仍未执行。
 
 ## 3. Codex 可独立完成的绿灯测试
 
@@ -44,7 +46,7 @@
 
 | ID | 范围 | 检查 | 当前 | 通过标准 |
 | --- | --- | --- | --- | --- |
-| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 63/63 | 全部通过，无测试进程残留 |
+| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 90/90 | 全部通过，无测试进程残留 |
 | AUTO-02 | Agent 前端 | `node --check app.js` | 🟢 | 退出码为 0 |
 | AUTO-03 | 静态黄金集 | 20 条意图路由静态评测 | 🟢 20/20 | 通过率 100% |
 | AUTO-04 | SQL 安全 | 写操作、未知表/字段、公司过滤、输出契约、LIMIT | 🟢 | 所有安全断言通过 |
@@ -55,6 +57,8 @@
 | AUTO-09 | Odoo 自定义模块静态检查 | Python AST、XML、Manifest、敏感信息扫描 | 🟢 | 可解析、无真实密钥、无明文凭据 |
 | AUTO-10 | 知识库 | UTF-8、Obsidian JSON、Canvas JSON | 🟢 | 所有文件可解析 |
 | AUTO-11 | Git 交付 | `git diff --check`、状态和提交内容复核 | 🟢 | 无空白错误、无意外文件、无凭据 |
+| AUTO-12 | SQL Error Analyzer | 分类、危险 SQL 拒绝、可修复执行错误、重复指纹终止 | 🟢 | 危险项不修复；可修复项最多两次；无循环执行 |
+| AUTO-13 | Chart Planner | DataProfile、Pydantic ChartPlan、字段/类型白名单和规则回退 | 🟢 | 非法字段被拒绝；模型失败不影响数据回答 |
 
 标准命令：
 
@@ -79,16 +83,17 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 | ID | 测试 | 为什么需要授权或前置条件 | Codex 负责 | 用户负责 | 当前 |
 | --- | --- | --- | --- | --- | --- |
-| COLLAB-01 | 启动 Odoo/PostgreSQL 并检查 `/web/login` | 现有启动脚本会删除并重建受保护日志 | 启停、端口、HTTP、日志摘要 | 明确授权脚本修改日志 | 🟡 未执行 |
-| COLLAB-02 | 启动 Agent 并检查 `/api/health`、`/docs`、首页 | 依赖本地 Odoo、状态库和环境配置 | 启停、API smoke、进程清理 | 允许使用当前本地配置 | 🟡 未执行 |
-| COLLAB-03 | 真实 20 条销售黄金集 | 会访问只读业务库并调用付费模型 | 执行、比较、生成失败差异 | 确认可使用模型额度和本地只读数据 | 🟡 未执行 |
+| COLLAB-01 | 启动 Odoo/PostgreSQL 并检查 `/web/login` | 现有启动脚本会删除并重建受保护日志 | 启停、端口、HTTP、日志摘要 | 明确授权脚本修改日志 | 🟢 HTTP 200，已执行 |
+| COLLAB-02 | 启动 Agent 并检查 `/api/health`、`/docs`、首页 | 依赖本地 Odoo、状态库和环境配置 | 启停、API smoke、进程清理 | 允许使用当前本地配置 | 🟢 只读 DB/状态库/UI 已执行 |
+| COLLAB-03 | 真实 20 条销售黄金集 | 会访问只读业务库并调用付费模型 | 执行、比较、生成失败差异 | 确认可使用模型额度和本地只读数据 | 🟢 DeepSeek 20/20 |
 | COLLAB-04 | 最新三轮 Text2SQL 基准 | 约需 25–35 分钟并消耗模型额度 | 运行、统计 p50/p95、Token、Cost、正确率 | 授权模型调用和只读数据库访问 | 🟡 旧基线待重跑 |
-| COLLAB-05 | Langfuse 实际 Trace | 会连接已配置的外部 Langfuse 项目 | 生成测试 Trace并核对字段、脱敏和 Cost | 授权使用该项目连接 | 🟡 未执行 |
+| COLLAB-05 | Langfuse 实际 Trace | 会连接已配置的外部 Langfuse 项目 | 生成测试 Trace并核对字段、脱敏和 Cost | 授权使用该项目连接 | 🟢 已用于首错定位和真实 Trace 复核 |
 | COLLAB-06 | PostgreSQL Checkpointer 重启恢复 | 需要独立状态数据库和服务重启 | 创建测试会话、重启、验证恢复 | 确认可使用测试状态库 | 🟡 未执行 |
 | COLLAB-07 | SiliconFlow 模块安装/升级 | 安装或升级会写数据库元数据 | 在一次性测试库安装、记录日志和模块状态 | 授权创建/使用一次性测试库 | 🟡 未执行 |
 | COLLAB-08 | SiliconFlow 9 个 Odoo TransactionCase | 需要 Odoo registry 和测试数据库 | 运行测试标签、收集结果、清理测试进程 | 提供或授权创建测试库 | 🟡 已写未运行 |
-| COLLAB-09 | SiliconFlow 真实 API smoke | 使用用户配置的 API Key并产生费用 | 调用 chat、tool、structured output、embedding | 在本机设置密钥并授权额度；不把密钥发到聊天或仓库 | 🟡 未执行 |
-| COLLAB-10 | Localhost 浏览器自动化 | 需要服务运行，部分页面需要 Odoo 测试登录 | 自动点击、截图、检查控制台与网络错误 | 提供专用测试账号或完成登录 | 🟡 未执行 |
+| COLLAB-09 | SiliconFlow 真实 API smoke | 使用用户配置的 API Key并产生费用 | 调用 chat、tool、structured output、embedding | 在本机设置密钥并授权额度；不把密钥发到聊天或仓库 | 🟡 Chat 返回 HTTP 402，需补充额度；适配代码已测 |
+| COLLAB-10 | Localhost 浏览器自动化 | 需要服务运行，部分页面需要 Odoo 测试登录 | 自动点击、截图、检查控制台与网络错误 | 提供专用测试账号或完成登录 | 🟢 工作台/助手/历史恢复，控制台 0 error/warn |
+| COLLAB-11 | 真实 Chart Planner 模型调用 | 会使用 answer 模型额度并把脱敏后的字段画像发给供应商 | 固定样例运行、记录 Schema 通过率、延迟、Token、Cost | 授权当前模型额度和外部数据处理边界 | 🟢 KPI/line/bar/none 均有真实样例 |
 
 黄灯执行规则：
 
@@ -98,6 +103,31 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 - 密钥只保存在当前 Windows 用户环境变量或 Odoo 配置参数中，不打印、不复制到文档、不提交；
 - 测试结束后关闭由测试启动的 Odoo、Agent 和临时进程；
 - 任何失败都保留测试名、错误类型和脱敏摘要，不保存敏感请求正文。
+
+### 4.1 本轮真实评测与 TDD 证据
+
+环境：`odoo19_dev`、`codex_readonly`、公司 `My Company`、币种 `USD`、语义 provider `native`、DeepSeek `deepseek-v4-pro` 请求级覆盖、PostgreSQL Checkpointer、Langfuse development Trace。没有修改默认供应商设置，没有执行写 SQL。
+
+| 阶段 | 结果 | 真实发现 | Red → Green |
+| --- | --- | --- | --- |
+| 首轮 | 🔴 3/20（15%） | 模型 SQL 接近正确，但 QueryPlan 不接受 `lt/gt`；动态日期元数据验证失败；Repair 未重述完整契约 | 先补失败测试，再加入范围操作符、动态日期元数据归一化、字段级脱敏错误和完整 Repair Schema |
+| 第二轮 | 🟡 14/20（70%） | 时间范围被误判为未授权；客户名称字段存在 `partner_id/partner_name/name` 漂移；维度和平均订单额 ID 不统一 | 先复现 Guard/别名/指标测试，再对齐 `date_order` 授权、客户名称字段、稳定维度 ID 和 `average_order_value` |
+| 最终 | 🟢 20/20（100%） | 全部结构断言、只读 SQL、数据访问、空结果、提示注入和 Interrupt 均通过 | 前 12 条通过后测试宿主退出；重启本地服务并从第 13 条断点续跑 8/8，合计逐 Case 20/20 |
+
+最终自动证据：
+
+- 后端 `unittest`：90/90；
+- 静态黄金集：20/20；
+- 前端 `node --check app.js`：通过；
+- 真实黄金集：20/20；
+- Human-in-the-loop：首次请求 `interrupted`、`data_accessed=false`、无 SQL；补充客户后从同一 session 恢复，执行只读 SQL 并返回 KPI；
+- Chart Planner：真实返回 KPI、line、bar 和空结果 none，配置经 Pydantic 和结果字段白名单验证；
+- SQL 安全：提示注入用例只执行 SELECT/WITH；未知/未授权字段未绕过 Guard；
+- 日期授权收紧后的当前代码实测：`上个月`、`2099 年`、本月基线及同会话“改成上个月”共 4/4，通过只读 SQL 返回预期数据或零值；
+- 浏览器：工作台和智能助手可加载、数据库显示只读、历史会话可恢复，控制台 0 error/warn；
+- Langfuse：用首个失败 Observation 定位问题，未在文档或日志中保存 API Key。
+
+真实测试的限制：这 20 条主要验证路由、QueryPlan、指标/维度、是否访问数据、Interrupt 和 SQL 只读性；尚未对每条业务数值建立参考 SQL 结果签名，因此不能代替 UAT-01 的业务口径核对。
 
 ## 5. 必须由用户完成的红灯验收
 
@@ -113,6 +143,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 | UAT-06 | Documents/Knowledge source 权限隔离 | 使用管理员、普通用户、项目协作者测试同一来源 | 三类账号的可见性矩阵和用户确认 | 🔴 待验收 |
 | UAT-07 | 任何 Odoo 写动作 | 仅在一次性测试库验证创建活动、标签或草稿建议 | 用户逐项授权并确认审计、幂等和回滚 | 🔴 未授权 |
 | UAT-08 | 是否进入多人/公网场景 | 评审登录、RBAC、多公司、行级权限和部署方案 | 用户确认范围；未确认前保持本机单用户 | 🔴 范围未确认 |
+| UAT-09 | Chart Planner 业务适配 | 对 KPI、趋势、排名、占比、散点、类别过多和纯明细各检查至少 2 题 | 用户确认图表类型、标题、排序、TopN 和 table 回退符合阅读习惯 | 🔴 待验收 |
 
 用户验收记录至少包含：
 
@@ -147,7 +178,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 | 改动类型 | 合并前必须运行 |
 | --- | --- |
-| Python 后端 | 受影响测试 + 63 项后端全量测试 |
+| Python 后端 | 受影响测试 + 当前 90 项后端全量测试 |
 | SQL Guard / QueryPlan / Prompt | 后端全量 + 静态黄金集；获授权时加真实黄金集 |
 | 前端 JavaScript/HTML/CSS | `node --check` + 相关 API 测试；获授权时加 localhost UI smoke |
 | Wren MDL/语义层 | provider/审计测试 + Wren compile/dry-plan；获授权时加真实基准 |
@@ -171,8 +202,8 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 ## 9. 本轮结论
 
-当前自动化层是 🟢：Agent 单元/API、前端语法、静态黄金集、基准核心、模块静态解析和知识库格式检查均通过。
+当前自动化层是 🟢：Agent 90/90、前端语法、静态黄金集 20/20、基准核心、模块静态解析和知识库格式检查均通过。
 
-当前运行层是 🟡：服务未启动，真实数据库/模型/Langfuse、最新三轮基准、SiliconFlow 模块安装及 Odoo TransactionCase 尚未执行。
+当前运行层的本轮范围是 🟢：Odoo/Agent、只读数据库、DeepSeek、Langfuse、20 条真实黄金集、Chart Planner、Interrupt/Resume 和 localhost UI smoke 已执行。仍为 🟡 的是 SiliconFlow HTTP 402、最新三轮性能基准、服务重启后的 pending interrupt 恢复、SiliconFlow 模块安装及 Odoo TransactionCase。
 
-当前业务验收层是 🔴：销售口径、UI 体验、模型费用、权限隔离和任何写动作仍需用户确认。
+当前业务验收层是 🔴：销售数值口径、图表阅读体验、模型费用、权限隔离和任何写动作仍需用户确认。代码测试通过不代表这些业务判断已由用户签字。

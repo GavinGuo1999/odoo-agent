@@ -5,6 +5,7 @@ import json
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any, Literal, TypedDict
 from uuid import uuid4
 
@@ -13,13 +14,25 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from pydantic import ValidationError
 
-from app.bi.chart import build_chart_spec
+from app.bi.chart import (
+    build_chart_spec,
+    build_data_profile,
+    parse_chart_plan,
+    should_call_chart_planner,
+)
 from app.bi.deterministic_answer import (
     build_deterministic_answer,
     can_answer_deterministically,
 )
+from app.bi.error_analysis import (
+    MAX_SQL_REPAIR_ATTEMPTS,
+    analyze_sql_errors,
+    query_fingerprint,
+    sql_fingerprint,
+)
 from app.bi.prompts import (
     answer_synthesis_prompt,
+    chart_planning_prompt,
     general_system_prompt,
     knowledge_answer_prompt,
     sql_generation_prompt,
@@ -34,9 +47,10 @@ from app.config import (
     SemanticConfig,
     WikiConfig,
 )
-from app.database import OdooDatabase, ReadOnlySqlGuard
+from app.database import DatabaseConnectionError, OdooDatabase, ReadOnlySqlGuard
 from app.llm import LLMGateway, LLMResult
 from app.observability import trace_agent, trace_retrieval, trace_tool, update_observation
+from app.schemas.analysis import DataProfile, SqlErrorAnalysis
 from app.schemas.query_plan import QueryPlan, SqlGenerationPayload
 from app.services.wiki_knowledge import WikiKnowledgeService, get_wiki_service
 from app.state import get_state_store
@@ -70,6 +84,9 @@ class AgentState(TypedDict, total=False):
     sql: str
     safe_sql: str
     sql_errors: list[str]
+    sql_error_stage: str
+    sql_error_analysis: dict[str, Any] | None
+    sql_fingerprints: list[str]
     tables: list[str]
     database_ready: bool
     currency: str | None
@@ -79,6 +96,7 @@ class AgentState(TypedDict, total=False):
     truncated: bool
     data_accessed: bool
     chart: dict[str, Any]
+    data_profile: dict[str, Any]
     warnings: list[str]
     filled_time_buckets: int
     repair_count: int
@@ -211,12 +229,193 @@ def _json_object(content: str) -> dict[str, Any]:
     return parsed
 
 
+def _normalize_time_range_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop dynamic SQL expressions from display-only date metadata.
+
+    The executable SQL and declared filters remain unchanged and continue through
+    the read-only guard. QueryTimeRange deliberately remains typed as ISO dates.
+    """
+
+    plan = payload.get("plan")
+    if not isinstance(plan, dict):
+        return payload
+    time_range = plan.get("time_range")
+    if not isinstance(time_range, dict):
+        return payload
+    for field in ("start", "end"):
+        value = time_range.get(field)
+        if not isinstance(value, str):
+            continue
+        try:
+            date.fromisoformat(value)
+        except ValueError:
+            time_range[field] = None
+    return payload
+
+
+def format_plan_validation_error(exc: Exception) -> str:
+    """Return repair-useful validation locations without echoing model input."""
+
+    if isinstance(exc, ValidationError):
+        issues: list[str] = []
+        for item in exc.errors(
+            include_url=False,
+            include_context=False,
+            include_input=False,
+        )[:8]:
+            location = ".".join(str(part) for part in item.get("loc", ())) or "plan"
+            issues.append(f"{location}:{item.get('type', 'validation_error')}")
+        return "ValidationError[" + "; ".join(issues) + "]"
+    message = str(exc)
+    if re.fullmatch(r"(?:NoJsonObject|NotJsonObject|QueryPlan[A-Za-z:,]+)", message):
+        return message
+    return type(exc).__name__
+
+
+_CANONICAL_DIMENSIONS = {
+    "月份": "month",
+    "月": "month",
+    "年份": "year",
+    "年": "year",
+    "客户": "customer",
+    "客户名称": "customer",
+    "伙伴": "customer",
+    "产品": "product",
+    "产品名称": "product",
+    "商品": "product",
+    "销售员": "salesperson",
+    "销售员名称": "salesperson",
+    "业务员": "salesperson",
+}
+
+
+def _normalize_plan_semantics(
+    plan: QueryPlan,
+    question: str,
+    history: list[dict[str, str]] | None,
+) -> QueryPlan:
+    dimensions = [
+        _CANONICAL_DIMENSIONS.get(item.strip().casefold(), item)
+        for item in plan.dimensions
+    ]
+    if not dimensions:
+        stable_dimensions = {
+            "day",
+            "week",
+            "month",
+            "quarter",
+            "year",
+            "customer",
+            "product",
+            "salesperson",
+        }
+        for column in plan.select_columns:
+            canonical = _CANONICAL_DIMENSIONS.get(column.strip().casefold(), column)
+            if canonical in stable_dimensions and canonical not in dimensions:
+                dimensions.append(canonical)
+    normalized_question = question.casefold()
+    ranking_markers = ("最高", "最低", "排名", "排行", "前十", "前五", "top ")
+    comparison_markers = ("分别", "差额", "相比", "比较", "对比")
+    trend_markers = ("趋势", "每月", "每个月", "月度", "按月")
+    unresolved_customer_markers = ("那个客户", "这个客户", "该客户", "那位客户")
+
+    requires_clarification = plan.requires_clarification
+    clarification_question = plan.clarification_question
+    ambiguities = list(plan.ambiguities)
+    if (
+        not history
+        and "用户补充条件：" not in question
+        and any(marker in normalized_question for marker in unresolved_customer_markers)
+    ):
+        requires_clarification = True
+        clarification_question = (
+            clarification_question or "请提供要查询的客户名称或 ID。"
+        )
+        if "客户指代不明确" not in ambiguities:
+            ambiguities.append("客户指代不明确")
+
+    query_type = plan.query_type
+    result_shape = plan.result_shape
+    if any(marker in normalized_question for marker in ranking_markers):
+        query_type, result_shape = "ranking", "ranking"
+    elif any(marker in normalized_question for marker in comparison_markers):
+        query_type, result_shape = "comparison", "table"
+    elif any(marker in normalized_question for marker in trend_markers):
+        query_type, result_shape = "trend", "time_series"
+    elif (
+        requires_clarification
+        and plan.metric_ids
+        and plan.query_type == "detail"
+        and not any(marker in normalized_question for marker in ("明细", "列表", "哪些订单"))
+    ):
+        query_type, result_shape = "kpi", "scalar"
+        if not any(marker in normalized_question for marker in ("各", "每个", "按")):
+            dimensions = []
+
+    return plan.model_copy(
+        update={
+            "query_type": query_type,
+            "result_shape": result_shape,
+            "dimensions": dimensions,
+            "ambiguities": ambiguities,
+            "requires_clarification": requires_clarification,
+            "clarification_question": clarification_question,
+        }
+    )
+
+
+def _align_entity_filters_with_sql(
+    plan: QueryPlan,
+    *,
+    sql: str,
+    question: str,
+) -> QueryPlan:
+    if not re.search(r"\b(?:[a-z_]\w*\.)?name\s*(?:=|ilike\b|like\b)", sql, re.I):
+        return plan
+
+    changed = False
+    filters = []
+    for item in plan.filters:
+        field = item.field.rsplit(".", 1)[-1].casefold()
+        if (
+            item.source == "user"
+            and field in {
+                "partner_id",
+                "partner_name",
+                "customer",
+                "customer_name",
+                "客户",
+                "客户名称",
+            }
+            and isinstance(item.value, str)
+        ):
+            filters.append(item.model_copy(update={"field": "name"}))
+            changed = True
+        else:
+            filters.append(item)
+    return plan.model_copy(update={"filters": filters}) if changed else plan
+
+
 def parse_sql_generation_payload(
     content: str,
     *,
     allowed_metric_ids: list[str],
+    question: str = "",
+    history: list[dict[str, str]] | None = None,
 ) -> SqlGenerationPayload:
-    payload = SqlGenerationPayload.model_validate(_json_object(content))
+    payload_dict = _normalize_time_range_metadata(_json_object(content))
+    payload = SqlGenerationPayload.model_validate(payload_dict)
+    allowed = set(allowed_metric_ids)
+    filtered_metrics = [item for item in payload.plan.metric_ids if item in allowed]
+    plan = payload.plan.model_copy(update={"metric_ids": filtered_metrics})
+    plan = _normalize_plan_semantics(plan, question, history)
+    normalized_sql = "" if plan.requires_clarification else payload.sql.strip()
+    plan = _align_entity_filters_with_sql(
+        plan,
+        sql=normalized_sql,
+        question=question,
+    )
+    payload = payload.model_copy(update={"plan": plan, "sql": normalized_sql})
     required_contract_fields = {"result_shape", "select_columns", "sort", "row_limit"}
     missing_fields = required_contract_fields - payload.plan.model_fields_set
     if missing_fields:
@@ -249,10 +448,7 @@ def parse_sql_generation_payload(
             "metric_rule",
         ) not in filter_sources:
             raise ValueError("QueryPlanStateFilterMissing")
-    allowed = set(allowed_metric_ids)
-    filtered_metrics = [item for item in payload.plan.metric_ids if item in allowed]
-    plan = payload.plan.model_copy(update={"metric_ids": filtered_metrics})
-    return payload.model_copy(update={"plan": plan, "sql": payload.sql.strip()})
+    return payload
 
 
 def _usage_fields(state: AgentState, result: LLMResult, *, role: str) -> dict[str, Any]:
@@ -325,8 +521,12 @@ class SalesAgent:
         builder.add_node("clarify_query_plan", self._clarify_query_plan)
         builder.add_node("compile_semantic_sql", self._compile_semantic_sql)
         builder.add_node("validate_sales_sql", self._validate_sales_sql)
+        builder.add_node("analyze_sql_error", self._analyze_sql_error)
+        builder.add_node("clarify_sql_error", self._clarify_sql_error)
         builder.add_node("repair_sales_sql", self._repair_sales_sql)
         builder.add_node("execute_sales_sql", self._execute_sales_sql)
+        builder.add_node("profile_sales_result", self._profile_sales_result)
+        builder.add_node("plan_chart", self._plan_chart)
         builder.add_node("format_simple_answer", self._format_simple_answer)
         builder.add_node("synthesize_sales_answer", self._synthesize_sales_answer)
         builder.add_node("safe_failure_answer", self._safe_failure_answer)
@@ -369,8 +569,7 @@ class SalesAgent:
             self._route_after_semantic_compilation,
             {
                 "validate": "validate_sales_sql",
-                "repair": "repair_sales_sql",
-                "fail": "safe_failure_answer",
+                "error": "analyze_sql_error",
             },
         )
         builder.add_conditional_edges(
@@ -378,19 +577,35 @@ class SalesAgent:
             self._route_after_validation,
             {
                 "execute": "execute_sales_sql",
+                "error": "analyze_sql_error",
+            },
+        )
+        builder.add_conditional_edges(
+            "analyze_sql_error",
+            self._route_after_error_analysis,
+            {
                 "repair": "repair_sales_sql",
+                "clarify": "clarify_sql_error",
                 "fail": "safe_failure_answer",
             },
         )
+        builder.add_edge("clarify_sql_error", "retrieve_sales_context")
         builder.add_edge("repair_sales_sql", "compile_semantic_sql")
         builder.add_conditional_edges(
             "execute_sales_sql",
             self._route_after_execution,
             {
+                "profile": "profile_sales_result",
+                "error": "analyze_sql_error",
+            },
+        )
+        builder.add_edge("profile_sales_result", "plan_chart")
+        builder.add_conditional_edges(
+            "plan_chart",
+            self._route_after_chart_planning,
+            {
                 "deterministic": "format_simple_answer",
                 "answer": "synthesize_sales_answer",
-                "repair": "repair_sales_sql",
-                "fail": "safe_failure_answer",
             },
         )
         builder.add_edge("format_simple_answer", "finalize_turn")
@@ -455,6 +670,9 @@ class SalesAgent:
             "sql": "",
             "safe_sql": "",
             "sql_errors": [],
+            "sql_error_stage": "planning",
+            "sql_error_analysis": None,
+            "sql_fingerprints": [],
             "tables": [],
             "database_ready": False,
             "currency": None,
@@ -463,7 +681,8 @@ class SalesAgent:
             "query_ms": 0.0,
             "truncated": False,
             "data_accessed": False,
-            "chart": {"type": "none", "title": "", "x_field": None, "y_fields": []},
+            "chart": build_chart_spec("", [], []),
+            "data_profile": {},
             "warnings": [],
             "filled_time_buckets": 0,
             "repair_count": 0,
@@ -559,9 +778,13 @@ class SalesAgent:
                     "tables": state.get("tables", []),
                     "row_count": len(state.get("rows", [])),
                     "repair_count": state.get("repair_count", 0),
+                    "sql_error_category": (
+                        (state.get("sql_error_analysis") or {}).get("category")
+                    ),
                     "interrupted": bool(interrupt_payload),
                     "answer_mode": state.get("answer_mode"),
                     "citation_count": len(state.get("knowledge_citations", [])),
+                    "chart_type": (state.get("chart") or {}).get("type"),
                 },
             )
         return self._outcome(state, interrupt_payload=interrupt_payload)
@@ -844,6 +1067,8 @@ class SalesAgent:
             payload = parse_sql_generation_payload(
                 result.content,
                 allowed_metric_ids=state.get("metric_ids", []),
+                question=state["question"],
+                history=state.get("history", []),
             )
             logical_sql = payload.sql
             plan = payload.plan.model_dump(mode="json")
@@ -853,13 +1078,20 @@ class SalesAgent:
             logical_sql = ""
             plan = None
             metric_ids = state.get("metric_ids", [])
-            parse_errors = [f"查询计划格式无效：{type(exc).__name__}。"]
+            parse_errors = [f"查询计划格式无效：{format_plan_validation_error(exc)}。"]
         return {
             "logical_sql": logical_sql,
             "sql": "",
             "query_plan": plan,
             "metric_ids": metric_ids,
             "sql_errors": parse_errors,
+            "sql_error_stage": "planning",
+            "sql_error_analysis": None,
+            "sql_fingerprints": (
+                [fingerprint]
+                if (fingerprint := query_fingerprint(logical_sql, plan))
+                else []
+            ),
             **_usage_fields(state, result, role="sql"),
         }
 
@@ -895,6 +1127,9 @@ class SalesAgent:
             "sql": "",
             "safe_sql": "",
             "sql_errors": [],
+            "sql_error_stage": "planning",
+            "sql_error_analysis": None,
+            "sql_fingerprints": [],
             "repair_count": 0,
         }
 
@@ -911,6 +1146,9 @@ class SalesAgent:
             return {
                 "sql": "",
                 "sql_errors": state.get("sql_errors", []) or ["模型没有返回可用 SQL。"],
+                "sql_error_stage": (
+                    "planning" if not state.get("query_plan") else "semantic_compilation"
+                ),
             }
 
         with trace_tool(
@@ -939,13 +1177,19 @@ class SalesAgent:
                     "errors": errors,
                 },
             )
-        return {"sql": planned_sql, "safe_sql": "", "sql_errors": errors}
+        return {
+            "sql": planned_sql,
+            "safe_sql": "",
+            "sql_errors": errors,
+            "sql_error_stage": "semantic_compilation",
+            "sql_error_analysis": None,
+        }
 
     @staticmethod
     def _route_after_semantic_compilation(state: AgentState) -> str:
         if state.get("sql") and not state.get("sql_errors"):
             return "validate"
-        return "repair" if state.get("repair_count", 0) < 2 else "fail"
+        return "error"
 
     def _validate_sales_sql(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("sql-validation", "正在执行只读 SQL 安全校验")
@@ -975,12 +1219,83 @@ class SalesAgent:
                 tables = validation.tables
                 safe = validation.safe
             update_observation(observation, output={"safe": safe, "errors": errors, "tables": tables})
-        return {"safe_sql": safe_sql, "sql_errors": errors, "tables": tables}
+        return {
+            "safe_sql": safe_sql,
+            "sql_errors": errors,
+            "tables": tables,
+            "sql_error_stage": "validation",
+            "sql_error_analysis": None,
+        }
 
     def _route_after_validation(self, state: AgentState) -> str:
         if state.get("safe_sql") and not state.get("sql_errors"):
             return "execute"
-        return "repair" if state.get("repair_count", 0) < 2 else "fail"
+        return "error"
+
+    def _analyze_sql_error(self, state: AgentState) -> dict[str, Any]:
+        _emit_stage("sql-error-analysis", "正在分析 SQL 失败原因")
+        stage = state.get("sql_error_stage", "execution")
+        if stage not in {"planning", "semantic_compilation", "validation", "execution"}:
+            stage = "execution"
+        analysis = analyze_sql_errors(
+            stage=stage,
+            errors=state.get("sql_errors", []),
+            sql=state.get("logical_sql") or state.get("sql", ""),
+        )
+        with trace_tool(
+            name="analyze-sql-error",
+            input_data={
+                "stage": stage,
+                "repair_count": state.get("repair_count", 0),
+                "sql_fingerprint": analysis.sql_fingerprint,
+            },
+        ) as observation:
+            update_observation(
+                observation,
+                output={
+                    "category": analysis.category,
+                    "repairable": analysis.repairable,
+                    "needs_user_input": analysis.needs_user_input,
+                },
+            )
+        return {"sql_error_analysis": analysis.model_dump(mode="json")}
+
+    @staticmethod
+    def _route_after_error_analysis(state: AgentState) -> str:
+        raw = state.get("sql_error_analysis")
+        if not raw:
+            return "fail"
+        analysis = SqlErrorAnalysis.model_validate(raw)
+        if analysis.needs_user_input:
+            return "clarify"
+        if analysis.repairable and state.get("repair_count", 0) < MAX_SQL_REPAIR_ATTEMPTS:
+            return "repair"
+        return "fail"
+
+    def _clarify_sql_error(self, state: AgentState) -> dict[str, Any]:
+        _emit_stage("clarification", "SQL 失败原因需要你补充业务条件")
+        analysis = SqlErrorAnalysis.model_validate(state["sql_error_analysis"])
+        response = interrupt(
+            {
+                "type": "clarification",
+                "question": analysis.clarification_question,
+                "ambiguities": [analysis.summary],
+            }
+        )
+        answer = str(response.get("answer", "")) if isinstance(response, dict) else str(response)
+        return {
+            "question": f"{state['display_question']}\n用户补充条件：{answer}",
+            "clarification_answer": answer,
+            "query_plan": None,
+            "logical_sql": "",
+            "sql": "",
+            "safe_sql": "",
+            "sql_errors": [],
+            "sql_error_stage": "planning",
+            "sql_error_analysis": None,
+            "sql_fingerprints": [],
+            "repair_count": 0,
+        }
 
     async def _repair_sales_sql(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("sql-repair", "SQL 未通过校验，正在安全修复")
@@ -994,6 +1309,7 @@ class SalesAgent:
                         previous_sql=state.get("logical_sql") or state.get("sql", ""),
                         previous_plan=state.get("query_plan") or {},
                         errors=state.get("sql_errors", []),
+                        error_analysis=state.get("sql_error_analysis"),
                     ),
                 }
             ],
@@ -1010,6 +1326,8 @@ class SalesAgent:
             payload = parse_sql_generation_payload(
                 result.content,
                 allowed_metric_ids=state.get("metric_ids", []),
+                question=state["question"],
+                history=state.get("history", []),
             )
             logical_sql = payload.sql
             plan = payload.plan.model_dump(mode="json")
@@ -1017,13 +1335,26 @@ class SalesAgent:
         except (ValueError, TypeError, json.JSONDecodeError, ValidationError) as exc:
             logical_sql = ""
             plan = state.get("query_plan")
-            errors = [f"修复后的查询计划格式无效：{type(exc).__name__}。"]
+            errors = [
+                "修复后的查询计划格式无效："
+                f"{format_plan_validation_error(exc)}。"
+            ]
+        fingerprints = list(state.get("sql_fingerprints", []))
+        fingerprint = query_fingerprint(logical_sql, plan)
+        if fingerprint and fingerprint in fingerprints:
+            logical_sql = ""
+            errors = ["SQL 修复产生了重复查询，已停止循环。"]
+        elif fingerprint:
+            fingerprints.append(fingerprint)
         return {
             "logical_sql": logical_sql,
             "sql": "",
             "query_plan": plan,
             "safe_sql": "",
             "sql_errors": errors,
+            "sql_error_stage": "planning",
+            "sql_error_analysis": None,
+            "sql_fingerprints": fingerprints,
             "repair_count": state.get("repair_count", 0) + 1,
             **_usage_fields(state, result, role="sql-repair"),
         }
@@ -1038,14 +1369,24 @@ class SalesAgent:
             try:
                 result = await self._database.execute_readonly(safe_sql)
             except Exception as exc:
-                errors = [f"数据库执行失败：{type(exc).__name__}。"]
+                safe_detail = type(exc).__name__
+                if isinstance(exc, DatabaseConnectionError) and re.fullmatch(
+                    r"[A-Za-z][A-Za-z0-9_]{0,100}", str(exc)
+                ):
+                    safe_detail = str(exc)
+                errors = [f"数据库执行失败：{safe_detail}。"]
                 update_observation(
                     observation,
                     level="ERROR",
                     status_message=type(exc).__name__,
                     output={"status": "error", "error_type": type(exc).__name__},
                 )
-                return {"sql_errors": errors, "data_accessed": False}
+                return {
+                    "sql_errors": errors,
+                    "sql_error_stage": "execution",
+                    "sql_error_analysis": None,
+                    "data_accessed": False,
+                }
 
             display_rows, filled_time_buckets = complete_year_months(
                 question=state["question"],
@@ -1074,26 +1415,87 @@ class SalesAgent:
             "truncated": result.truncated,
             "data_accessed": True,
             "sql_errors": [],
+            "sql_error_stage": "execution",
+            "sql_error_analysis": None,
             "filled_time_buckets": filled_time_buckets,
             "warnings": warnings,
         }
 
     def _route_after_execution(self, state: AgentState) -> str:
-        if state.get("data_accessed"):
-            if state.get("intent") == "hybrid":
-                return "answer"
-            plan = None
-            if state.get("query_plan"):
-                plan = QueryPlan.model_validate(state["query_plan"])
-            if can_answer_deterministically(
-                plan,
-                state.get("columns", []),
-                state.get("rows", []),
-                truncated=state.get("truncated", False),
-            ):
-                return "deterministic"
+        return "profile" if state.get("data_accessed") else "error"
+
+    def _profile_sales_result(self, state: AgentState) -> dict[str, Any]:
+        _emit_stage("data-profile", "正在分析结果字段和数据结构")
+        profile = build_data_profile(state.get("columns", []), state.get("rows", []))
+        return {"data_profile": profile.model_dump(mode="json")}
+
+    async def _plan_chart(self, state: AgentState) -> dict[str, Any]:
+        profile = DataProfile.model_validate(state.get("data_profile", {}))
+        query_plan = (
+            QueryPlan.model_validate(state["query_plan"])
+            if state.get("query_plan")
+            else None
+        )
+        fallback = build_chart_spec(
+            state["question"],
+            state.get("columns", []),
+            state.get("rows", []),
+            query_plan=query_plan,
+        )
+        if not should_call_chart_planner(profile):
+            return {"chart": fallback}
+
+        _emit_stage("chart-planning", "正在规划安全图表")
+        try:
+            result = await self._gateway.complete(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": chart_planning_prompt(
+                            question=state["question"],
+                            query_plan=state.get("query_plan") or {},
+                            data_profile=state["data_profile"],
+                        ),
+                    }
+                ],
+                generation_name="plan-sales-chart",
+                generation_role="chart-planner",
+                metadata={
+                    "feature": "genbi-chart-planning",
+                    "row_count": profile.row_count,
+                    "column_count": len(profile.columns),
+                },
+                json_mode=True,
+                config=self._routing.answer,
+            )
+            chart = parse_chart_plan(result.content, profile=profile).model_dump(mode="json")
+        except Exception as exc:
+            warnings = state.get("warnings", []) + [
+                f"图表规划未通过安全 Schema，已使用确定性回退：{type(exc).__name__}。"
+            ]
+            return {"chart": fallback, "warnings": list(dict.fromkeys(warnings))}
+        return {
+            "chart": chart,
+            **_usage_fields(state, result, role="chart-planner"),
+        }
+
+    @staticmethod
+    def _route_after_chart_planning(state: AgentState) -> str:
+        if state.get("intent") == "hybrid":
             return "answer"
-        return "repair" if state.get("repair_count", 0) < 2 else "fail"
+        plan = (
+            QueryPlan.model_validate(state["query_plan"])
+            if state.get("query_plan")
+            else None
+        )
+        if can_answer_deterministically(
+            plan,
+            state.get("columns", []),
+            state.get("rows", []),
+            truncated=state.get("truncated", False),
+        ):
+            return "deterministic"
+        return "answer"
 
     def _format_simple_answer(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("deterministic-answer", "正在生成确定性结果摘要")
@@ -1104,8 +1506,7 @@ class SalesAgent:
             rows=state.get("rows", []),
             currency=state.get("currency"),
         )
-        chart = build_chart_spec(state["question"], state.get("columns", []), state.get("rows", []))
-        return {"answer": answer, "answer_mode": "deterministic", "chart": chart}
+        return {"answer": answer, "answer_mode": "deterministic"}
 
     async def _synthesize_sales_answer(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("answer-synthesis", "正在整理销售分析结论")
@@ -1121,6 +1522,7 @@ class SalesAgent:
                         columns=state.get("columns", []),
                         rows=state.get("rows", []),
                         truncated=state.get("truncated", False),
+                        data_profile=state.get("data_profile"),
                         knowledge_context=state.get("knowledge_context", ""),
                         hybrid=state.get("intent") == "hybrid",
                     ),
@@ -1137,11 +1539,9 @@ class SalesAgent:
             },
             config=self._routing.answer,
         )
-        chart = build_chart_spec(state["question"], state.get("columns", []), state.get("rows", []))
         return {
             "answer": result.content,
             "answer_mode": "llm",
-            "chart": chart,
             **_usage_fields(state, result, role="answer"),
         }
 
@@ -1151,7 +1551,22 @@ class SalesAgent:
         if not state.get("database_ready", True):
             answer = "Odoo 只读数据库当前没有连通。我没有查询或编造业务数据；请先在设置页检查数据库连接。"
         else:
-            answer = "这次查询没有通过只读安全校验或数据库执行失败，因此没有返回业务数据。你可以换一种更明确的销售问题再试。"
+            raw_analysis = state.get("sql_error_analysis")
+            category = (
+                SqlErrorAnalysis.model_validate(raw_analysis).category
+                if raw_analysis
+                else "unknown"
+            )
+            answer = {
+                "unsafe_operation": "这次 SQL 触发了只读安全策略，因此已拒绝执行，也不会尝试自动绕过限制。",
+                "permission": "数据库拒绝了当前查询权限，因此没有执行或返回业务数据。",
+                "timeout": "这次查询超过了只读数据库的时间限制。为避免持续占用资源，系统没有盲目重试。",
+                "connection": "查询过程中数据库连接不可用，因此没有返回或编造业务数据。",
+                "repair_loop": "SQL 修复产生了重复查询，系统已经终止循环，没有执行不可靠的结果。",
+            }.get(
+                category,
+                "这次查询在有限修复次数内仍未通过安全校验或执行，因此没有返回业务数据。你可以换一种更明确的销售问题再试。",
+            )
             warnings = warnings + state.get("sql_errors", [])
         return {
             "answer": answer,

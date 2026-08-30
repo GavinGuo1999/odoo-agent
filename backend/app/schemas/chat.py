@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from app.config import ProviderName
+from app.schemas.analysis import ChartPlan
 from app.schemas.query_plan import QueryPlan
 from app.schemas.wiki import WikiCitationResponse
 
@@ -52,11 +53,8 @@ class ModelExecution(BaseModel):
     model: str
 
 
-class ChartSpec(BaseModel):
-    type: Literal["none", "kpi", "line", "bar", "pie"] = "none"
-    title: str = ""
-    x_field: str | None = None
-    y_fields: list[str] = Field(default_factory=list)
+class ChartSpec(ChartPlan):
+    """Public API name for the validated, non-executable ChartPlan."""
 
 
 class ChatResponse(BaseModel):

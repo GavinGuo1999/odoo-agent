@@ -1,6 +1,6 @@
 # 核心技术组件状态
 
-> 状态日期：2026-08-07
+> 状态日期：2026-08-30
 >
 > 适用应用版本：0.2.0
 >
@@ -11,7 +11,7 @@
 | 组件 | 当前状态 | 主要用途 | 当前落点 |
 | --- | --- | --- | --- |
 | SQLGlot | 已落地 | SQL AST 解析、只读安全、字段/表/限制检查 | `backend/app/database/sql_guard.py` |
-| Pydantic | 已落地 | QueryPlan、API Schema、配置和评测协议 | `backend/app/schemas/`、`backend/app/config.py` |
+| Pydantic | 已落地 | QueryPlan、SqlErrorAnalysis、DataProfile、ChartPlan、API Schema 和评测协议 | `backend/app/schemas/`、`backend/app/config.py` |
 | Instructor | 未接入 | 让 LLM 返回经过 Pydantic 校验的结构化对象，并自动重试修复 | 当前由 JSON Mode + Pydantic + 自定义 repair 代替 |
 | Langfuse | 已落地首版 | Trace、Session、Token、Cost、Score、Dataset | `backend/app/observability/`、`evals/` |
 | dbt Core | 未接入 | 建模、转换、数据测试、文档、血缘、分析宽表 | 当前直接查询 Odoo PostgreSQL |
@@ -41,7 +41,7 @@ SQLGlot 把 SQL 解析成抽象语法树，而不是使用字符串或正则猜�
 3. 只读查询检查；
 4. 表和字段白名单；
 5. 公司过滤和最大行数约束；
-6. 失败后把安全错误交给 SQL repair 节点，最多修复两次。
+6. 失败后先进入确定性 Error Analyzer，再按分类修复、Interrupt 或终止；修复最多两次并检测重复 SQL + QueryPlan 组合指纹。
 
 数据库连接本身还设置了 PostgreSQL `default_transaction_read_only=on`，所以 SQLGlot 是应用层防线，数据库只读账号是最终防线。
 
@@ -60,13 +60,16 @@ SQLGlot 把 SQL 解析成抽象语法树，而不是使用字符串或正则猜�
 
 Pydantic 是项目的数据契约层，当前用于：
 
-- `QueryPlan`：约束 intent、query type、指标、维度、过滤、SQL、图表和歧义状态；
+- `QueryPlan`：约束 query type、指标、维度、过滤、结果形状和歧义状态；
+- `SqlErrorAnalysis`：约束失败阶段、错误类别、可修复性和澄清问题；
+- `DataProfile`：约束结果字段类型、基数和数值范围；
+- `ChartPlan`：约束图表类型、字段引用、series、排序和 TopN；
 - API 请求和响应 Schema；
 - 模型与数据库配置；
-- ECharts 白名单 `ChartSpec`；
+- ECharts API 白名单 `ChartSpec`（继承 ChartPlan）；
 - 黄金问题和评测结果协议。
 
-模型返回 JSON 后，项目自行提取 JSON，再执行 `QueryPlan.model_validate()`。校验失败会进入明确的 repair 流程。
+模型返回 JSON 后，项目自行提取 JSON，再执行对应 Pydantic 协议校验。QueryPlan 校验失败进入 Error Analyzer；ChartPlan 校验失败使用确定性图表回退，不影响真实数据回答。
 
 ### 3.2 Instructor 是什么
 
@@ -80,7 +83,7 @@ Instructor 构建在 Pydantic 之上，把 `response_model` 交给模型调用�
 
 ### 3.3 为什么现在没有接
 
-当前只有一个主要结构化协议 QueryPlan，而且现有 JSON Mode、Pydantic 校验和 SQL repair 已经可测试、可观测。立即增加 Instructor 会与现有 repair 职责重叠，也要确认其与 LiteLLM、DeepSeek/硅基流动 JSON Mode、Langfuse Generation 的组合行为。
+当前已有 QueryPlan 和 ChartPlan 两个模型输出协议，SqlErrorAnalysis 与 DataProfile 为确定性协议。现有 JSON Mode、Pydantic 校验、SQL repair 和图表回退仍可测试、可观测；引入 Instructor 前仍要确认它与 LiteLLM、DeepSeek/硅基流动 JSON Mode、Langfuse Generation 的组合行为。
 
 ### 3.4 什么时候值得接
 
@@ -120,6 +123,8 @@ Langfuse 是 LLM 应用的可观测和评测平台，用于回答：
 - 20 条黄金问题同步为 Dataset；
 - 敏感字段和 Key 脱敏；
 - Trace URL 返回前端。
+
+2026-08-30 的真实评测已用 Langfuse Observation 定位 QueryPlan 契约首错，并在修改后完成 20/20 真实黄金集；这证明 Trace 可用于失败归因，但尚未建立 Dataset Experiment、LLM Judge 和数值结果签名。
 
 LiteLLM 接入后仍由应用的 Langfuse Adapter 统一记录，不启用 LiteLLM Langfuse callback，避免一次模型调用出现两套重复 Generation。
 

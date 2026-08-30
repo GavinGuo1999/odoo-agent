@@ -13,7 +13,9 @@ SalesAgent 使用 LangGraph 作为唯一编排层，目标是：
 - Text2SQL 的每个高风险步骤可观察、可校验、可重试；
 - 模型输出先进入 Pydantic 协议，再进入 SQL AST Guard；
 - 关键歧义可 Interrupt，用户补充后从 Checkpoint 恢复；
-- 简单结果跳过第二次模型；
+- SQL 错误先分类，再决定修复、澄清或安全终止；
+- 数据结果先生成确定性画像，再由受约束的 Chart Planner 规划展示；
+- 单行 KPI 等简单结果跳过回答和图表模型；
 - 每个步骤通过 SSE 和 Langfuse 暴露；
 - 所有业务查询保持只读。
 
@@ -29,9 +31,14 @@ SalesAgent 使用 LangGraph 作为唯一编排层，目标是：
 | `retrieve_sales_context` | Retriever + Tool | 否 | 检查数据库、发现字段、检索指标/表/示例 |
 | `generate_sales_sql` | Generation | 是，sql | 一次返回 QueryPlan + SQL |
 | `clarify_query_plan` | Interrupt | 否 | 暂停并请求关键条件 |
+| `compile_semantic_sql` | Tool | 否 | 使用 Wren MDL dry-plan 或准备原生 SQL |
 | `validate_sales_sql` | Tool | 否 | SQLGlot 安全校验和规范化 |
+| `analyze_sql_error` | Analyzer | 否 | 把失败归类为可修复、需澄清或必须终止 |
+| `clarify_sql_error` | Interrupt | 否 | 错误源于业务歧义时请求用户补充 |
 | `repair_sales_sql` | Generation | 是，sql | 根据错误修复 QueryPlan + SQL |
 | `execute_sales_sql` | Tool | 否 | 在只读事务执行 SQL |
+| `profile_sales_result` | Analyzer | 否 | 生成字段类型、基数和数值范围画像 |
+| `plan_chart` | Generation/确定性回退 | 视结果而定，answer | 生成并校验 ChartPlan，不生成 ECharts 代码 |
 | `format_simple_answer` | 确定性 | 否 | KPI、排名、趋势、空结果快速回答 |
 | `synthesize_sales_answer` | Generation | 是，answer | 复杂结果解释 |
 | `safe_failure_answer` | 确定性 | 否 | 失败时明确不宣称查询成功 |
@@ -74,6 +81,9 @@ Graph 状态按功能可分为以下组。
 | `sql` | 模型生成 SQL |
 | `safe_sql` | Guard 通过并规范化后的 SQL |
 | `sql_errors` | 结构、Guard 或执行错误 |
+| `sql_error_stage` | planning/semantic_compilation/validation/execution |
+| `sql_error_analysis` | Pydantic SqlErrorAnalysis 的路由结论 |
+| `sql_fingerprints` | 各次 SQL + QueryPlan 契约的短指纹，用于检测真正重复的修复循环 |
 | `tables` | SQL 使用的开放物理表 |
 | `repair_count` | 已执行修复次数，最大 2 |
 
@@ -87,7 +97,8 @@ Graph 状态按功能可分为以下组。
 | `query_ms` | 数据库执行耗时 |
 | `truncated` | 是否被行数上限截断 |
 | `data_accessed` | 是否成功执行真实 SQL |
-| `chart` | 白名单 ChartSpec |
+| `data_profile` | 字段类型、非空数、唯一值数和数值范围的确定性画像 |
+| `chart` | Pydantic ChartPlan；仅含字段引用和展示参数，不含可执行代码 |
 | `warnings` | 补零、截断等提示 |
 | `filled_time_buckets` | 自动补齐的时间桶数量 |
 
@@ -133,6 +144,10 @@ hybrid   -> retrieve_wiki_context -> retrieve_sales_context -> Text2SQL -> synth
       "end": null,
       "grain": "none"
     },
+    "result_shape": "scalar",
+    "select_columns": ["sales_amount"],
+    "sort": [],
+    "row_limit": null,
     "assumptions": [],
     "ambiguities": [],
     "requires_clarification": false,
@@ -148,7 +163,7 @@ hybrid   -> retrieve_wiki_context -> retrieve_sales_context -> Text2SQL -> synth
 | --- | --- |
 | `query_type` | `kpi/trend/ranking/detail/comparison` |
 | `metric_ids` | 最多 12 个；解析后过滤为本轮召回的开放指标 |
-| `dimensions` | 最多 12 个 |
+| `dimensions` | 最多 12 个；常用维度归一为 `month/year/customer/product/salesperson` 等稳定 ID |
 | `filters` | 最多 20 个 QueryFilter |
 | `time_range` | label、start、end、grain；end 不能早于 start |
 | `assumptions` | 最多 10 条 |
@@ -162,7 +177,7 @@ QueryFilter：
 {"field":"customer","operator":"contains","value":"CODEX"}
 ```
 
-允许 operator：`eq`、`neq`、`in`、`not_in`、`gte`、`lte`、`contains`。
+允许 operator：`eq`、`neq`、`gt`、`gte`、`lt`、`lte`、`in`、`not_in`、`contains`。
 
 ### 5.2 严格解析
 
@@ -170,6 +185,9 @@ QueryFilter：
 - SQL 最大 20000 字符；
 - JSON 提取后调用 Pydantic `model_validate`；
 - 时间范围执行模型级校验；
+- `time_range.start/end` 只保留 ISO 日期；模型写入动态 SQL 日期表达式时清为 `null`，实际过滤仍由 SQL、filters 和 Guard 校验；
+- 根据用户问题把高置信的排行、趋势、比较类型和常用维度展示名归一为稳定协议；
+- 无历史上下文的“那个客户/该客户”等指代强制进入 Clarification，不允许退化为全体客户聚合；
 - 需澄清但没有问题文本时判为无效；
 - 结构失败不会直接执行任何 SQL。
 
@@ -199,7 +217,14 @@ tables
 
 ### 7.2 修复策略
 
-以下情况进入 `repair_sales_sql`：
+任何失败都先进入 `analyze_sql_error`。当前分类包括：
+
+- QueryPlan/语义编译、语法、结果契约、运行时未知字段/表和类型错误：可以修复；
+- 业务歧义：进入 `clarify_sql_error` 并等待用户；
+- 写操作、越权表/字段/函数、权限、连接和超时：不做盲目修复；
+- SQL 与 QueryPlan 契约同时重复：判定修复循环并终止；SQL 不变但契约已修正时允许重新校验。
+
+只有 `repairable=true` 且修复次数不足时才进入 `repair_sales_sql`：
 
 - QueryPlan/JSON 解析失败导致没有可用 SQL；
 - SQL AST Guard 不通过；
@@ -212,8 +237,9 @@ tables
 - 上一版 QueryPlan；
 - 上一版 SQL；
 - 确定性错误列表。
+- 结构化 SqlErrorAnalysis 和修复提示。
 
-修复结果仍必须返回完整 QueryPlan + SQL，并重新通过同一 Guard。最多两次，不能通过增加重试绕过安全校验。
+修复结果仍必须返回完整 QueryPlan + SQL，并重新经过 Wren 编译和同一 Guard。最多两次；如果 SQL + QueryPlan 的组合指纹已经出现过，会立即停止循环。安全违规不能通过增加重试绕过。
 
 ## 8. 数据库执行
 
@@ -226,6 +252,21 @@ sql_errors 为空
 ```
 
 执行后写入：列、行、耗时、截断、`data_accessed=true`。如果时间序列为当前年度月度数据，系统可补齐截至当前月的缺失月份并以 0 展示，同时增加 warning。
+
+成功结果随后进入 `profile_sales_result`。画像不调用模型，只计算字段类型、非空数、唯一值数以及数值最小/最大值；它同时提供给 Chart Planner 和复杂回答节点。
+
+### 8.1 Chart Planner
+
+多行且具有可绘制字段的结果调用 `plan-sales-chart`。模型只返回 JSON，随后必须通过 `ChartPlan` 和实际结果字段双重校验：
+
+- 类型只允许 none/table/kpi/line/bar/pie/scatter；
+- X、series、排序字段必须真实存在；
+- series 必须是数值字段，line 必须使用时间轴，scatter 两轴必须为数值；
+- pie 超过 12 类必须 TopN 或改用其他展示；
+- series 最多 4 个，TopN 最大 50；
+- 禁止返回 ECharts option、JavaScript formatter 或任何可执行代码。
+
+模型不可用、JSON 无效或字段不合法时，Graph 使用确定性规则回退，数据回答仍继续。浏览器只把 ChartPlan 编译成项目内置的 ECharts option，并在展示层执行排序和 TopN。
 
 ## 9. 确定性快速路径
 
@@ -253,13 +294,13 @@ sql_errors 为空
 - 数字不经过第二次模型改写；
 - 减少输出 Token；
 - 降低延迟；
-- Langfuse `model_roles` 可以验证只有 `sql` 角色执行。
+- 对单行 KPI，Langfuse `model_roles` 可以验证只有 `sql` 角色执行；多行可视化结果会增加 `chart-planner` 角色。
 
 ## 10. Model Routing
 
 ```text
 sql     -> generate-sales-sql / repair-sales-sql
-answer  -> explain-sales-result
+answer  -> plan-sales-chart / explain-sales-result
 general -> answer-general-question
 ```
 
@@ -367,6 +408,8 @@ API 只把 custom progress 和最终 AgentOutcome 发送前端；`values` 用于
 | 整个 Graph | `route-and-answer-odoo-question` Agent |
 | SQL 生成 | `generate-sales-sql` Generation |
 | SQL 修复 | `repair-sales-sql` Generation |
+| SQL 错误分类 | `analyze-sql-error` Tool |
+| 图表规划 | `plan-sales-chart` Generation |
 | 结果解释 | `explain-sales-result` Generation |
 | 普通聊天 | `answer-general-question` Generation |
 | 语义检索 | `retrieve-sales-semantic-context` Retriever |

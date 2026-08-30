@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from sqlglot import exp, parse
@@ -271,6 +272,12 @@ class ReadOnlySqlGuard:
         system_fields = {"company_id"}
         metric_fields = {"state", "display_type"}
         question_fields = self._question_filter_fields(question)
+        has_declared_time_range = bool(
+            plan.time_range.label
+            or plan.time_range.start
+            or plan.time_range.end
+            or plan.time_range.grain != "none"
+        )
         declared_fields: set[str] = set()
         for query_filter in plan.filters:
             field = self._field_name(query_filter.field)
@@ -283,12 +290,7 @@ class ReadOnlySqlGuard:
                 errors.append(f"用户问题没有授权过滤字段 {field}。")
 
         allowed_where_fields = system_fields | metric_fields | declared_fields
-        if (
-            plan.time_range.label
-            or plan.time_range.start
-            or plan.time_range.end
-            or plan.time_range.grain != "none"
-        ):
+        if has_declared_time_range:
             allowed_where_fields.add("date_order")
         for where in statement.find_all(exp.Where):
             for column in where.find_all(exp.Column):
@@ -303,6 +305,7 @@ class ReadOnlySqlGuard:
         fields: set[str] = set()
         keyword_fields = {
             "客户": {"name", "partner_id", "commercial_partner_id", "customer_rank", "is_company"},
+            "customer": {"name", "partner_id", "commercial_partner_id", "customer_rank", "is_company"},
             "伙伴": {"name", "partner_id", "commercial_partner_id"},
             "产品": {"name", "product_id", "default_code", "categ_id"},
             "商品": {"name", "product_id", "default_code", "categ_id"},
@@ -321,8 +324,12 @@ class ReadOnlySqlGuard:
             "上周": {"date_order"},
             "本月": {"date_order"},
             "上月": {"date_order"},
+            "这个月": {"date_order"},
+            "上个月": {"date_order"},
             "今年": {"date_order"},
             "去年": {"date_order"},
+            "每月": {"date_order"},
+            "每个月": {"date_order"},
             "月份": {"date_order"},
             "季度": {"date_order"},
             "年度": {"date_order"},
@@ -330,4 +337,10 @@ class ReadOnlySqlGuard:
         for keyword, related_fields in keyword_fields.items():
             if keyword in normalized:
                 fields.update(related_fields)
+        if re.search(
+            r"(?:19|20|21)\d{2}\s*年|\d{4}-\d{1,2}-\d{1,2}|"
+            r"(?:最近|过去|近)\s*\d+\s*(?:天|周|个月|月|季度|年)",
+            normalized,
+        ):
+            fields.add("date_order")
         return fields

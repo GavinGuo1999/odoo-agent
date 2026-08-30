@@ -11,6 +11,7 @@ _COLUMN_LABELS = {
     "sales_amount_taxed": "含税销售额",
     "order_count": "订单数",
     "average_order_amount": "平均订单额",
+    "average_order_value": "平均订单额",
     "sales_quantity": "销售数量",
     "delivered_quantity": "交付数量",
     "invoiced_quantity": "开票数量",
@@ -21,7 +22,12 @@ _COLUMN_LABELS = {
     "day": "日期",
     "year": "年份",
 }
-_CURRENCY_FIELDS = {"sales_amount", "sales_amount_taxed", "average_order_amount"}
+_CURRENCY_FIELDS = {
+    "sales_amount",
+    "sales_amount_taxed",
+    "average_order_amount",
+    "average_order_value",
+}
 
 
 def _numeric_columns(columns: list[str], rows: list[dict[str, Any]]) -> list[str]:

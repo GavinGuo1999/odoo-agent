@@ -52,6 +52,7 @@ def sql_generation_prompt(
     history: list[dict[str, str]],
     semantic_context: str,
 ) -> str:
+    current_date = datetime.now().astimezone().date().isoformat()
     return f"""<role>
 你是只读 PostgreSQL 18 销售分析 SQL 专家。
 </role>
@@ -63,7 +64,7 @@ def sql_generation_prompt(
       "query_type": "kpi|trend|ranking|detail|comparison",
       "metric_ids": ["semantic_context 中的指标 ID"],
       "dimensions": ["用于展示或分组的字段语义"],
-      "filters": [{{"field":"字段名","operator":"eq|neq|in|not_in|gte|lte|contains","value":"值","source":"user|metric_rule|system_required"}}],
+      "filters": [{{"field":"字段名","operator":"eq|neq|gt|gte|lt|lte|in|not_in|contains","value":"值","source":"user|metric_rule|system_required"}}],
       "time_range": {{"label":"用户时间描述或 null","start":"YYYY-MM-DD 或 null","end":"YYYY-MM-DD 或 null","grain":"none|day|week|month|quarter|year"}},
       "result_shape": "scalar|time_series|ranking|table",
       "select_columns": ["SQL 最终输出列的精确别名，顺序必须与 SELECT 一致"],
@@ -84,14 +85,18 @@ def sql_generation_prompt(
 - filters 必须完整列出 SQL WHERE 中的业务过滤：公司隔离用 system_required，指标状态/展示行规则用 metric_rule，用户明确提出的条件用 user；禁止把模型自行猜测的条件伪装成 user。
 - select_columns 必须逐项等于最终 SELECT 列别名；排名的 row_limit 必须等于 SQL LIMIT，非排名可为 null。
 - result_shape：单值 KPI 用 scalar，时间趋势用 time_series，Top N 用 ranking，其他用 table。
+- dimensions 使用稳定语义 ID：month、quarter、year、customer、product、salesperson；不要写“月份、客户名称、产品”等展示名。没有分组（例如筛选某个客户后求总额）时必须为空数组。
+- query_type 按用户分析目标选择：“最高/最低/Top N/排名”才是 ranking；“分别/差额/相比/比较”是 comparison；“趋势/每月/按月”是 trend。缺少筛选值而暂停时仍保留原分析类型，例如“那个客户的销售额”仍是 kpi。
 - semantic_provider=wren 时，SQL 必须针对 wren_mdl_schema 中的 MDL 模型名编写；不要自行展开成物理表 SQL，后续节点会 dry-plan 编译。
 - 时间分组使用 semantic_context 的 timezone 和 date_field。
+- 当前日期是 {current_date}。time_range.start/end 只能是据此计算出的 YYYY-MM-DD 或 null；禁止在这两个元数据字段中写 CURRENT_DATE、date_trunc 或 interval 等 SQL 表达式。
 - 时间趋势字段统一使用 day、week、month、quarter 或 year 作为别名；“每月/月度”问题必须返回 month 列并按它升序排列。
 - JSONB 多语言名称优先使用 ->>'zh_CN'，并回退到 ->>'en_US'。
 - 不要写解释，不要猜不存在的列。
 - 时间范围、客户、产品或比较基准确实缺失且无法按默认口径推断时，设置 requires_clarification=true，写一个简短具体的问题，并让 sql 为空字符串。
 - “本月、上月、今年、去年、最近 N 个月”和普通 Top N 都不是歧义，直接按当前日期计算。
 - 不要为了可选展示细节中断查询；只有会实质改变指标结果时才请求澄清。
+- “那个客户/该客户/这个客户”等指代在对话历史中没有明确对象时，必须 requires_clarification=true，不能退化为查询所有客户。
 </hard_constraints>
 
 <semantic_context>
@@ -114,16 +119,72 @@ def sql_repair_prompt(
     previous_sql: str,
     previous_plan: dict[str, object],
     errors: list[str],
+    error_analysis: dict[str, object] | None = None,
 ) -> str:
+    current_date = datetime.now().astimezone().date().isoformat()
     return f"""你正在修复一条只读 PostgreSQL 18 销售查询。
-只返回 JSON：{{"plan":<保持相同语义的完整 QueryPlan>,"sql":"修复后的单条 SELECT"}}，不要 Markdown。
+只返回下面结构的完整 JSON，不要 Markdown，也不要改用其他 plan 结构：
+{{
+  "plan": {{
+    "query_type": "kpi|trend|ranking|detail|comparison",
+    "metric_ids": ["semantic_context 中的指标 ID"],
+    "dimensions": ["用于展示或分组的字段语义"],
+    "filters": [{{"field":"字段名","operator":"eq|neq|gt|gte|lt|lte|in|not_in|contains","value":"值","source":"user|metric_rule|system_required"}}],
+    "time_range": {{"label":"用户时间描述或 null","start":"YYYY-MM-DD 或 null","end":"YYYY-MM-DD 或 null","grain":"none|day|week|month|quarter|year"}},
+    "result_shape": "scalar|time_series|ranking|table",
+    "select_columns": ["最终 SELECT 输出列的精确别名"],
+    "sort": [{{"field":"输出列别名","direction":"asc|desc"}}],
+    "row_limit": null,
+    "assumptions": [],
+    "ambiguities": [],
+    "requires_clarification": false,
+    "clarification_question": null
+  }},
+  "sql": "修复后的单条 SELECT"
+}}
 保持原问题和指标口径不变，只修复下面列出的错误。仍须满足 company_id、字段白名单、禁止 SELECT * 和只读要求。
+当前日期是 {current_date}；time_range.start/end 只能是 YYYY-MM-DD 或 null，不能写 SQL 表达式。
+filters 必须完整声明 SQL WHERE 条件及 source；select_columns、sort、row_limit 必须与最终 SQL 一致。Top N 的 result_shape 必须为 ranking 且 row_limit 必须等于 LIMIT。
+dimensions 使用 month、quarter、year、customer、product、salesperson 等稳定语义 ID，不使用中文展示名；query_type 必须按原问题的 KPI、趋势、排行、明细或比较目标保持不变。
 
 <question>{question}</question>
 <errors>{json.dumps(errors, ensure_ascii=False)}</errors>
+<error_analysis>{json.dumps(error_analysis or {}, ensure_ascii=False)}</error_analysis>
 <previous_plan>{json.dumps(previous_plan, ensure_ascii=False, default=str)}</previous_plan>
 <previous_sql>{previous_sql}</previous_sql>
 <semantic_context>{semantic_context}</semantic_context>"""
+
+
+def chart_planning_prompt(
+    *,
+    question: str,
+    query_plan: dict[str, object],
+    data_profile: dict[str, object],
+) -> str:
+    return f"""你是安全的 BI 图表规划器。只决定如何展示已经查询出的结果，不重新计算数据。
+只返回一个 JSON 对象，不要 Markdown，格式必须是：
+{{
+  "type": "none|table|kpi|line|bar|pie|scatter",
+  "title": "简短中文标题",
+  "x_field": "结果中的字段名或 null",
+  "series": [{{"field": "结果中的数值字段名", "label": "可选中文名称或 null"}}],
+  "sort_by": "结果中的字段名或 null",
+  "sort_order": "asc|desc|null",
+  "top_n": 10,
+  "reason": "选择理由"
+}}
+
+硬约束：
+- 只能引用 data_profile 中存在的字段，禁止创造字段、数字、聚合或 ECharts/JavaScript 代码。
+- 单行聚合选 kpi；时间序列优先 line；类别比较优先 bar。
+- pie 只用于单一数值序列的部分—整体关系，类别最多 12 个，否则使用 bar 或 table。
+- scatter 的 X/Y 都必须是数值字段。
+- 数据不适合图表时明确返回 table；没有数据时返回 none。
+- series 最多 4 个；TopN 最大 50。没有 TopN 时 top_n 返回 null。
+
+<question>{question}</question>
+<query_plan>{json.dumps(query_plan, ensure_ascii=False, default=str)}</query_plan>
+<data_profile>{json.dumps(data_profile, ensure_ascii=False, default=str)}</data_profile>"""
 
 
 def answer_synthesis_prompt(
@@ -135,6 +196,7 @@ def answer_synthesis_prompt(
     columns: list[str],
     rows: list[dict[str, object]],
     truncated: bool,
+    data_profile: dict[str, object] | None = None,
     knowledge_context: str = "",
     hybrid: bool = False,
 ) -> str:
@@ -146,6 +208,7 @@ def answer_synthesis_prompt(
         "columns": columns,
         "rows": rows[:100],
         "truncated": truncated,
+        "data_profile": data_profile or {},
     }
     hybrid_rules = ""
     wiki_block = ""

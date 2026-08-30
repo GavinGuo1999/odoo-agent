@@ -98,6 +98,93 @@ class SqlGuardTests(unittest.TestCase):
         self.assertFalse(unsafe.safe)
         self.assertTrue(any("未声明" in error for error in unsafe.errors))
 
+    def test_declared_time_range_authorizes_date_filter(self) -> None:
+        plan = QueryPlan.model_validate(
+            {
+                "query_type": "trend",
+                "metric_ids": ["sales_amount"],
+                "dimensions": ["month"],
+                "filters": [
+                    {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
+                    {"field": "state", "operator": "in", "value": ["sale", "done"], "source": "metric_rule"},
+                    {"field": "date_order", "operator": "gte", "value": "2099-01-01", "source": "user"},
+                    {"field": "date_order", "operator": "lt", "value": "2100-01-01", "source": "user"},
+                ],
+                "time_range": {"label": "2099 年", "start": "2099-01-01", "end": "2099-12-31", "grain": "month"},
+                "result_shape": "time_series",
+                "select_columns": ["month", "sales_amount"],
+                "sort": [{"field": "month", "direction": "asc"}],
+                "row_limit": None,
+            }
+        )
+        result = self.guard.validate(
+            "SELECT date_trunc('month', so.date_order)::date AS month, "
+            "SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
+            "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+            "AND so.date_order >= '2099-01-01' AND so.date_order < '2100-01-01' "
+            "GROUP BY 1 ORDER BY 1",
+            plan=plan,
+            question="2099 年每个月的销售额是多少？",
+        )
+
+        self.assertTrue(result.safe, result.errors)
+
+    def test_english_customer_term_authorizes_name_filter(self) -> None:
+        plan = QueryPlan.model_validate(
+            {
+                "query_type": "kpi",
+                "metric_ids": ["sales_amount"],
+                "dimensions": [],
+                "filters": [
+                    {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
+                    {"field": "state", "operator": "in", "value": ["sale", "done"], "source": "metric_rule"},
+                    {"field": "name", "operator": "eq", "value": "CODEX Website Customer 20260627", "source": "user"},
+                ],
+                "result_shape": "scalar",
+                "select_columns": ["sales_amount"],
+                "sort": [],
+                "row_limit": None,
+            }
+        )
+        result = self.guard.validate(
+            "SELECT SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
+            "JOIN res_partner rp ON rp.id = so.partner_id "
+            "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+            "AND rp.name = 'CODEX Website Customer 20260627'",
+            plan=plan,
+            question="今年 CODEX Website Customer 20260627 的销售额是多少？",
+        )
+
+        self.assertTrue(result.safe, result.errors)
+
+    def test_model_time_metadata_does_not_authorize_unasked_date_filter(self) -> None:
+        plan = QueryPlan.model_validate(
+            {
+                "query_type": "kpi",
+                "metric_ids": ["sales_amount"],
+                "filters": [
+                    {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
+                    {"field": "state", "operator": "in", "value": ["sale", "done"], "source": "metric_rule"},
+                    {"field": "date_order", "operator": "gte", "value": "2026-01-01", "source": "user"},
+                ],
+                "time_range": {"label": "今年", "start": "2026-01-01", "end": "2026-12-31", "grain": "year"},
+                "result_shape": "scalar",
+                "select_columns": ["sales_amount"],
+                "sort": [],
+                "row_limit": None,
+            }
+        )
+        result = self.guard.validate(
+            "SELECT SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
+            "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+            "AND so.date_order >= '2026-01-01'",
+            plan=plan,
+            question="销售额是多少？",
+        )
+
+        self.assertFalse(result.safe)
+        self.assertTrue(any("没有授权过滤字段 date_order" in item for item in result.errors))
+
     def test_wren_cte_can_wrap_a_same_named_physical_table(self) -> None:
         result = self.guard.validate(
             'WITH sale_order AS ('

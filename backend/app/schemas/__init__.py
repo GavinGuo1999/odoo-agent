@@ -1,5 +1,12 @@
 """API schemas."""
 
+from .analysis import (
+    ChartPlan,
+    ChartSeriesPlan,
+    DataColumnProfile,
+    DataProfile,
+    SqlErrorAnalysis,
+)
 from .chat import (
     ChartSpec,
     ChatConversationDeleteResponse,
@@ -34,6 +41,11 @@ __all__ = [
     "ChatFeedbackResponse",
     "ChatHistoryMessage",
     "ChartSpec",
+    "ChartPlan",
+    "ChartSeriesPlan",
+    "DataColumnProfile",
+    "DataProfile",
+    "SqlErrorAnalysis",
     "QueryFilter",
     "QueryPlan",
     "QueryTimeRange",

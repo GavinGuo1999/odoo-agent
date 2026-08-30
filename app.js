@@ -1267,9 +1267,32 @@
     return String(value);
   }
 
+  function plannedChartRows(spec, rows) {
+    const planned = [...rows];
+    if (spec.sort_by) {
+      const direction = spec.sort_order === "desc" ? -1 : 1;
+      planned.sort((left, right) => {
+        const leftValue = left[spec.sort_by];
+        const rightValue = right[spec.sort_by];
+        if (leftValue === rightValue) return 0;
+        if (leftValue === null || leftValue === undefined) return 1;
+        if (rightValue === null || rightValue === undefined) return -1;
+        if (typeof leftValue === "number" && typeof rightValue === "number") {
+          return (leftValue - rightValue) * direction;
+        }
+        return String(leftValue).localeCompare(String(rightValue), "zh-CN") * direction;
+      });
+    }
+    return spec.top_n ? planned.slice(0, spec.top_n) : planned;
+  }
+
   function chartOption(spec, rows, metadata) {
     const xField = spec.x_field;
-    const yFields = spec.y_fields || [];
+    const seriesPlans = spec.series?.length
+      ? spec.series
+      : (spec.y_fields || []).map((field) => ({ field, label: null }));
+    const yFields = seriesPlans.map((series) => series.field);
+    const seriesLabel = (field) => seriesPlans.find((series) => series.field === field)?.label || fieldLabel(field, metadata);
     const palette = ["#714b67", "#017e84", "#e28b46", "#6c63a8"];
     if (spec.type === "pie") {
       const yField = yFields[0];
@@ -1280,13 +1303,29 @@
         },
         legend: { bottom: 0 },
         series: [{
-          name: fieldLabel(yField, metadata),
+          name: seriesLabel(yField),
           type: "pie",
           radius: ["42%", "70%"],
           data: rows.map((row) => ({ name: displayValue(row[xField], xField, metadata), value: row[yField] })),
           itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 }
         }],
         color: palette
+      };
+    }
+    if (spec.type === "scatter") {
+      return {
+        tooltip: { trigger: "item" },
+        legend: { bottom: 0 },
+        grid: { left: 18, right: 20, top: 24, bottom: 48, containLabel: true },
+        xAxis: { type: "value", name: fieldLabel(xField, metadata), axisLabel: { color: "#6f6672" } },
+        yAxis: { type: "value", axisLabel: { color: "#6f6672" }, splitLine: { lineStyle: { color: "#eee9ed" } } },
+        series: yFields.map((field, index) => ({
+          name: seriesLabel(field),
+          type: "scatter",
+          data: rows.map((row) => [row[xField], row[field]]),
+          symbolSize: 9,
+          itemStyle: { color: palette[index % palette.length] }
+        }))
       };
     }
     return {
@@ -1299,7 +1338,7 @@
       xAxis: { type: "category", data: rows.map((row) => displayValue(row[xField], xField, metadata)), axisLabel: { color: "#6f6672" } },
       yAxis: { type: "value", axisLabel: { color: "#6f6672" }, splitLine: { lineStyle: { color: "#eee9ed" } } },
       series: yFields.map((field, index) => ({
-        name: fieldLabel(field, metadata),
+        name: seriesLabel(field),
         type: spec.type,
         data: rows.map((row) => row[field]),
         smooth: spec.type === "line",
@@ -1362,8 +1401,9 @@
         kpis.appendChild(item);
       });
       card.appendChild(kpis);
-    } else if (metadata.chart && metadata.chart.type !== "none" && rows.length) {
-      const section = resultSection(metadata.chart.title || "图表", `${rows.length} 个数据点`, true);
+    } else if (["line", "bar", "pie", "scatter"].includes(metadata.chart?.type) && rows.length) {
+      const plottedRows = plannedChartRows(metadata.chart, rows);
+      const section = resultSection(metadata.chart.title || "图表", `${plottedRows.length} 个数据点`, true);
       const chart = document.createElement("div");
       chart.className = "agent-echart";
       section.appendChild(chart);
@@ -1375,7 +1415,7 @@
           return;
         }
         const instance = window.echarts.init(chart, null, { renderer: "svg" });
-        instance.setOption({ animation: false, ...chartOption(metadata.chart, rows, metadata) });
+        instance.setOption({ animation: false, ...chartOption(metadata.chart, plottedRows, metadata) });
         const observer = new ResizeObserver(() => instance.resize());
         observer.observe(chart);
         section.addEventListener("toggle", () => {
