@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/task.schema.json
+id: development-negative
+name: Unrelated presentation work should not trigger
+description: A presentation request is outside the workflow development skill.
+inputs:
+  prompt: Create a PowerPoint presentation from this quarterly marketing report.
+expected:
+  should_trigger: false
+graders:
+  - type: trigger
+    name: development_negative_trigger
+    config:
+      skill_path: .agents/skills/odoo-agent-development/SKILL.md
+      mode: negative
+      threshold: 0.55

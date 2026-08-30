@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/eval.schema.json
+name: odoo-readonly-testing-trigger-eval
+description: Offline trigger checks for the repository-scoped read-only testing skill.
+skill: odoo-readonly-testing
+schemaVersion: "1.0"
+version: "1.0"
+config:
+  trials_per_task: 1
+  timeout_seconds: 60
+  executor: mock
+  model: mock
+  parallel: false
+  inject_skill_body: true
+  skill_directories:
+    - .agents/skills/odoo-readonly-testing
+  required_skills:
+    - odoo-readonly-testing
+metrics:
+  - name: trigger_accuracy
+    weight: 1.0
+    threshold: 1.0
+    description: Positive and negative prompts must route to the intended skill boundary.
+tasks:
+  - tasks/*.yaml

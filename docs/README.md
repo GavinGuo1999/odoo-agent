@@ -4,7 +4,7 @@
 >
 > 适用应用版本：0.2.0
 >
-> 最后更新：2026-08-28
+> 最后更新：2026-08-30
 >
 > 文档状态：正式
 
@@ -20,6 +20,7 @@
 | 数据负责人 | [数据语义与安全](06-data-and-security.md) → [评测与质量](09-evaluation-and-quality.md) |
 | 运维 / 开发人员 | [开发与运维](10-development-and-operations.md) → [Langfuse 可观测性](08-langfuse-observability.md) |
 | 测试 / 发布负责人 | [TDD 测试与验收红绿灯](16-tdd-test-and-acceptance-matrix.md) → [评测与质量](09-evaluation-and-quality.md) |
+| Agent / Skill 开发者 | [项目级 Skills 与 Waza 评测](17-project-skills-and-waza.md) → [开发与运维](10-development-and-operations.md) |
 
 ## 2. 文档目录
 
@@ -87,6 +88,10 @@
 
     Red-Green-Refactor 流程、Codex 自动测试、协作测试、用户验收和发布门禁。
 
+17. [项目级 Skills 与 Waza 评测](17-project-skills-and-waza.md)
+
+    仓库级 Codex Skills、Waza 兼容配置、离线 Trigger 样例和各评测层职责边界。
+
 ## 3. 当前能力快照
 
 | 能力 | 状态 |
@@ -103,6 +108,7 @@
 | 实时进度 | 已支持，SSE 阶段事件 |
 | 可观测性 | 已支持，Langfuse Trace、Session、Token、Cost、Score、Dataset |
 | 自动评测 | 已支持，20 条首批黄金问题和静态/真实回归运行器 |
+| 项目级 Skills | 已支持，三个仓库级 Skill 和 Waza Mock 触发评测样例 |
 | 用户权限 | 当前不支持；应用按单用户本地工具设计 |
 | 写回 Odoo | 当前不支持；第一阶段严格只读 |
 

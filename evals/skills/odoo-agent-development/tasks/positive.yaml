@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/task.schema.json
+id: development-positive
+name: LangGraph workflow change should trigger
+description: A workflow implementation request belongs to odoo-agent-development.
+inputs:
+  prompt: Implement odoo-agent LangGraph QueryPlan Text2SQL repair and Chart Planner changes with tests.
+expected:
+  should_trigger: true
+graders:
+  - type: trigger
+    name: development_positive_trigger
+    config:
+      skill_path: .agents/skills/odoo-agent-development/SKILL.md
+      mode: positive
+      threshold: 0.55

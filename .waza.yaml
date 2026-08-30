@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/config.schema.json
+
+paths:
+  skills: .agents/skills/
+  evals: evals/skills/
+  results: .waza-results/
+
+# Offline-safe defaults. A paid evaluation must explicitly override the engine
+# and model after the user authorizes the external provider and quota.
+defaults:
+  engine: mock
+  model: mock
+  timeout: 120
+  parallel: false
+  workers: 0
+  verbose: false
+  sessionLog: false
+
+cache:
+  enabled: false
+  dir: .waza-cache/
+
+tokens:
+  warningThreshold: 1200
+  fallbackLimit: 3000
+  limits:
+    defaults:
+      "SKILL.md": 3000

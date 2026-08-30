@@ -33,7 +33,7 @@
 
 | 仓库 | 基线提交 | 工作树 | 当前证据 |
 | --- | --- | --- | --- |
-| `odoo-agent` | `6a3a021` + 本轮待提交增量 | 当前有待提交的 LangGraph/GenBI 工作流增量 | 后端 90/90；前端语法通过；静态黄金集 20/20；真实黄金集 20/20 |
+| `odoo-agent` | `9cc3423` 后的本轮 `HEAD` | 本轮交付包含项目级 Skills/Waza 评测资产 | 后端 94/94；前端语法通过；静态黄金集 20/20；真实黄金集 20/20 |
 | `custom_addons` | `7f8dda1` | 提交后干净 | SiliconFlow 模块 11 个 Python、2 个 XML 文件静态解析通过 |
 | `text2sql-benchmark-lab` | `3d7f01c` | 干净 | 7 项基准核心测试通过 |
 | `learn_odoo` | `a014c51` | 提交后干净 | Markdown 严格 UTF-8、Obsidian JSON 和 Canvas JSON 解析通过 |
@@ -46,7 +46,7 @@
 
 | ID | 范围 | 检查 | 当前 | 通过标准 |
 | --- | --- | --- | --- | --- |
-| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 90/90 | 全部通过，无测试进程残留 |
+| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 94/94 | 全部通过，无测试进程残留 |
 | AUTO-02 | Agent 前端 | `node --check app.js` | 🟢 | 退出码为 0 |
 | AUTO-03 | 静态黄金集 | 20 条意图路由静态评测 | 🟢 20/20 | 通过率 100% |
 | AUTO-04 | SQL 安全 | 写操作、未知表/字段、公司过滤、输出契约、LIMIT | 🟢 | 所有安全断言通过 |
@@ -59,6 +59,7 @@
 | AUTO-11 | Git 交付 | `git diff --check`、状态和提交内容复核 | 🟢 | 无空白错误、无意外文件、无凭据 |
 | AUTO-12 | SQL Error Analyzer | 分类、危险 SQL 拒绝、可修复执行错误、重复指纹终止 | 🟢 | 危险项不修复；可修复项最多两次；无循环执行 |
 | AUTO-13 | Chart Planner | DataProfile、Pydantic ChartPlan、字段/类型白名单和规则回退 | 🟢 | 非法字段被拒绝；模型失败不影响数据回答 |
+| AUTO-14 | 项目级 Skills/Waza 资产 | 3 个 Skill、UI 元数据、文档链接、Mock 默认值、正负触发样例与官方 Schema | 🟢 3 Skills / 6 Tasks | Skill Creator 3/3；Waza Schema 1 配置、3 Eval、6 Task 全部通过 |
 
 标准命令：
 
@@ -71,6 +72,7 @@ Set-Location D:\odoo19e\odoo-agent\backend
 Set-Location D:\odoo19e\odoo-agent
 node --check .\app.js
 & '.\.venv\Scripts\python.exe' '.\evals\run_sales_eval.py'
+& '.\.venv\Scripts\python.exe' -m unittest backend.tests.test_project_skills -v
 
 # Text2SQL 实验室
 Set-Location D:\odoo19e\text2sql-benchmark-lab
@@ -116,7 +118,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 最终自动证据：
 
-- 后端 `unittest`：90/90；
+- 后端 `unittest`：94/94；
 - 静态黄金集：20/20；
 - 前端 `node --check app.js`：通过；
 - 真实黄金集：20/20；
@@ -178,7 +180,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 | 改动类型 | 合并前必须运行 |
 | --- | --- |
-| Python 后端 | 受影响测试 + 当前 90 项后端全量测试 |
+| Python 后端 | 受影响测试 + 当前 94 项后端全量测试 |
 | SQL Guard / QueryPlan / Prompt | 后端全量 + 静态黄金集；获授权时加真实黄金集 |
 | 前端 JavaScript/HTML/CSS | `node --check` + 相关 API 测试；获授权时加 localhost UI smoke |
 | Wren MDL/语义层 | provider/审计测试 + Wren compile/dry-plan；获授权时加真实基准 |
@@ -202,7 +204,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 ## 9. 本轮结论
 
-当前自动化层是 🟢：Agent 90/90、前端语法、静态黄金集 20/20、基准核心、模块静态解析和知识库格式检查均通过。
+当前自动化层是 🟢：Agent 94/94、前端语法、静态黄金集 20/20、基准核心、模块静态解析、知识库格式和项目级 Skill/Waza 资产检查均通过。
 
 当前运行层的本轮范围是 🟢：Odoo/Agent、只读数据库、DeepSeek、Langfuse、20 条真实黄金集、Chart Planner、Interrupt/Resume 和 localhost UI smoke 已执行。仍为 🟡 的是 SiliconFlow HTTP 402、最新三轮性能基准、服务重启后的 pending interrupt 恢复、SiliconFlow 模块安装及 Odoo TransactionCase。
 

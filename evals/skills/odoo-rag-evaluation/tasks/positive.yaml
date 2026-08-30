@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/task.schema.json
+id: rag-evaluation-positive
+name: Wiki vector retrieval experiment should trigger
+description: A measured Wiki RAG request belongs to odoo-rag-evaluation.
+inputs:
+  prompt: Evaluate learn_odoo Wiki retrieval with LlamaIndex, FAISS, SiliconFlow embeddings, a reranker, RAGAS, and Langfuse.
+expected:
+  should_trigger: true
+graders:
+  - type: trigger
+    name: rag_evaluation_positive_trigger
+    config:
+      skill_path: .agents/skills/odoo-rag-evaluation/SKILL.md
+      mode: positive
+      threshold: 0.55

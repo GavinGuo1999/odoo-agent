@@ -16,6 +16,7 @@
 - ECharts 图表、固定销售看板和 CSV 导出；
 - Langfuse Trace、Session、Token、Cost、Score 和 Dataset；
 - 20 条首批黄金问题、静态/真实自动回归。
+- 三个仓库级 Codex Skills，以及 Waza 兼容的离线触发评测样例。
 
 ## 快速启动
 
@@ -60,6 +61,7 @@ Set-Location D:\odoo19e\odoo-agent
 - [Odoo 语义同步与一致性审计](docs/14-odoo-semantic-sync-and-audit.md)
 - [learn_odoo Wiki 与 ChatBI 知识集成](docs/15-wiki-bi-knowledge-integration.md)
 - [TDD 测试与验收红绿灯](docs/16-tdd-test-and-acceptance-matrix.md)
+- [项目级 Skills 与 Waza 评测](docs/17-project-skills-and-waza.md)
 
 ## 验证
 

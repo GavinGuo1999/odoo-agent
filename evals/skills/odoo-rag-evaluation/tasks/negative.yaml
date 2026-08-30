@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/task.schema.json
+id: rag-evaluation-negative
+name: SQL Guard implementation should not trigger
+description: SQL safety implementation belongs to workflow development, not Wiki RAG evaluation.
+inputs:
+  prompt: Fix SQLGlot Guard so DELETE statements are rejected before database execution.
+expected:
+  should_trigger: false
+graders:
+  - type: trigger
+    name: rag_evaluation_negative_trigger
+    config:
+      skill_path: .agents/skills/odoo-rag-evaluation/SKILL.md
+      mode: negative
+      threshold: 0.55

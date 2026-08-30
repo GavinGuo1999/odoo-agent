@@ -1,0 +1,4 @@
+interface:
+  display_name: "Odoo Agent 只读测试"
+  short_description: "执行自动测试、只读真实评测并维护 TDD 红绿灯验收证据"
+  default_prompt: "Use $odoo-readonly-testing to verify this odoo-agent change and report red/yellow/green evidence."

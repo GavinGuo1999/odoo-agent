@@ -1,0 +1,4 @@
+interface:
+  display_name: "Odoo Agent 工作流开发"
+  short_description: "按只读与 TDD 约束修改 LangGraph 分析工作流和契约"
+  default_prompt: "Use $odoo-agent-development to implement this odoo-agent workflow change with tests."

@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/task.schema.json
+id: readonly-testing-positive
+name: Read-only release verification should trigger
+description: A local test and release-evidence request belongs to odoo-readonly-testing.
+inputs:
+  prompt: Run odoo-agent unit and golden-set tests, then authorized read-only local HTTP and browser UAT checks.
+expected:
+  should_trigger: true
+graders:
+  - type: trigger
+    name: readonly_testing_positive_trigger
+    config:
+      skill_path: .agents/skills/odoo-readonly-testing/SKILL.md
+      mode: positive
+      threshold: 0.55

@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/task.schema.json
+id: readonly-testing-negative
+name: Frontend styling work should not trigger
+description: A visual styling request is outside the testing skill.
+inputs:
+  prompt: Change the landing page color palette and adjust its responsive spacing.
+expected:
+  should_trigger: false
+graders:
+  - type: trigger
+    name: readonly_testing_negative_trigger
+    config:
+      skill_path: .agents/skills/odoo-readonly-testing/SKILL.md
+      mode: negative
+      threshold: 0.55

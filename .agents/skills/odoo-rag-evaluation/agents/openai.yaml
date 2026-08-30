@@ -1,0 +1,4 @@
+interface:
+  display_name: "Odoo Wiki RAG 评测"
+  short_description: "用 FAISS、LlamaIndex 与 RAGAS 评测 Odoo Wiki 检索质量"
+  default_prompt: "Use $odoo-rag-evaluation to design a measured Wiki RAG experiment for odoo-agent."
