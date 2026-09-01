@@ -182,6 +182,19 @@ company_id = <配置的公司 ID>
 - 数据库客户端额外只读取 `max_rows + 1` 行判断截断；
 - `truncated=true` 时前端和回答必须提示结果被截断。
 
+### 5.7 SQL 复杂度预算
+
+Guard 在执行前统计 SQLGlot AST，默认限制：
+
+- JOIN 最多 6 个；
+- CTE 最多 6 个；
+- 子查询总数最多 12 个；
+- 子查询嵌套最多 3 层；
+- 拒绝 `CROSS JOIN`、逗号连接和任何缺少 `ON/USING` 的 JOIN；
+- `detail` 查询必须在 QueryPlan 声明具体开始/结束日期，物理 SQL 也必须同时包含 `date_order` 上下界。
+
+阈值可通过 `SqlComplexityLimits` 注入测试或特定部署。子查询总数 12 是按正常 4 表 Wren `dry-plan` 的 8 个包装子查询校准，仍会拦截更深或更大的查询。Wren 重复使用的 `__source` 别名按 `SELECT` scope 解析，不能用跨 CTE 的别名覆盖绕过字段或公司校验。
+
 ## 6. 数据库层防护
 
 SQL Guard 不是唯一防线。每个 Odoo 连接同时设置：
@@ -261,7 +274,7 @@ Trace 可能包含：
 | Prompt Injection 要求写库 | QueryPlan + SQL AST + DB 只读 | 模型仍可能生成大量失败 SQL |
 | 访问敏感表字段 | 表字段白名单 | 白名单内业务数据仍可能敏感 |
 | 跨公司数据 | 事实表固定 company_id | 单公司设计，不支持用户级公司权限 |
-| 大查询拖慢数据库 | timeout、LIMIT、lock timeout | 尚无 JOIN/CTE 复杂度预算和 EXPLAIN |
+| 大查询拖慢数据库 | timeout、LIMIT、lock timeout、JOIN/CTE/子查询预算、笛卡尔积拒绝、明细时间边界 | 尚无基于 `EXPLAIN` 成本的动态预算 |
 | Key 泄露 | Windows 用户环境、接口不回显、Trace 脱敏 | 本机用户仍可读取自己的环境变量 |
 | 未授权访问 Web | 仅监听 127.0.0.1 | 无登录，不能直接对公网开放 |
 | Cloud 观测泄露数据 | 脱敏 Secret | 业务问题和结果仍会上传 |

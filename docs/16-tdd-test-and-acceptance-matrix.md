@@ -2,7 +2,7 @@
 
 > 基线日期：2026-08-28
 >
-> 最近增量验证：2026-08-30
+> 最近增量验证：2026-09-01
 >
 > 适用应用版本：0.2.0
 >
@@ -33,12 +33,12 @@
 
 | 仓库 | 基线提交 | 工作树 | 当前证据 |
 | --- | --- | --- | --- |
-| `odoo-agent` | `9cc3423` 后的本轮 `HEAD` | 本轮交付包含项目级 Skills/Waza 评测资产 | 后端 94/94；前端语法通过；静态黄金集 20/20；真实黄金集 20/20 |
+| `odoo-agent` | `abd6a6f` 后的本轮待提交变更 | 结果签名、SQL 复杂度 Guard、三轮 Native/Wren A/B | 后端 108/108；前端语法通过；静态黄金集 20/20；真实签名 A/B 已执行 |
 | `custom_addons` | `7f8dda1` | 提交后干净 | SiliconFlow 模块 11 个 Python、2 个 XML 文件静态解析通过 |
 | `text2sql-benchmark-lab` | `3d7f01c` | 干净 | 7 项基准核心测试通过 |
 | `learn_odoo` | `a014c51` | 提交后干净 | Markdown 严格 UTF-8、Obsidian JSON 和 Canvas JSON 解析通过 |
 
-本轮已在 `odoo19_dev`、`codex_readonly`、DeepSeek 真实模型和 Langfuse development 环境完成运行验证。Odoo 模块安装、一次性测试库 TransactionCase、三轮性能基准和用户业务验收仍未执行。
+本轮已在 `odoo19_dev`、`codex_readonly`、DeepSeek 真实模型和 Langfuse development 环境完成三轮 Native/Wren A/B。Odoo 模块安装、一次性测试库 TransactionCase 和用户业务验收仍未执行。
 
 ## 3. Codex 可独立完成的绿灯测试
 
@@ -46,10 +46,10 @@
 
 | ID | 范围 | 检查 | 当前 | 通过标准 |
 | --- | --- | --- | --- | --- |
-| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 94/94 | 全部通过，无测试进程残留 |
+| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 108/108 | 全部通过，无测试进程残留 |
 | AUTO-02 | Agent 前端 | `node --check app.js` | 🟢 | 退出码为 0 |
 | AUTO-03 | 静态黄金集 | 20 条意图路由静态评测 | 🟢 20/20 | 通过率 100% |
-| AUTO-04 | SQL 安全 | 写操作、未知表/字段、公司过滤、输出契约、LIMIT | 🟢 | 所有安全断言通过 |
+| AUTO-04 | SQL 安全 | 写操作、未知表/字段、公司过滤、输出契约、LIMIT、JOIN/CTE/子查询、笛卡尔积、明细时间边界 | 🟢 | 所有安全断言通过；正常 4 表 Wren SQL 不回归 |
 | AUTO-05 | Agent 工作流 | 路由、Interrupt/Resume、SSE、会话、快速回答 | 🟢 | 对应单元/API 测试全部通过 |
 | AUTO-06 | 语义能力 | Wren provider、语义审计、Wiki 检索与引用 | 🟢 | 对应测试全部通过 |
 | AUTO-07 | 观测适配 | Langfuse 缺少凭据时降级、脱敏、反馈 Score | 🟢 | Mock/本地测试全部通过且无密钥输出 |
@@ -88,7 +88,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 | COLLAB-01 | 启动 Odoo/PostgreSQL 并检查 `/web/login` | 现有启动脚本会删除并重建受保护日志 | 启停、端口、HTTP、日志摘要 | 明确授权脚本修改日志 | 🟢 HTTP 200，已执行 |
 | COLLAB-02 | 启动 Agent 并检查 `/api/health`、`/docs`、首页 | 依赖本地 Odoo、状态库和环境配置 | 启停、API smoke、进程清理 | 允许使用当前本地配置 | 🟢 只读 DB/状态库/UI 已执行 |
 | COLLAB-03 | 真实 20 条销售黄金集 | 会访问只读业务库并调用付费模型 | 执行、比较、生成失败差异 | 确认可使用模型额度和本地只读数据 | 🟢 DeepSeek 20/20 |
-| COLLAB-04 | 最新三轮 Text2SQL 基准 | 约需 25–35 分钟并消耗模型额度 | 运行、统计 p50/p95、Token、Cost、正确率 | 授权模型调用和只读数据库访问 | 🟡 旧基线待重跑 |
+| COLLAB-04 | 最新三轮 Text2SQL 基准 | 会消耗模型额度 | 运行、统计结果签名、p50/p95、Token、Cost、Repair | 授权模型调用和只读数据库访问 | 🟢 Native/Wren 各 3×20，修前/修后均保留 |
 | COLLAB-05 | Langfuse 实际 Trace | 会连接已配置的外部 Langfuse 项目 | 生成测试 Trace并核对字段、脱敏和 Cost | 授权使用该项目连接 | 🟢 已用于首错定位和真实 Trace 复核 |
 | COLLAB-06 | PostgreSQL Checkpointer 重启恢复 | 需要独立状态数据库和服务重启 | 创建测试会话、重启、验证恢复 | 确认可使用测试状态库 | 🟡 未执行 |
 | COLLAB-07 | SiliconFlow 模块安装/升级 | 安装或升级会写数据库元数据 | 在一次性测试库安装、记录日志和模块状态 | 授权创建/使用一次性测试库 | 🟡 未执行 |
@@ -118,7 +118,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 最终自动证据：
 
-- 后端 `unittest`：94/94；
+- 后端 `unittest`：108/108；
 - 静态黄金集：20/20；
 - 前端 `node --check app.js`：通过；
 - 真实黄金集：20/20；
@@ -129,7 +129,21 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 - 浏览器：工作台和智能助手可加载、数据库显示只读、历史会话可恢复，控制台 0 error/warn；
 - Langfuse：用首个失败 Observation 定位问题，未在文档或日志中保存 API Key。
 
-真实测试的限制：这 20 条主要验证路由、QueryPlan、指标/维度、是否访问数据、Interrupt 和 SQL 只读性；尚未对每条业务数值建立参考 SQL 结果签名，因此不能代替 UAT-01 的业务口径核对。
+当前 16 个可执行且不应 Interrupt 的数据 Case 已全部建立参考 SQL 结果签名，检查列、行、数值容差和时间边界；另外 4 个普通问答、语义解释或澄清 Case 继续验证结构行为。参考 SQL 是自动回归基线，仍不能代替 UAT-01 的业务口径签字。
+
+### 4.2 结果签名、复杂度 Guard 与三轮 A/B（2026-09-01）
+
+- Red：结果列/数值不一致未失败；JOIN/CTE/子查询/笛卡尔积和无时间明细未被拒绝；Wren 同名 CTE/重复 `__source` 产生错误 lineage；
+- Green：SHA-256 结果签名、绝对/相对数值容差、午夜日期等价、16 条参考 SQL、复杂度预算和按 scope 的 Wren lineage 测试全部通过；
+- 真实参考 SQL：16/16 通过 `codex_readonly` 执行；
+- 修后 Native：三轮 19/20、19/20、18/20，总通过率 93.33%，结果签名率 93.75%；
+- 修后 Wren：三轮 17/20、17/20、18/20，总通过率 86.67%，结果签名率 87.50%；
+- Wren 修复前后总通过率：61.67% → 86.67%；
+- 仍失败：发票差额列、Wren 无显式 Top N 的销售员排名、客户指代澄清稳定性；
+- 默认 SiliconFlow 探针仍返回 HTTP 402；本轮只在评测进程覆盖为已配置 DeepSeek，没有修改持久设置；
+- 一次首组基准中 Langfuse 批量上报出现旁路超时，本地报告未丢失，修后基准未再出现。
+
+完整数据见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。
 
 ## 5. 必须由用户完成的红灯验收
 
@@ -164,13 +178,13 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 | 优先级 | 测试主题 | 首个失败测试 | 完成标准 | 当前灯色 |
 | --- | --- | --- | --- | --- |
-| P0 | 真实结果签名 | 同一 Case 的行列、数值、时间边界不一致时必须失败 | 支持参考 SQL/结果签名和数值容差 | 🟡 待建 |
-| P0 | SQL JOIN 上限 | 超过允许 JOIN 数的查询被 Guard 拒绝 | Guard、错误分类和单测齐全 | 🟡 待建 |
-| P0 | CTE/子查询复杂度 | 超过阈值或嵌套过深时被拒绝 | 可配置阈值，正常 Wren SQL 不回归 | 🟡 待建 |
-| P0 | 笛卡尔积 | 无连接条件的 JOIN/CROSS JOIN 被拒绝 | 安全错误可进入一次修复或 Interrupt | 🟡 待建 |
-| P0 | 明细时间范围 | 明细查询无时间范围时不直接执行 | 返回澄清或高成本确认 | 🟡 待建 |
+| P0 | 真实结果签名 | 同一 Case 的行列、数值、时间边界不一致时必须失败 | 支持参考 SQL/结果签名和数值容差 | 🟢 16/16 参考 SQL |
+| P0 | SQL JOIN 上限 | 超过允许 JOIN 数的查询被 Guard 拒绝 | Guard、错误分类和单测齐全 | 🟢 默认 6 |
+| P0 | CTE/子查询复杂度 | 超过阈值或嵌套过深时被拒绝 | 可配置阈值，正常 Wren SQL 不回归 | 🟢 CTE 6/子查询 12/深度 3 |
+| P0 | 笛卡尔积 | 无连接条件的 JOIN/CROSS JOIN 被拒绝 | 安全错误可进入一次修复或 Interrupt | 🟢 已拦截并分类 |
+| P0 | 明细时间范围 | 明细查询无时间范围时不直接执行 | 返回澄清或高成本确认 | 🟢 缺范围 Interrupt；单边界拒绝 |
 | P0 | SiliconFlow Odoo 测试 | 在一次性测试库运行现有 9 项测试 | 9/9 通过且测试库可回收 | 🟡 等授权 |
-| P0 | 当前代码真实基准 | 8 月 12 日旧基线不能代表最新代码 | 三轮新报告可复现并提交 | 🟡 等授权 |
+| P0 | 当前代码真实基准 | 8 月 12 日旧基线不能代表最新代码 | 三轮新报告可复现并提交 | 🟢 Native/Wren 修前/修后各三轮 |
 | P1 | 延迟预算 | 简单 KPI 超过目标 p50 时评测失败 | p50 ≤18 秒，准确率不下降 | 🟡 待建 |
 | P1 | Langfuse 环境 | Trace 缺少 development/test/production 时失败 | 环境、Prompt 版本、成本完整 | 🟡 待建 |
 | P1 | 扩展黄金集 | 退款、税、空值、多币种等缺少覆盖 | 至少 60 题，含有区分度测试数据 | 🔴 需业务确认口径 |
@@ -180,7 +194,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 | 改动类型 | 合并前必须运行 |
 | --- | --- |
-| Python 后端 | 受影响测试 + 当前 94 项后端全量测试 |
+| Python 后端 | 受影响测试 + 当前 108 项后端全量测试 |
 | SQL Guard / QueryPlan / Prompt | 后端全量 + 静态黄金集；获授权时加真实黄金集 |
 | 前端 JavaScript/HTML/CSS | `node --check` + 相关 API 测试；获授权时加 localhost UI smoke |
 | Wren MDL/语义层 | provider/审计测试 + Wren compile/dry-plan；获授权时加真实基准 |
@@ -204,8 +218,8 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 ## 9. 本轮结论
 
-当前自动化层是 🟢：Agent 94/94、前端语法、静态黄金集 20/20、基准核心、模块静态解析、知识库格式和项目级 Skill/Waza 资产检查均通过。
+当前自动化层是 🟢：Agent 108/108、前端语法、静态黄金集 20/20、结果签名、SQL 复杂度 Guard、基准汇总、模块静态解析、知识库格式和项目级 Skill/Waza 资产检查均通过。
 
-当前运行层的本轮范围是 🟢：Odoo/Agent、只读数据库、DeepSeek、Langfuse、20 条真实黄金集、Chart Planner、Interrupt/Resume 和 localhost UI smoke 已执行。仍为 🟡 的是 SiliconFlow HTTP 402、最新三轮性能基准、服务重启后的 pending interrupt 恢复、SiliconFlow 模块安装及 Odoo TransactionCase。
+当前运行层的本轮范围是 🟢：Odoo/Agent、只读数据库、DeepSeek、Langfuse、参考 SQL、Native/Wren 修前/修后各三轮基准、Chart Planner、Interrupt/Resume 和 localhost UI smoke 已执行。仍为 🟡 的是 SiliconFlow HTTP 402、服务重启后的 pending interrupt 恢复、SiliconFlow 模块安装及 Odoo TransactionCase。
 
 当前业务验收层是 🔴：销售数值口径、图表阅读体验、模型费用、权限隔离和任何写动作仍需用户确认。代码测试通过不代表这些业务判断已由用户签字。

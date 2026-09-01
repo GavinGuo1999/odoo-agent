@@ -12,6 +12,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.bi.chart import build_chart_spec  # noqa: E402
 from app.bi.semantic import SalesSemanticLayer  # noqa: E402
 from app.database import ReadOnlySqlGuard  # noqa: E402
+from app.database.sql_guard import SqlComplexityLimits  # noqa: E402
 from app.schemas.query_plan import QueryPlan  # noqa: E402
 
 
@@ -195,6 +196,154 @@ class SqlGuardTests(unittest.TestCase):
         )
         self.assertTrue(result.safe, result.errors)
         self.assertEqual(result.tables, ["sale_order"])
+
+    def test_wren_cte_alias_preserves_sales_company_lineage(self) -> None:
+        result = self.guard.validate(
+            'WITH sale_order AS ('
+            'SELECT __source.amount_untaxed, __source.company_id, __source.state '
+            'FROM "public".sale_order AS __source) '
+            'SELECT SUM(so.amount_untaxed) AS sales_amount FROM sale_order AS so '
+            "WHERE so.company_id = 1 AND so.state IN ('sale', 'done')"
+        )
+
+        self.assertTrue(result.safe, result.errors)
+        self.assertEqual(result.tables, ["sale_order"])
+
+    def test_wren_reused_source_alias_is_resolved_per_select_scope(self) -> None:
+        result = self.guard.validate(
+            'WITH sale_order AS ('
+            'SELECT __source.amount_untaxed, __source.company_id, __source.partner_id '
+            'FROM "public".sale_order AS __source), '
+            'res_partner AS ('
+            'SELECT __source.id, __source.name '
+            'FROM "public".res_partner AS __source) '
+            'SELECT rp.name AS customer, SUM(so.amount_untaxed) AS sales_amount '
+            'FROM sale_order AS so JOIN res_partner AS rp ON rp.id = so.partner_id '
+            'WHERE so.company_id = 1 GROUP BY rp.name'
+        )
+
+        self.assertTrue(result.safe, result.errors)
+
+    def test_default_complexity_budget_allows_four_model_wren_wrappers(self) -> None:
+        self.assertGreaterEqual(SqlComplexityLimits().max_subqueries, 8)
+
+    def test_blocks_queries_above_join_limit(self) -> None:
+        guard = ReadOnlySqlGuard(
+            table_columns=SalesSemanticLayer.load().table_columns,
+            company_id=1,
+            max_rows=500,
+            complexity=SqlComplexityLimits(max_joins=1),
+        )
+        result = guard.validate(
+            "SELECT so.id FROM sale_order so "
+            "JOIN res_partner rp ON rp.id = so.partner_id "
+            "JOIN res_users ru ON ru.id = so.user_id "
+            "WHERE so.company_id = 1"
+        )
+
+        self.assertFalse(result.safe)
+        self.assertTrue(any("JOIN 数量" in error for error in result.errors))
+
+    def test_blocks_excessive_ctes_and_nested_subqueries(self) -> None:
+        guard = ReadOnlySqlGuard(
+            table_columns=SalesSemanticLayer.load().table_columns,
+            company_id=1,
+            max_rows=500,
+            complexity=SqlComplexityLimits(
+                max_ctes=1,
+                max_subqueries=1,
+                max_subquery_depth=1,
+            ),
+        )
+        too_many_ctes = guard.validate(
+            "WITH orders AS ("
+            "SELECT so.id, so.company_id FROM sale_order so WHERE so.company_id = 1"
+            "), partners AS (SELECT rp.id FROM res_partner rp) "
+            "SELECT orders.id FROM orders JOIN partners ON partners.id = orders.id"
+        )
+        nested_subqueries = guard.validate(
+            "SELECT so.id FROM sale_order so WHERE so.company_id = 1 "
+            "AND so.partner_id IN (SELECT rp.id FROM res_partner rp WHERE rp.id IN ("
+            "SELECT ru.partner_id FROM res_users ru))"
+        )
+
+        self.assertTrue(any("CTE 数量" in error for error in too_many_ctes.errors))
+        self.assertTrue(
+            any("子查询" in error for error in nested_subqueries.errors),
+            nested_subqueries.errors,
+        )
+
+    def test_blocks_cartesian_and_conditionless_joins(self) -> None:
+        cases = [
+            "SELECT so.id FROM sale_order so CROSS JOIN res_partner rp "
+            "WHERE so.company_id = 1",
+            "SELECT so.id FROM sale_order so, res_partner rp "
+            "WHERE so.company_id = 1",
+        ]
+        for sql in cases:
+            with self.subTest(sql=sql):
+                result = self.guard.validate(sql)
+                self.assertFalse(result.safe)
+                self.assertTrue(any("笛卡尔积" in error for error in result.errors))
+
+    def test_detail_query_requires_concrete_time_bounds(self) -> None:
+        plan = QueryPlan.model_validate(
+            {
+                "query_type": "detail",
+                "metric_ids": ["sales_amount"],
+                "result_shape": "table",
+                "select_columns": ["order_name", "sales_amount"],
+            }
+        )
+        result = self.guard.validate(
+            "SELECT so.name AS order_name, so.amount_untaxed AS sales_amount "
+            "FROM sale_order so WHERE so.company_id = 1",
+            plan=plan,
+            question="列出销售订单明细",
+        )
+
+        self.assertFalse(result.safe)
+        self.assertTrue(any("用户补充" in error for error in result.errors))
+
+    def test_detail_sql_must_apply_both_declared_time_bounds(self) -> None:
+        plan = QueryPlan.model_validate(
+            {
+                "query_type": "detail",
+                "metric_ids": ["sales_amount"],
+                "filters": [
+                    {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
+                    {"field": "date_order", "operator": "gte", "value": "2026-09-01", "source": "user"},
+                    {"field": "date_order", "operator": "lt", "value": "2026-10-01", "source": "user"},
+                ],
+                "time_range": {
+                    "label": "2026 年 9 月",
+                    "start": "2026-09-01",
+                    "end": "2026-09-30",
+                    "grain": "day",
+                },
+                "result_shape": "table",
+                "select_columns": ["order_name", "sales_amount"],
+            }
+        )
+        one_sided = self.guard.validate(
+            "SELECT so.name AS order_name, so.amount_untaxed AS sales_amount "
+            "FROM sale_order so WHERE so.company_id = 1 "
+            "AND so.date_order >= DATE '2026-09-01'",
+            plan=plan,
+            question="列出 2026 年 9 月销售订单明细",
+        )
+        bounded = self.guard.validate(
+            "SELECT so.name AS order_name, so.amount_untaxed AS sales_amount "
+            "FROM sale_order so WHERE so.company_id = 1 "
+            "AND so.date_order >= DATE '2026-09-01' "
+            "AND so.date_order < DATE '2026-10-01'",
+            plan=plan,
+            question="列出 2026 年 9 月销售订单明细",
+        )
+
+        self.assertFalse(one_sided.safe)
+        self.assertTrue(any("开始和结束边界" in error for error in one_sided.errors))
+        self.assertTrue(bounded.safe, bounded.errors)
 
 
 class SemanticAndChartTests(unittest.TestCase):

@@ -89,6 +89,11 @@ def _category(stage: SqlErrorStage, message: str) -> SqlErrorCategory:
             "SQL LIMIT",
             "SQL ORDER BY",
             "没有授权过滤字段",
+            "JOIN 数量",
+            "CTE 数量",
+            "子查询",
+            "笛卡尔积",
+            "明细 SQL",
         )
     ):
         return "contract_violation"

@@ -60,6 +60,27 @@ class SqlErrorAnalyzerTests(unittest.TestCase):
         self.assertEqual(analysis.category, "timeout")
         self.assertFalse(analysis.repairable)
 
+    def test_complexity_limit_is_a_repairable_contract_violation(self) -> None:
+        analysis = analyze_sql_errors(
+            stage="validation",
+            errors=["SQL JOIN 数量超过安全上限：最多 6 个，实际 7 个。"],
+            sql="SELECT 1 FROM sale_order WHERE company_id = 1",
+        )
+
+        self.assertEqual(analysis.category, "contract_violation")
+        self.assertTrue(analysis.repairable)
+
+    def test_missing_detail_time_range_requests_user_input(self) -> None:
+        analysis = analyze_sql_errors(
+            stage="validation",
+            errors=["明细查询需要用户补充明确的开始和结束时间范围。"],
+            sql="SELECT id FROM sale_order WHERE company_id = 1",
+        )
+
+        self.assertEqual(analysis.category, "ambiguous_request")
+        self.assertTrue(analysis.needs_user_input)
+        self.assertFalse(analysis.repairable)
+
     def test_sql_fingerprint_ignores_whitespace_and_case(self) -> None:
         self.assertEqual(
             sql_fingerprint("SELECT  id\nFROM sale_order"),

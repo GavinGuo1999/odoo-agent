@@ -129,6 +129,8 @@ class AgentOutcome:
     query_plan: QueryPlan | None = None
     answer_mode: AnswerMode = "llm"
     model_roles: dict[str, dict[str, str]] = field(default_factory=dict)
+    semantic_provider: str = "native"
+    repair_count: int = 0
     interrupted: bool = False
     interrupt_payload: dict[str, Any] | None = None
     conversation: list[dict[str, str]] = field(default_factory=list)
@@ -751,6 +753,8 @@ class SalesAgent:
             query_plan=plan,
             answer_mode=state.get("answer_mode", "llm"),
             model_roles=state.get("model_roles", {}),
+            semantic_provider=state.get("semantic_provider", self._semantics.name),
+            repair_count=state.get("repair_count", 0),
             interrupted=interrupted,
             interrupt_payload=interrupt_payload,
             conversation=state.get("conversation", []),

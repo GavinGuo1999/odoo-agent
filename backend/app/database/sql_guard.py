@@ -17,6 +17,17 @@ class SqlValidationResult:
     tables: list[str]
 
 
+@dataclass(frozen=True, slots=True)
+class SqlComplexityLimits:
+    """Deterministic query-shape budgets enforced before database execution."""
+
+    max_joins: int = 6
+    max_ctes: int = 6
+    max_subqueries: int = 12
+    max_subquery_depth: int = 3
+    require_detail_time_range: bool = True
+
+
 class ReadOnlySqlGuard:
     _FORBIDDEN_FUNCTIONS = {
         "dblink",
@@ -36,12 +47,14 @@ class ReadOnlySqlGuard:
         table_columns: dict[str, list[str]],
         company_id: int,
         max_rows: int,
+        complexity: SqlComplexityLimits | None = None,
     ) -> None:
         self._table_columns = {
             table: set(columns) for table, columns in table_columns.items()
         }
         self._company_id = company_id
         self._max_rows = max_rows
+        self._complexity = complexity or SqlComplexityLimits()
 
     def validate(
         self,
@@ -61,6 +74,8 @@ class ReadOnlySqlGuard:
         statement = statements[0]
         if statement is None or not isinstance(statement, exp.Query):
             return SqlValidationResult(False, None, ["只允许 SELECT 查询。"], [])
+
+        errors.extend(self._validate_complexity(statement))
 
         forbidden_types = tuple(
             expression_type
@@ -88,11 +103,26 @@ class ReadOnlySqlGuard:
             for cte in statement.find_all(exp.CTE)
             if cte.alias_or_name
         }
+        cte_origins: dict[str, set[str]] = {}
+        for cte in statement.find_all(exp.CTE):
+            cte_name = cte.alias_or_name.lower() if cte.alias_or_name else ""
+            if not cte_name:
+                continue
+            origins = {
+                table.name.lower()
+                for table in cte.this.find_all(exp.Table)
+                if table.name.lower() in self._table_columns
+                and not (table.name.lower() in cte_names and not table.db and not table.catalog)
+            }
+            cte_origins[cte_name] = origins
         aliases: dict[str, str] = {}
         real_tables: set[str] = set()
         for table in statement.find_all(exp.Table):
             table_name = table.name.lower()
             if table_name in cte_names and not table.db and not table.catalog:
+                origins = cte_origins.get(table_name, set())
+                if len(origins) == 1:
+                    aliases[(table.alias_or_name or table_name).lower()] = next(iter(origins))
                 continue
             if table.db and table.db.lower() != "public":
                 errors.append(f"不允许访问 schema：{table.db}。")
@@ -126,7 +156,10 @@ class ReadOnlySqlGuard:
             if qualifier in cte_names:
                 continue
             if qualifier:
-                table_name = aliases.get(qualifier)
+                table_name = self._resolve_scoped_table(
+                    column,
+                    cte_origins=cte_origins,
+                ) or aliases.get(qualifier)
                 if table_name and column_name not in self._table_columns[table_name]:
                     errors.append(f"字段未开放：{qualifier}.{column_name}。")
                 continue
@@ -164,7 +197,13 @@ class ReadOnlySqlGuard:
                         and int(literal.this) == self._company_id
                     ):
                         qualifier = column.table.lower() if column.table else ""
-                        qualified_table = aliases.get(qualifier) if qualifier else None
+                        if qualifier:
+                            qualified_table = self._resolve_scoped_table(
+                                column,
+                                cte_origins=cte_origins,
+                            ) or aliases.get(qualifier)
+                        else:
+                            qualified_table = None
                         if qualified_table in {"sale_order", "sale_order_line"}:
                             company_filter_found = True
                         elif not qualifier and len(
@@ -206,6 +245,77 @@ class ReadOnlySqlGuard:
             tables=sorted(real_tables),
         )
 
+    def _resolve_scoped_table(
+        self,
+        column: exp.Column,
+        *,
+        cte_origins: dict[str, set[str]],
+    ) -> str | None:
+        qualifier = column.table.lower() if column.table else ""
+        if not qualifier:
+            return None
+        select = column.find_ancestor(exp.Select)
+        if select is None:
+            return None
+        for table in select.find_all(exp.Table):
+            if table.find_ancestor(exp.Select) is not select:
+                continue
+            table_alias = (table.alias_or_name or table.name).lower()
+            if table_alias != qualifier:
+                continue
+            table_name = table.name.lower()
+            origins = cte_origins.get(table_name, set())
+            if len(origins) == 1:
+                return next(iter(origins))
+            if table_name in self._table_columns:
+                return table_name
+        return None
+
+    def _validate_complexity(self, statement: exp.Query) -> list[str]:
+        errors: list[str] = []
+        joins = list(statement.find_all(exp.Join))
+        ctes = list(statement.find_all(exp.CTE))
+        subqueries = list(statement.find_all(exp.Subquery))
+
+        if len(joins) > self._complexity.max_joins:
+            errors.append(
+                "SQL JOIN 数量超过安全上限："
+                f"最多 {self._complexity.max_joins} 个，实际 {len(joins)} 个。"
+            )
+        if len(ctes) > self._complexity.max_ctes:
+            errors.append(
+                "SQL CTE 数量超过安全上限："
+                f"最多 {self._complexity.max_ctes} 个，实际 {len(ctes)} 个。"
+            )
+        if len(subqueries) > self._complexity.max_subqueries:
+            errors.append(
+                "SQL 子查询数量超过安全上限："
+                f"最多 {self._complexity.max_subqueries} 个，实际 {len(subqueries)} 个。"
+            )
+
+        maximum_depth = 0
+        for subquery in subqueries:
+            depth = 1
+            parent = subquery.parent
+            while parent is not None:
+                if isinstance(parent, exp.Subquery):
+                    depth += 1
+                parent = parent.parent
+            maximum_depth = max(maximum_depth, depth)
+        if maximum_depth > self._complexity.max_subquery_depth:
+            errors.append(
+                "SQL 子查询嵌套深度超过安全上限："
+                f"最多 {self._complexity.max_subquery_depth} 层，实际 {maximum_depth} 层。"
+            )
+
+        for join in joins:
+            kind = str(join.args.get("kind") or "").casefold()
+            has_condition = join.args.get("on") is not None or join.args.get("using") is not None
+            if kind == "cross" or not has_condition:
+                errors.append("SQL 包含笛卡尔积或缺少连接条件的 JOIN。")
+                break
+        return errors
+
     @staticmethod
     def _field_name(value: str) -> str:
         return value.rsplit(".", 1)[-1].strip().casefold()
@@ -217,6 +327,11 @@ class ReadOnlySqlGuard:
         question: str,
     ) -> list[str]:
         errors: list[str] = []
+        if plan.query_type == "detail" and self._complexity.require_detail_time_range:
+            if not (plan.time_range.start and plan.time_range.end):
+                errors.append("明细查询需要用户补充明确的开始和结束时间范围。")
+            elif not self._has_sql_time_bounds(statement):
+                errors.append("明细 SQL 必须包含 date_order 的开始和结束边界。")
         final_select = statement if isinstance(statement, exp.Select) else statement.find(exp.Select)
         if final_select is not None and plan.select_columns:
             actual_columns = [
@@ -298,6 +413,31 @@ class ReadOnlySqlGuard:
                 if field not in allowed_where_fields:
                     errors.append(f"SQL 包含 QueryPlan 未声明的过滤字段：{field}。")
         return errors
+
+    @staticmethod
+    def _has_sql_time_bounds(statement: exp.Query) -> bool:
+        lower_bound = False
+        upper_bound = False
+        for comparison in statement.find_all((exp.GT, exp.GTE, exp.LT, exp.LTE)):
+            left = comparison.this
+            right = comparison.expression
+            if isinstance(left, exp.Column) and left.name.casefold() == "date_order":
+                if isinstance(comparison, (exp.GT, exp.GTE)):
+                    lower_bound = True
+                else:
+                    upper_bound = True
+            elif isinstance(right, exp.Column) and right.name.casefold() == "date_order":
+                if isinstance(comparison, (exp.LT, exp.LTE)):
+                    lower_bound = True
+                else:
+                    upper_bound = True
+        if any(
+            isinstance(between.this, exp.Column)
+            and between.this.name.casefold() == "date_order"
+            for between in statement.find_all(exp.Between)
+        ):
+            return True
+        return lower_bound and upper_bound
 
     @staticmethod
     def _question_filter_fields(question: str) -> set[str]:

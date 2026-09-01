@@ -116,3 +116,9 @@ $env:PYTHONIOENCODING='utf-8'
 - 语义模型自身定义错误。
 
 因此 Wren 是准确率改良组件，不是“一键解决 Text2SQL”的替代系统。最终是否默认启用，必须由同模型、同温度、同黄金集的 A/B 数据决定。
+
+## 9. 2026-09-01 三轮 A/B 结论
+
+同一 DeepSeek `deepseek-v4-pro`、同一 20 Case、同一只读数据库和结果签名合同下，修后 Native 总通过率为 93.33%，Wren 为 86.67%；结果签名率分别为 93.75% 和 87.50%。Wren p50/p95 分别慢 1.21s/5.47s，并多使用 70,611 Token。
+
+Wren Guard 兼容缺陷修复使其总通过率从 61.67% 提高到 86.67%，但剩余 `ranking-salespeople`、`comparison-invoice` 和澄清稳定性问题仍需处理。因此当前继续保留 `native` 为默认，`wren` 为实验 A/B 选项。完整方法、修复前后数据和失败 Case 见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。

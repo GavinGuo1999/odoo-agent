@@ -41,6 +41,7 @@ def sql_payload(
     filters: list[dict[str, object]] | None = None,
     select_columns: list[str] | None = None,
     row_limit: int | None = None,
+    time_range: dict[str, object] | None = None,
 ) -> str:
     import json
 
@@ -55,7 +56,7 @@ def sql_payload(
                     {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
                     {"field": "state", "operator": "in", "value": ["sale", "done"], "source": "metric_rule"},
                 ],
-                "time_range": {
+                "time_range": time_range or {
                     "label": None,
                     "start": None,
                     "end": None,
@@ -200,11 +201,25 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
                     llm_result(
                         sql_payload(
                             "SELECT so.name AS order_name, so.invoice_status FROM sale_order so "
-                            "WHERE so.company_id = 1 AND so.state IN ('sale','done')",
+                            "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+                            "AND so.date_order >= DATE '2026-09-01' "
+                            "AND so.date_order < DATE '2026-10-01'",
                             query_type="detail",
                             metrics=[],
                             dimensions=["order_name", "invoice_status"],
                             select_columns=["order_name", "invoice_status"],
+                            filters=[
+                                {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
+                                {"field": "state", "operator": "in", "value": ["sale", "done"], "source": "metric_rule"},
+                                {"field": "date_order", "operator": "gte", "value": "2026-09-01", "source": "user"},
+                                {"field": "date_order", "operator": "lt", "value": "2026-10-01", "source": "user"},
+                            ],
+                            time_range={
+                                "label": "本月",
+                                "start": "2026-09-01",
+                                "end": "2026-09-30",
+                                "grain": "day",
+                            },
                         )
                     ),
                     llm_result("数据事实：SO001 尚未开票。Wiki 业务解释：需继续核查订单行。[知识来源 1]"),

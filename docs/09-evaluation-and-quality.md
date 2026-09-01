@@ -310,16 +310,20 @@ Set-Location D:\odoo19e\odoo-agent\backend
 
 ## 15. 下一步强化
 
-1. 为真实回归增加结果签名和数值容差；
-2. 自动创建 Langfuse Experiment Run；
-3. 增加 `sql-safe`、`metric-correct`、`answer-grounded` Scores；
-4. 在 CI 中运行静态集和无费用安全集；
-5. 发布候选运行完整真实集并对比上个基线；
-6. 建立点踩 Trace 到黄金案例的半自动流程；
-7. 增加模型/Prompt/语义版本到报告元数据。
+已完成：16 个可执行数据 Case 的参考 SQL、SHA-256 结果签名、数值容差、日期等价、三轮汇总和 Native/Wren 同条件 A/B。报告不保存业务结果行。2026-09-01 实测见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。
+
+下一步：
+
+1. 自动创建 Langfuse Experiment Run；
+2. 增加 `sql-safe`、`metric-correct`、`answer-grounded` Scores；
+3. 在 CI 中运行静态集和无费用安全集；
+4. 建立点踩 Trace 到黄金案例的半自动流程；
+5. 修复发票差额列、无显式 Top N 排名和确定性歧义路由；
+6. 增加基于 `EXPLAIN` 的可选动态成本预算。
 
 ## 16. 相关文档
 
 - [Langfuse 可观测性](08-langfuse-observability.md)
 - [数据语义与安全](06-data-and-security.md)
 - [开发与运维](10-development-and-operations.md)
+- [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)
