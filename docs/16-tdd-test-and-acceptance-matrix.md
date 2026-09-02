@@ -2,7 +2,7 @@
 
 > 基线日期：2026-08-28
 >
-> 最近增量验证：2026-09-01
+> 最近增量验证：2026-09-02
 >
 > 适用应用版本：0.2.0
 >
@@ -33,7 +33,7 @@
 
 | 仓库 | 基线提交 | 工作树 | 当前证据 |
 | --- | --- | --- | --- |
-| `odoo-agent` | `abd6a6f` 后的本轮待提交变更 | 结果签名、SQL 复杂度 Guard、三轮 Native/Wren A/B | 后端 108/108；前端语法通过；静态黄金集 20/20；真实签名 A/B 已执行 |
+| `odoo-agent` | `8e94ac7` 后的本轮待提交变更 | 确定性歧义路由、未开票差额指标、完整排名合同 | 后端 114/114；前端语法通过；静态黄金集 20/20；三个受影响 Case 的 Native/Wren 三轮均 9/9 |
 | `custom_addons` | `7f8dda1` | 提交后干净 | SiliconFlow 模块 11 个 Python、2 个 XML 文件静态解析通过 |
 | `text2sql-benchmark-lab` | `3d7f01c` | 干净 | 7 项基准核心测试通过 |
 | `learn_odoo` | `a014c51` | 提交后干净 | Markdown 严格 UTF-8、Obsidian JSON 和 Canvas JSON 解析通过 |
@@ -46,7 +46,7 @@
 
 | ID | 范围 | 检查 | 当前 | 通过标准 |
 | --- | --- | --- | --- | --- |
-| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 108/108 | 全部通过，无测试进程残留 |
+| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 114/114 | 全部通过，无测试进程残留 |
 | AUTO-02 | Agent 前端 | `node --check app.js` | 🟢 | 退出码为 0 |
 | AUTO-03 | 静态黄金集 | 20 条意图路由静态评测 | 🟢 20/20 | 通过率 100% |
 | AUTO-04 | SQL 安全 | 写操作、未知表/字段、公司过滤、输出契约、LIMIT、JOIN/CTE/子查询、笛卡尔积、明细时间边界 | 🟢 | 所有安全断言通过；正常 4 表 Wren SQL 不回归 |
@@ -118,7 +118,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 最终自动证据：
 
-- 后端 `unittest`：108/108；
+- 后端 `unittest`：114/114；
 - 静态黄金集：20/20；
 - 前端 `node --check app.js`：通过；
 - 真实黄金集：20/20；
@@ -139,11 +139,21 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 - 修后 Native：三轮 19/20、19/20、18/20，总通过率 93.33%，结果签名率 93.75%；
 - 修后 Wren：三轮 17/20、17/20、18/20，总通过率 86.67%，结果签名率 87.50%；
 - Wren 修复前后总通过率：61.67% → 86.67%；
-- 仍失败：发票差额列、Wren 无显式 Top N 的销售员排名、客户指代澄清稳定性；
+- 当时仍失败：发票差额列、Wren 无显式 Top N 的销售员排名、客户指代澄清稳定性；这些问题已在 4.3 的 2026-09-02 增量中关闭；
 - 默认 SiliconFlow 探针仍返回 HTTP 402；本轮只在评测进程覆盖为已配置 DeepSeek，没有修改持久设置；
 - 一次首组基准中 Langfuse 批量上报出现旁路超时，本地报告未丢失，修后基准未再出现。
 
 完整数据见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。
+
+### 4.3 前三项 TDD 闭环（2026-09-02）
+
+| 主题 | Red | Green | 针对性真实三轮 |
+| --- | --- | --- | --- |
+| 确定性客户澄清 | SQL 模型返回坏 QueryPlan 时不能稳定 Interrupt | 新增 `detect_data_ambiguity`，模型和数据库之前直接 Interrupt；同 session 补充后恢复 | Native 3/3；Wren 3/3 |
+| 未开票差额 | 只返回销售量/开票量或只返回差额都会被结果签名拒绝 | 新增 `uninvoiced_quantity`，并强制 `product + sales_quantity + invoiced_quantity + uninvoiced_quantity` 输出合同 | Native 3/3；Wren 3/3 |
+| 无显式 Top N 排名 | Wren 为完整销售员排名反复补 `row_limit` 失败 | 显式 Top N 才要求 LIMIT；完整排名由 Guard 加 500 行上限，ChartPlan 展示前 10 | Native 3/3；Wren 3/3 |
+
+第一次针对性运行双方均为 6/9，结果签名指出发票差额列仍不完整；没有修改参考结果，而是新增确定性 QueryPlan 合同后重跑。修后 Native/Wren 都是总通过率、结构通过率和结果签名率 100%。后端全量 114/114、静态黄金集 20/20、Wren 9 模型构建和 `node --check app.js` 均通过。该结果是三个受影响 Case 的窄回归，不替代增量后的 20 Case 全量三轮 A/B。
 
 ## 5. 必须由用户完成的红灯验收
 
@@ -184,7 +194,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 | P0 | 笛卡尔积 | 无连接条件的 JOIN/CROSS JOIN 被拒绝 | 安全错误可进入一次修复或 Interrupt | 🟢 已拦截并分类 |
 | P0 | 明细时间范围 | 明细查询无时间范围时不直接执行 | 返回澄清或高成本确认 | 🟢 缺范围 Interrupt；单边界拒绝 |
 | P0 | SiliconFlow Odoo 测试 | 在一次性测试库运行现有 9 项测试 | 9/9 通过且测试库可回收 | 🟡 等授权 |
-| P0 | 当前代码真实基准 | 8 月 12 日旧基线不能代表最新代码 | 三轮新报告可复现并提交 | 🟢 Native/Wren 修前/修后各三轮 |
+| P0 | 当前代码真实基准 | 8 月 12 日旧基线不能代表最新代码 | 三轮新报告可复现并提交 | 🟢 9 月 1 日全量 + 9 月 2 日三个受影响 Case 三轮；增量后全量待重跑 |
 | P1 | 延迟预算 | 简单 KPI 超过目标 p50 时评测失败 | p50 ≤18 秒，准确率不下降 | 🟡 待建 |
 | P1 | Langfuse 环境 | Trace 缺少 development/test/production 时失败 | 环境、Prompt 版本、成本完整 | 🟡 待建 |
 | P1 | 扩展黄金集 | 退款、税、空值、多币种等缺少覆盖 | 至少 60 题，含有区分度测试数据 | 🔴 需业务确认口径 |
@@ -218,7 +228,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 ## 9. 本轮结论
 
-当前自动化层是 🟢：Agent 108/108、前端语法、静态黄金集 20/20、结果签名、SQL 复杂度 Guard、基准汇总、模块静态解析、知识库格式和项目级 Skill/Waza 资产检查均通过。
+当前自动化层是 🟢：Agent 114/114、前端语法、静态黄金集 20/20、结果签名、SQL 复杂度 Guard、基准汇总、模块静态解析、知识库格式和项目级 Skill/Waza 资产检查均通过。
 
 当前运行层的本轮范围是 🟢：Odoo/Agent、只读数据库、DeepSeek、Langfuse、参考 SQL、Native/Wren 修前/修后各三轮基准、Chart Planner、Interrupt/Resume 和 localhost UI smoke 已执行。仍为 🟡 的是 SiliconFlow HTTP 402、服务重启后的 pending interrupt 恢复、SiliconFlow 模块安装及 Odoo TransactionCase。
 

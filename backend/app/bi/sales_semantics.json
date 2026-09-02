@@ -1,5 +1,5 @@
 {
-  "version": "2026-08-03.v1",
+  "version": "2026-09-02.v2",
   "timezone": "Asia/Shanghai",
   "default_states": ["sale", "done"],
   "tables": {
@@ -107,6 +107,14 @@
       "states": ["sale", "done"],
       "date_field": "sale_order.date_order",
       "keywords": ["已开票", "开票数量"]
+    },
+    "uninvoiced_quantity": {
+      "name": "未开票数量差额",
+      "description": "已确认订单非展示明细的订购数量减去已开票数量；它是数量差额，不等同于 Odoo 的可开票数量 qty_to_invoice。",
+      "expression": "SUM(sale_order_line.product_uom_qty - sale_order_line.qty_invoiced)",
+      "states": ["sale", "done"],
+      "date_field": "sale_order.date_order",
+      "keywords": ["未开票数量", "待开票数量", "开票差额", "销售数量与已开票数量的差额", "订购数量与已开票数量的差额"]
     }
   },
   "examples": [

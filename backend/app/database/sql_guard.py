@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlglot import exp, parse
 from sqlglot.errors import ParseError
 
-from app.schemas.query_plan import QueryPlan
+from app.schemas.query_plan import QueryPlan, ranking_requires_row_limit
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,8 +346,18 @@ class ReadOnlySqlGuard:
                     f"期望 {expected_columns}，实际 {actual_columns}。"
                 )
 
-        if plan.query_type == "ranking" and plan.row_limit is None:
+        if (
+            plan.query_type == "ranking"
+            and plan.row_limit is None
+            and ranking_requires_row_limit(question)
+        ):
             errors.append("排名查询必须在 QueryPlan.row_limit 中声明 Top N。")
+        elif (
+            plan.query_type == "ranking"
+            and plan.row_limit is not None
+            and not ranking_requires_row_limit(question)
+        ):
+            errors.append("用户未指定 Top N，完整排名不得声明业务 LIMIT。")
         elif plan.row_limit is not None:
             limit = statement.args.get("limit")
             expression = limit.expression if limit is not None else None

@@ -9,7 +9,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.bi.chart import build_chart_spec  # noqa: E402
+from app.bi.chart import build_chart_spec, build_data_profile, parse_chart_plan  # noqa: E402
 from app.bi.semantic import SalesSemanticLayer  # noqa: E402
 from app.database import ReadOnlySqlGuard  # noqa: E402
 from app.database.sql_guard import SqlComplexityLimits  # noqa: E402
@@ -98,6 +98,35 @@ class SqlGuardTests(unittest.TestCase):
         )
         self.assertFalse(unsafe.safe)
         self.assertTrue(any("未声明" in error for error in unsafe.errors))
+
+    def test_full_ranking_without_explicit_top_n_uses_guard_safety_limit(self) -> None:
+        plan = QueryPlan.model_validate(
+            {
+                "query_type": "ranking",
+                "metric_ids": ["sales_amount"],
+                "dimensions": ["salesperson"],
+                "filters": [
+                    {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
+                    {"field": "state", "operator": "in", "value": ["sale", "done"], "source": "metric_rule"},
+                ],
+                "result_shape": "ranking",
+                "select_columns": ["salesperson", "sales_amount"],
+                "sort": [{"field": "sales_amount", "direction": "desc"}],
+                "row_limit": None,
+            }
+        )
+        result = self.guard.validate(
+            "SELECT rp.name AS salesperson, SUM(so.amount_untaxed) AS sales_amount "
+            "FROM sale_order so JOIN res_users ru ON ru.id = so.user_id "
+            "JOIN res_partner rp ON rp.id = ru.partner_id "
+            "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+            "GROUP BY rp.name ORDER BY sales_amount DESC",
+            plan=plan,
+            question="今年各销售员的销售额排名如何？",
+        )
+
+        self.assertTrue(result.safe, result.errors)
+        self.assertIn("LIMIT 500", result.sql or "")
 
     def test_declared_time_range_authorizes_date_filter(self) -> None:
         plan = QueryPlan.model_validate(
@@ -363,6 +392,58 @@ class SemanticAndChartTests(unittest.TestCase):
         )
         self.assertEqual(chart["type"], "line")
         self.assertEqual(chart["x_field"], "month")
+
+    def test_uninvoiced_quantity_is_a_retrievable_metric(self) -> None:
+        semantics = SalesSemanticLayer.load()
+        metric = semantics.metric_definitions["uninvoiced_quantity"]
+        context = semantics.retrieve(
+            "今年各产品销售数量与已开票数量的差额是多少？",
+            company_id=1,
+        )
+
+        self.assertIn("product_uom_qty", metric["expression"])
+        self.assertIn("qty_invoiced", metric["expression"])
+        self.assertIn("uninvoiced_quantity", context.metric_ids)
+
+    def test_full_ranking_chart_defaults_to_top_ten(self) -> None:
+        plan = QueryPlan.model_validate(
+            {
+                "query_type": "ranking",
+                "metric_ids": ["sales_amount"],
+                "dimensions": ["salesperson"],
+                "result_shape": "ranking",
+                "select_columns": ["salesperson", "sales_amount"],
+                "sort": [{"field": "sales_amount", "direction": "desc"}],
+                "row_limit": None,
+            }
+        )
+        chart = build_chart_spec(
+            "今年各销售员的销售额排名如何？",
+            ["salesperson", "sales_amount"],
+            [
+                {"salesperson": "A", "sales_amount": 100.0},
+                {"salesperson": "B", "sales_amount": 90.0},
+            ],
+            query_plan=plan,
+        )
+
+        self.assertEqual(chart["type"], "bar")
+        self.assertEqual(chart["top_n"], 10)
+
+        model_plan = parse_chart_plan(
+            '{"type":"bar","title":"销售员排名","x_field":"salesperson",'
+            '"series":[{"field":"sales_amount","label":null}],'
+            '"sort_by":null,"sort_order":null,"top_n":null,"reason":"类别排名"}',
+            profile=build_data_profile(
+                ["salesperson", "sales_amount"],
+                [
+                    {"salesperson": "A", "sales_amount": 100.0},
+                    {"salesperson": "B", "sales_amount": 90.0},
+                ],
+            ),
+            query_plan=plan,
+        )
+        self.assertEqual(model_plan.top_n, 10)
 
 
 if __name__ == "__main__":

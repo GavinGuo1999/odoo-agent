@@ -556,15 +556,6 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
                 side_effect=[
                     llm_result(
                         sql_payload(
-                            "",
-                            query_type="kpi",
-                            metrics=["sales_amount"],
-                            requires_clarification=True,
-                            clarification_question="你指的是哪一个客户？",
-                        )
-                    ),
-                    llm_result(
-                        sql_payload(
                             "SELECT SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
                             "JOIN res_partner rp ON rp.id = so.partner_id "
                             "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
@@ -614,16 +605,22 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
                 history=[],
                 session_id="interrupt-test",
             )
+            agent._gateway.complete.assert_not_awaited()
+            agent._database.healthcheck.assert_not_awaited()
             resumed = await agent.resume(
                 session_id="interrupt-test",
                 answer="CODEX Website Customer 20260627",
             )
 
         self.assertTrue(interrupted.interrupted)
-        self.assertEqual(interrupted.interrupt_payload["question"], "你指的是哪一个客户？")
+        self.assertEqual(
+            interrupted.interrupt_payload["question"],
+            "请提供要查询的客户名称或 ID。",
+        )
         self.assertFalse(resumed.interrupted)
         self.assertTrue(resumed.data_accessed)
         self.assertEqual(resumed.answer_mode, "deterministic")
+        self.assertEqual(agent._gateway.complete.await_count, 1)
 
     async def test_stream_emits_progress_and_final_outcome(self) -> None:
         with patch.dict(os.environ, self.environment, clear=True):

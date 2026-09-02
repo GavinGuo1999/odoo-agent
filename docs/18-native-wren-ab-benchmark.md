@@ -61,7 +61,24 @@ Wren 修复前后：总通过率 `61.67% → 86.67%`，结果签名率 `54.17% �
 
 以上不是数据库写入或公司隔离失败。任何业务数值仍需 UAT 与 Odoo 原生报表核对，自动参考 SQL 不能代替业务负责人签字。
 
-## 5. 复现
+## 5. 2026-09-02 三项针对性闭环
+
+对上表三个 Case 先写失败测试，再完成以下修改：
+
+1. `clarify-customer`：增加模型前的确定性 `detect_data_ambiguity` 节点；命中时直接 Interrupt，不访问数据库、不消耗模型 Token，恢复后继续原图；
+2. `comparison-invoice`：增加稳定指标 `uninvoiced_quantity = SUM(product_uom_qty - qty_invoiced)`，并用 QueryPlan 合同强制同时返回销售数量、已开票数量和差额三列；
+3. `ranking-salespeople`：只有用户明确要求前 N/Top N 时才强制 `row_limit=LIMIT`；未指定 N 的完整排名允许 `row_limit=null`，由 Guard 追加 500 行安全上限，ChartPlan 只展示前 10。
+
+第一次针对性三轮中，Native/Wren 都是 6/9；唯一失败是模型只输出差额列。结果签名没有放宽，而是增加 `QueryPlanInvoiceDifferenceColumnsMissing` 合同并进入 Repair。修后同条件结果：
+
+| 语义层 | 三轮 | 总通过率 | 结构通过率 | 结果签名率 | p50 | p95 | Token | Cost USD | Repair |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Native | 3/3、3/3、3/3 | 100% | 100% | 100% | 23.31s | 60.94s | 51,986 | 0.028854 | 3 |
+| Wren | 3/3、3/3、3/3 | 100% | 100% | 100% | 21.02s | 39.39s | 43,400 | 0.023253 | 0 |
+
+报告目录：`evals/reports/20260902-first-three-targeted-fixed`。这是三个受影响 Case 的针对性证据，不等同于增量修改后的 20 Case 全量三轮 A/B；是否把 Wren 改为默认仍需全量基准和业务 UAT。
+
+## 6. 复现
 
 ```powershell
 Set-Location D:\odoo19e\odoo-agent
@@ -74,3 +91,14 @@ Set-Location D:\odoo19e\odoo-agent
 ```
 
 当前默认 SiliconFlow 模型探针返回 HTTP 402，因此本次使用已经配置且可用的 DeepSeek 通道做请求级覆盖，没有修改持久化默认模型设置。
+
+针对三个 Case：
+
+```powershell
+& .\.venv\Scripts\python.exe .\evals\run_semantic_benchmark.py `
+  --runs 3 `
+  --providers native,wren `
+  --cases clarify-customer,comparison-invoice,ranking-salespeople `
+  --model-provider deepseek `
+  --output-dir .\evals\reports\first-three-targeted
+```

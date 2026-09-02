@@ -28,6 +28,7 @@ SalesAgent 使用 LangGraph 作为唯一编排层，目标是：
 | `retrieve_wiki_context` | Retriever | 否 | 只读检索 learn_odoo 已审核笔记 |
 | `answer_knowledge` | Generation | 是，answer | 根据 Wiki 回答并附来源 |
 | `explain_metric` | 确定性 | 否 | 从语义层解释指标 |
+| `detect_data_ambiguity` | 确定性 | 否 | 在数据库检查和模型调用前识别无上下文的客户指代 |
 | `retrieve_sales_context` | Retriever + Tool | 否 | 检查数据库、发现字段、检索指标/表/示例 |
 | `generate_sales_sql` | Generation | 是，sql | 一次返回 QueryPlan + SQL |
 | `clarify_query_plan` | Interrupt | 否 | 暂停并请求关键条件 |
@@ -121,11 +122,11 @@ Graph 状态按功能可分为以下组。
 general  -> answer_general
 knowledge/source -> retrieve_wiki_context -> answer_knowledge
 semantic -> explain_metric
-data     -> retrieve_sales_context
-hybrid   -> retrieve_wiki_context -> retrieve_sales_context -> Text2SQL -> synthesis
+data     -> detect_data_ambiguity -> retrieve_sales_context
+hybrid   -> retrieve_wiki_context -> detect_data_ambiguity -> retrieve_sales_context -> Text2SQL -> synthesis
 ```
 
-这样普通问答、知识问答和明确指标解释不承担 Text2SQL 的延迟和成本。混合问题先获取知识证据，但知识正文不会进入 SQL Prompt，只在查询完成后的解释节点使用。分类错误会直接影响后续路径，因此黄金集应覆盖六类问题。
+`detect_data_ambiguity` 命中无历史上下文的“那个客户/该客户”时，直接构造最小 QueryPlan 并进入 `clarify_query_plan -> interrupt()`；此时不检查数据库，也不调用 SQL 模型。恢复后把补充条件写入问题，再继续语义检索和 Text2SQL。这样普通问答、知识问答和明确指标解释不承担 Text2SQL 的延迟和成本。混合问题先获取知识证据，但知识正文不会进入 SQL Prompt，只在查询完成后的解释节点使用。分类错误会直接影响后续路径，因此黄金集应覆盖六类问题。
 
 ## 5. QueryPlan 协议
 
@@ -187,7 +188,9 @@ QueryFilter：
 - 时间范围执行模型级校验；
 - `time_range.start/end` 只保留 ISO 日期；模型写入动态 SQL 日期表达式时清为 `null`，实际过滤仍由 SQL、filters 和 Guard 校验；
 - 根据用户问题把高置信的排行、趋势、比较类型和常用维度展示名归一为稳定协议；
-- 无历史上下文的“那个客户/该客户”等指代强制进入 Clarification，不允许退化为全体客户聚合；
+- 无历史上下文的“那个客户/该客户”等指代在 SQL 模型前强制进入 Clarification，不允许退化为全体客户聚合；
+- 明确“前 N/Top N”时 `row_limit` 和 SQL `LIMIT` 必须一致；仅问“各项排名”而未给 N 时允许 `row_limit=null`，Guard 自动追加全局 500 行安全上限；
+- “销售数量与已开票数量的差额”必须同时输出 `sales_quantity`、`invoiced_quantity` 和 `uninvoiced_quantity`，差额公式为 `SUM(product_uom_qty - qty_invoiced)`；
 - 需澄清但没有问题文本时判为无效；
 - 结构失败不会直接执行任何 SQL。
 

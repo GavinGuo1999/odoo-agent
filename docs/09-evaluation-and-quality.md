@@ -310,7 +310,7 @@ Set-Location D:\odoo19e\odoo-agent\backend
 
 ## 15. 下一步强化
 
-已完成：16 个可执行数据 Case 的参考 SQL、SHA-256 结果签名、数值容差、日期等价、三轮汇总和 Native/Wren 同条件 A/B。报告不保存业务结果行。2026-09-01 实测见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。
+已完成：16 个可执行数据 Case 的参考 SQL、SHA-256 结果签名、数值容差、日期等价、三轮汇总和 Native/Wren 同条件 A/B。报告不保存业务结果行。2026-09-02 又完成三个剩余失败 Case 的针对性 Native/Wren 三轮闭环，双方均为 9/9。实测见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。
 
 下一步：
 
@@ -318,7 +318,7 @@ Set-Location D:\odoo19e\odoo-agent\backend
 2. 增加 `sql-safe`、`metric-correct`、`answer-grounded` Scores；
 3. 在 CI 中运行静态集和无费用安全集；
 4. 建立点踩 Trace 到黄金案例的半自动流程；
-5. 修复发票差额列、无显式 Top N 排名和确定性歧义路由；
+5. 在增量修改后重跑 20 Case × 3 轮全量 A/B；
 6. 增加基于 `EXPLAIN` 的可选动态成本预算。
 
 ## 16. 相关文档

@@ -24,6 +24,58 @@ from app.schemas.query_plan import QueryPlan  # noqa: E402
 
 
 class QueryPlanTests(unittest.TestCase):
+    @staticmethod
+    def _ranking_payload(*, row_limit: int | None, with_limit: bool) -> str:
+        import json
+
+        limit_sql = f" LIMIT {row_limit}" if with_limit and row_limit else ""
+        return json.dumps(
+            {
+                "plan": {
+                    "query_type": "ranking",
+                    "metric_ids": ["sales_amount"],
+                    "dimensions": ["salesperson"],
+                    "filters": [
+                        {
+                            "field": "company_id",
+                            "operator": "eq",
+                            "value": 1,
+                            "source": "system_required",
+                        },
+                        {
+                            "field": "state",
+                            "operator": "in",
+                            "value": ["sale", "done"],
+                            "source": "metric_rule",
+                        },
+                    ],
+                    "time_range": {
+                        "label": "今年",
+                        "start": "2026-01-01",
+                        "end": "2026-12-31",
+                        "grain": "year",
+                    },
+                    "result_shape": "ranking",
+                    "select_columns": ["salesperson", "sales_amount"],
+                    "sort": [{"field": "sales_amount", "direction": "desc"}],
+                    "row_limit": row_limit,
+                    "assumptions": [],
+                    "ambiguities": [],
+                    "requires_clarification": False,
+                    "clarification_question": None,
+                },
+                "sql": (
+                    "SELECT rp.name AS salesperson, "
+                    "SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
+                    "JOIN res_users ru ON ru.id = so.user_id "
+                    "JOIN res_partner rp ON rp.id = ru.partner_id "
+                    "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+                    "GROUP BY rp.name ORDER BY sales_amount DESC" + limit_sql
+                ),
+            },
+            ensure_ascii=False,
+        )
+
     def test_generation_payload_is_typed_and_filters_unknown_metrics(self) -> None:
         content = """{
           "plan": {
@@ -282,6 +334,70 @@ class QueryPlanTests(unittest.TestCase):
         self.assertTrue(payload.plan.requires_clarification)
         self.assertIn("客户", payload.plan.clarification_question or "")
         self.assertEqual(payload.sql, "")
+
+    def test_full_ranking_without_explicit_top_n_accepts_null_row_limit(self) -> None:
+        payload = parse_sql_generation_payload(
+            self._ranking_payload(row_limit=None, with_limit=False),
+            allowed_metric_ids=["sales_amount"],
+            question="今年各销售员的销售额排名如何？",
+        )
+
+        self.assertEqual(payload.plan.query_type, "ranking")
+        self.assertIsNone(payload.plan.row_limit)
+        self.assertNotIn("LIMIT", payload.sql.upper())
+
+        with self.assertRaisesRegex(ValueError, "QueryPlanUnexpectedRankingLimit"):
+            parse_sql_generation_payload(
+                self._ranking_payload(row_limit=10, with_limit=True),
+                allowed_metric_ids=["sales_amount"],
+                question="今年各销售员的销售额排名如何？",
+            )
+
+    def test_explicit_top_n_still_requires_row_limit(self) -> None:
+        with self.assertRaisesRegex(ValueError, "QueryPlanRankingLimitMissing"):
+            parse_sql_generation_payload(
+                self._ranking_payload(row_limit=None, with_limit=False),
+                allowed_metric_ids=["sales_amount"],
+                question="今年销售额最高的十个销售员是谁？",
+            )
+
+    def test_invoice_difference_requires_component_and_difference_columns(self) -> None:
+        content = """{
+          "plan": {
+            "query_type": "comparison",
+            "metric_ids": ["uninvoiced_quantity"],
+            "dimensions": ["product"],
+            "filters": [
+              {"field":"company_id","operator":"eq","value":1,"source":"system_required"},
+              {"field":"state","operator":"in","value":["sale","done"],"source":"metric_rule"},
+              {"field":"display_type","operator":"eq","value":null,"source":"metric_rule"}
+            ],
+            "time_range": {"label":"今年","start":"2026-01-01","end":"2026-12-31","grain":"year"},
+            "result_shape": "table",
+            "select_columns": ["product", "uninvoiced_quantity"],
+            "sort": [],
+            "row_limit": null,
+            "assumptions": [],
+            "ambiguities": [],
+            "requires_clarification": false,
+            "clarification_question": null
+          },
+          "sql": "SELECT pt.name AS product, SUM(sol.product_uom_qty - sol.qty_invoiced) AS uninvoiced_quantity FROM sale_order_line sol JOIN sale_order so ON so.id = sol.order_id JOIN product_product pp ON pp.id = sol.product_id JOIN product_template pt ON pt.id = pp.product_tmpl_id WHERE so.company_id = 1 AND so.state IN ('sale','done') AND sol.display_type IS NULL GROUP BY pt.name"
+        }"""
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "QueryPlanInvoiceDifferenceColumnsMissing",
+        ):
+            parse_sql_generation_payload(
+                content,
+                allowed_metric_ids=[
+                    "sales_quantity",
+                    "invoiced_quantity",
+                    "uninvoiced_quantity",
+                ],
+                question="今年各产品销售数量与已开票数量的差额是多少？",
+            )
 
     def test_customer_name_filter_is_aligned_with_sql_where_field(self) -> None:
         content = """{

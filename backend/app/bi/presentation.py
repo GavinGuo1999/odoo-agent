@@ -28,6 +28,7 @@ _COLUMN_LABELS = {
     "sales_amount": "销售额",
     "salesperson": "销售员",
     "team": "销售团队",
+    "uninvoiced_quantity": "未开票数量差额",
     "week": "周",
     "year": "年份",
 }

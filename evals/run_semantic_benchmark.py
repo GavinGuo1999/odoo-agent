@@ -279,6 +279,11 @@ def main() -> int:
     parser.add_argument("--providers", default="native,wren")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument(
+        "--cases",
+        default="",
+        help="Comma-separated case IDs to run after validating the full dataset.",
+    )
     parser.add_argument("--model-provider", choices=("deepseek", "siliconflow"))
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
@@ -292,6 +297,13 @@ def main() -> int:
     output_dir = (args.output_dir or PROJECT_DIR / "evals" / "reports" / timestamp).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     items = load_dataset(args.dataset)
+    if args.cases:
+        requested = {item.strip() for item in args.cases.split(",") if item.strip()}
+        available = {item.id for item in items}
+        unknown = sorted(requested - available)
+        if unknown:
+            raise ValueError("unknown --cases: " + ",".join(unknown))
+        items = [item for item in items if item.id in requested]
     if args.limit > 0:
         items = items[: args.limit]
 

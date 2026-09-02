@@ -122,11 +122,24 @@ def validate_chart_plan(plan: ChartPlan, *, profile: DataProfile) -> ChartPlan:
     return plan
 
 
-def parse_chart_plan(content: str, *, profile: DataProfile) -> ChartPlan:
+def parse_chart_plan(
+    content: str,
+    *,
+    profile: DataProfile,
+    query_plan: QueryPlan | None = None,
+) -> ChartPlan:
     payload = _json_object(content)
     if payload.get("type") not in {"none", "table"} and "series" not in payload:
         raise ValueError("ChartPlanSeriesMissing")
     plan = ChartPlan.model_validate(payload)
+    if (
+        query_plan
+        and query_plan.query_type == "ranking"
+        and query_plan.row_limit is None
+        and plan.type in {"bar", "pie"}
+        and plan.top_n is None
+    ):
+        plan = plan.model_copy(update={"top_n": 10})
     return validate_chart_plan(plan, profile=profile)
 
 
@@ -170,10 +183,10 @@ def build_chart_spec(
     if any(hint in question for hint in _PIE_HINTS) and len(profile.numeric_fields) == 1:
         chart_type = "pie"
     top_n = None
-    if len(rows) > 20:
+    if query_plan and query_plan.query_type == "ranking":
+        top_n = query_plan.row_limit or 10
+    elif len(rows) > 20:
         top_n = 10 if chart_type in {"bar", "pie"} else 20
-    elif query_plan and query_plan.query_type == "ranking":
-        top_n = query_plan.row_limit
 
     plan = ChartPlan(
         type=chart_type,

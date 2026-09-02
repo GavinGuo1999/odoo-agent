@@ -57,10 +57,10 @@ QueryPlan 在原有指标、维度、时间和澄清字段之外增加：
 - `result_shape`：`scalar`、`time_series`、`ranking` 或 `table`；
 - `select_columns`：最终 SELECT 输出别名及顺序；
 - `sort`：排序字段和方向；
-- `row_limit`：排名或明细的结果行数；
+- `row_limit`：用户明确要求 Top N 时的结果行数；未指定 N 的完整排名为 `null`；
 - `filters[].source`：`user`、`metric_rule` 或 `system_required`。
 
-SQLGlot 会校验最终物理 SQL：输出列必须与合同一致；排名 LIMIT 必须一致；WHERE 中的过滤字段必须在 QueryPlan 或时间范围内声明。公司隔离只能标记为系统要求，订单状态和展示行排除只能标记为指标规则，用户条件必须能从问题语义中得到授权。
+SQLGlot 会校验最终物理 SQL：输出列必须与合同一致；显式 Top N 的 LIMIT 必须一致；未指定 N 的完整排名由 Guard 自动追加全局安全上限，ChartPlan 只展示前 10。WHERE 中的过滤字段必须在 QueryPlan 或时间范围内声明。公司隔离只能标记为系统要求，订单状态和展示行排除只能标记为指标规则，用户条件必须能从问题语义中得到授权。
 
 这类合同能拦截“模型擅自增加 active、is_downpayment、客户范围”等隐蔽过滤，但不能证明 SQL 的全部业务语义正确，因此仍需要黄金问题回归和人工 Score。
 
@@ -121,4 +121,4 @@ $env:PYTHONIOENCODING='utf-8'
 
 同一 DeepSeek `deepseek-v4-pro`、同一 20 Case、同一只读数据库和结果签名合同下，修后 Native 总通过率为 93.33%，Wren 为 86.67%；结果签名率分别为 93.75% 和 87.50%。Wren p50/p95 分别慢 1.21s/5.47s，并多使用 70,611 Token。
 
-Wren Guard 兼容缺陷修复使其总通过率从 61.67% 提高到 86.67%，但剩余 `ranking-salespeople`、`comparison-invoice` 和澄清稳定性问题仍需处理。因此当前继续保留 `native` 为默认，`wren` 为实验 A/B 选项。完整方法、修复前后数据和失败 Case 见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。
+Wren Guard 兼容缺陷修复使 2026-09-01 全量基准总通过率从 61.67% 提高到 86.67%。2026-09-02 又对 `ranking-salespeople`、`comparison-invoice` 和 `clarify-customer` 做了 TDD 修复；Native/Wren 针对性三轮都达到 9/9，结果签名均为 100%。由于尚未在这些增量修改后重跑 20 Case × 3 轮全量 A/B，当前仍保留 `native` 为默认、`wren` 为实验选项。完整方法和数据见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。

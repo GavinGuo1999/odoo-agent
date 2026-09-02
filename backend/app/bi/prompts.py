@@ -83,8 +83,8 @@ def sql_generation_prompt(
 - 所有销售查询必须显式包含 required_company_id 对应的 company_id 等值过滤。
 - 销售额和订单数默认只统计 semantic_context 指标给出的订单状态。
 - filters 必须完整列出 SQL WHERE 中的业务过滤：公司隔离用 system_required，指标状态/展示行规则用 metric_rule，用户明确提出的条件用 user；禁止把模型自行猜测的条件伪装成 user。
-- select_columns 必须逐项等于最终 SELECT 列别名；排名的 row_limit 必须等于 SQL LIMIT，非排名可为 null。
-- result_shape：单值 KPI 用 scalar，时间趋势用 time_series，Top N 用 ranking，其他用 table。
+- select_columns 必须逐项等于最终 SELECT 列别名。用户明确要求前 N/Top N 时，row_limit 必须等于 SQL LIMIT；只问“各项排名”但未指定 N 时，row_limit 必须为 null 且 SQL 不写 LIMIT，由系统安全上限兜底。
+- result_shape：单值 KPI 用 scalar，时间趋势用 time_series，Top N 或完整排序用 ranking，其他用 table。
 - dimensions 使用稳定语义 ID：month、quarter、year、customer、product、salesperson；不要写“月份、客户名称、产品”等展示名。没有分组（例如筛选某个客户后求总额）时必须为空数组。
 - query_type 按用户分析目标选择：“最高/最低/Top N/排名”才是 ranking；“分别/差额/相比/比较”是 comparison；“趋势/每月/按月”是 trend。缺少筛选值而暂停时仍保留原分析类型，例如“那个客户的销售额”仍是 kpi。
 - semantic_provider=wren 时，SQL 必须针对 wren_mdl_schema 中的 MDL 模型名编写；不要自行展开成物理表 SQL，后续节点会 dry-plan 编译。
@@ -97,6 +97,7 @@ def sql_generation_prompt(
 - “本月、上月、今年、去年、最近 N 个月”和普通 Top N 都不是歧义，直接按当前日期计算。
 - 不要为了可选展示细节中断查询；只有会实质改变指标结果时才请求澄清。
 - “那个客户/该客户/这个客户”等指代在对话历史中没有明确对象时，必须 requires_clarification=true，不能退化为查询所有客户。
+- “各产品销售数量与已开票数量的差额”必须同时返回 `product`、`sales_quantity`、`invoiced_quantity`、`uninvoiced_quantity` 四列，后者严格使用 `SUM(product_uom_qty - qty_invoiced)`；metric_ids 必须包含三个数量指标。
 </hard_constraints>
 
 <semantic_context>
@@ -144,8 +145,9 @@ def sql_repair_prompt(
 }}
 保持原问题和指标口径不变，只修复下面列出的错误。仍须满足 company_id、字段白名单、禁止 SELECT * 和只读要求。
 当前日期是 {current_date}；time_range.start/end 只能是 YYYY-MM-DD 或 null，不能写 SQL 表达式。
-filters 必须完整声明 SQL WHERE 条件及 source；select_columns、sort、row_limit 必须与最终 SQL 一致。Top N 的 result_shape 必须为 ranking 且 row_limit 必须等于 LIMIT。
+filters 必须完整声明 SQL WHERE 条件及 source；select_columns、sort、row_limit 必须与最终 SQL 一致。明确 Top N 的 result_shape 必须为 ranking 且 row_limit 必须等于 LIMIT；未指定 N 的完整排名使用 ranking、row_limit=null 且不写 SQL LIMIT。
 dimensions 使用 month、quarter、year、customer、product、salesperson 等稳定语义 ID，不使用中文展示名；query_type 必须按原问题的 KPI、趋势、排行、明细或比较目标保持不变。
+如果问题要求各产品销售数量与已开票数量的差额，必须完整保留 `product`、`sales_quantity`、`invoiced_quantity`、`uninvoiced_quantity` 四列及三个数量 metric_ids，不能只返回差额列。
 
 <question>{question}</question>
 <errors>{json.dumps(errors, ensure_ascii=False)}</errors>
@@ -180,7 +182,7 @@ def chart_planning_prompt(
 - pie 只用于单一数值序列的部分—整体关系，类别最多 12 个，否则使用 bar 或 table。
 - scatter 的 X/Y 都必须是数值字段。
 - 数据不适合图表时明确返回 table；没有数据时返回 none。
-- series 最多 4 个；TopN 最大 50。没有 TopN 时 top_n 返回 null。
+- series 最多 4 个；TopN 最大 50。完整排名查询即使 SQL 返回安全上限内全部行，bar/pie 图也只展示前 10，top_n 返回 10；其他没有 TopN 的图表返回 null。
 
 <question>{question}</question>
 <query_plan>{json.dumps(query_plan, ensure_ascii=False, default=str)}</query_plan>

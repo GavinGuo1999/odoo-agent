@@ -51,7 +51,11 @@ from app.database import DatabaseConnectionError, OdooDatabase, ReadOnlySqlGuard
 from app.llm import LLMGateway, LLMResult
 from app.observability import trace_agent, trace_retrieval, trace_tool, update_observation
 from app.schemas.analysis import DataProfile, SqlErrorAnalysis
-from app.schemas.query_plan import QueryPlan, SqlGenerationPayload
+from app.schemas.query_plan import (
+    QueryPlan,
+    SqlGenerationPayload,
+    ranking_requires_row_limit,
+)
 from app.services.wiki_knowledge import WikiKnowledgeService, get_wiki_service
 from app.state import get_state_store
 
@@ -179,6 +183,7 @@ _DATA_REQUEST_WORDS = (
     "哪些", "列出", "明细", "每月", "每天", "每周", "汇总", "统计",
 )
 _FOLLOW_UP_WORDS = ("那", "再", "呢", "上个月", "去年", "同比", "环比", "换成")
+_UNRESOLVED_CUSTOMER_MARKERS = ("那个客户", "这个客户", "该客户", "那位客户")
 
 
 def classify_intent(question: str, history: list[dict[str, str]]) -> Intent:
@@ -218,6 +223,52 @@ def classify_intent(question: str, history: list[dict[str, str]]) -> Intent:
             return "knowledge"
         return "data"
     return "general"
+
+
+def _has_unresolved_customer_reference(
+    question: str,
+    history: list[dict[str, str]] | None,
+) -> bool:
+    normalized = question.casefold()
+    return (
+        "用户补充条件：" not in question
+        and any(marker in normalized for marker in _UNRESOLVED_CUSTOMER_MARKERS)
+        and not history
+    )
+
+
+def _deterministic_clarification_plan(question: str) -> QueryPlan:
+    normalized = question.casefold()
+    metric_ids: list[str] = []
+    if any(word in normalized for word in ("销售额", "销售收入", "业绩", "成交金额")):
+        metric_ids.append("sales_amount")
+    if any(word in normalized for word in ("订单数", "订单数量", "多少张订单")):
+        metric_ids.append("order_count")
+
+    query_type = "kpi"
+    result_shape = "scalar"
+    dimensions: list[str] = []
+    if any(word in normalized for word in ("明细", "列表", "哪些订单")):
+        query_type, result_shape = "detail", "table"
+    elif any(word in normalized for word in ("趋势", "每月", "每个月", "月度", "按月")):
+        query_type, result_shape = "trend", "time_series"
+        dimensions = ["month"]
+    elif any(word in normalized for word in ("最高", "最低", "排名", "排行", "top ")):
+        query_type, result_shape = "ranking", "ranking"
+        dimensions = ["customer"]
+    elif any(word in normalized for word in ("分别", "差额", "相比", "比较", "对比")):
+        query_type, result_shape = "comparison", "table"
+
+    return QueryPlan(
+        query_type=query_type,
+        metric_ids=metric_ids,
+        dimensions=dimensions,
+        result_shape=result_shape,
+        select_columns=[*dimensions, *metric_ids],
+        ambiguities=["客户指代不明确"],
+        requires_clarification=True,
+        clarification_question="请提供要查询的客户名称或 ID。",
+    )
 
 
 def _json_object(content: str) -> dict[str, Any]:
@@ -289,6 +340,20 @@ _CANONICAL_DIMENSIONS = {
     "销售员名称": "salesperson",
     "业务员": "salesperson",
 }
+_INVOICE_DIFFERENCE_METRICS = (
+    "sales_quantity",
+    "invoiced_quantity",
+    "uninvoiced_quantity",
+)
+
+
+def _requires_invoice_difference_breakdown(question: str) -> bool:
+    normalized = question.casefold()
+    return (
+        "差额" in normalized
+        and any(word in normalized for word in ("销售数量", "订购数量", "销量"))
+        and any(word in normalized for word in ("已开票", "开票数量"))
+    )
 
 
 def _normalize_plan_semantics(
@@ -319,15 +384,11 @@ def _normalize_plan_semantics(
     ranking_markers = ("最高", "最低", "排名", "排行", "前十", "前五", "top ")
     comparison_markers = ("分别", "差额", "相比", "比较", "对比")
     trend_markers = ("趋势", "每月", "每个月", "月度", "按月")
-    unresolved_customer_markers = ("那个客户", "这个客户", "该客户", "那位客户")
-
     requires_clarification = plan.requires_clarification
     clarification_question = plan.clarification_question
     ambiguities = list(plan.ambiguities)
     if (
-        not history
-        and "用户补充条件：" not in question
-        and any(marker in normalized_question for marker in unresolved_customer_markers)
+        _has_unresolved_customer_reference(question, history)
     ):
         requires_clarification = True
         clarification_question = (
@@ -428,6 +489,17 @@ def parse_sql_generation_payload(
         raise ValueError("QueryPlanFilterSourceMissing")
     if payload.sql.strip() and not payload.plan.select_columns:
         raise ValueError("QueryPlanSelectColumnsMissing")
+    if (
+        payload.sql.strip()
+        and not payload.plan.requires_clarification
+        and _requires_invoice_difference_breakdown(question)
+    ):
+        expected_columns = ["product", *_INVOICE_DIFFERENCE_METRICS]
+        if (
+            not set(_INVOICE_DIFFERENCE_METRICS).issubset(payload.plan.metric_ids)
+            or payload.plan.select_columns != expected_columns
+        ):
+            raise ValueError("QueryPlanInvoiceDifferenceColumnsMissing")
     expected_shape = {
         "trend": "time_series",
         "ranking": "ranking",
@@ -436,8 +508,18 @@ def parse_sql_generation_payload(
     }.get(payload.plan.query_type)
     if expected_shape and payload.plan.result_shape != expected_shape:
         raise ValueError("QueryPlanResultShapeMismatch")
-    if payload.plan.query_type == "ranking" and payload.plan.row_limit is None:
+    if (
+        payload.plan.query_type == "ranking"
+        and payload.plan.row_limit is None
+        and ranking_requires_row_limit(question)
+    ):
         raise ValueError("QueryPlanRankingLimitMissing")
+    if (
+        payload.plan.query_type == "ranking"
+        and payload.plan.row_limit is not None
+        and not ranking_requires_row_limit(question)
+    ):
+        raise ValueError("QueryPlanUnexpectedRankingLimit")
     if payload.sql.strip() and not payload.plan.requires_clarification:
         filter_sources = {
             (item.field.rsplit(".", 1)[-1].casefold(), item.source)
@@ -518,6 +600,7 @@ class SalesAgent:
         builder.add_node("retrieve_wiki_context", self._retrieve_wiki_context)
         builder.add_node("answer_knowledge", self._answer_knowledge)
         builder.add_node("explain_metric", self._explain_metric)
+        builder.add_node("detect_data_ambiguity", self._detect_data_ambiguity)
         builder.add_node("retrieve_sales_context", self._retrieve_sales_context)
         builder.add_node("generate_sales_sql", self._generate_sales_sql)
         builder.add_node("clarify_query_plan", self._clarify_query_plan)
@@ -543,7 +626,7 @@ class SalesAgent:
                 "knowledge": "retrieve_wiki_context",
                 "source": "retrieve_wiki_context",
                 "semantic": "explain_metric",
-                "data": "retrieve_sales_context",
+                "data": "detect_data_ambiguity",
                 "hybrid": "retrieve_wiki_context",
             },
         )
@@ -551,10 +634,15 @@ class SalesAgent:
         builder.add_conditional_edges(
             "retrieve_wiki_context",
             lambda state: "data" if state["intent"] == "hybrid" else "answer",
-            {"data": "retrieve_sales_context", "answer": "answer_knowledge"},
+            {"data": "detect_data_ambiguity", "answer": "answer_knowledge"},
         )
         builder.add_edge("answer_knowledge", "finalize_turn")
         builder.add_edge("explain_metric", "finalize_turn")
+        builder.add_conditional_edges(
+            "detect_data_ambiguity",
+            self._route_after_ambiguity_detection,
+            {"clarify": "clarify_query_plan", "ready": "retrieve_sales_context"},
+        )
         builder.add_conditional_edges(
             "retrieve_sales_context",
             lambda state: "ready" if state.get("database_ready") else "unavailable",
@@ -984,6 +1072,32 @@ class SalesAgent:
         if explanation is None:
             explanation = "当前销售语义层已定义销售额、含税销售额、订单数、平均订单额、销售数量、交付数量和开票数量。"
         return {"answer": explanation, "answer_mode": "semantic", "data_accessed": False}
+
+    def _detect_data_ambiguity(self, state: AgentState) -> dict[str, Any]:
+        if not _has_unresolved_customer_reference(
+            state["question"],
+            state.get("history", []),
+        ):
+            return {}
+        _emit_stage("ambiguity-detection", "检测到客户指代不明确")
+        plan = _deterministic_clarification_plan(state["question"])
+        return {
+            "query_plan": plan.model_dump(mode="json"),
+            "metric_ids": plan.metric_ids,
+            "logical_sql": "",
+            "sql": "",
+            "safe_sql": "",
+            "sql_errors": [],
+            "sql_error_stage": "planning",
+            "sql_error_analysis": None,
+        }
+
+    @staticmethod
+    def _route_after_ambiguity_detection(state: AgentState) -> str:
+        plan_data = state.get("query_plan")
+        if plan_data and QueryPlan.model_validate(plan_data).requires_clarification:
+            return "clarify"
+        return "ready"
 
     async def _retrieve_sales_context(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("database-check", "正在检查 Odoo 只读连接")
@@ -1472,7 +1586,11 @@ class SalesAgent:
                 json_mode=True,
                 config=self._routing.answer,
             )
-            chart = parse_chart_plan(result.content, profile=profile).model_dump(mode="json")
+            chart = parse_chart_plan(
+                result.content,
+                profile=profile,
+                query_plan=query_plan,
+            ).model_dump(mode="json")
         except Exception as exc:
             warnings = state.get("warnings", []) + [
                 f"图表规划未通过安全 Schema，已使用确定性回退：{type(exc).__name__}。"
