@@ -2,7 +2,7 @@
 
 > 基线日期：2026-08-28
 >
-> 最近增量验证：2026-09-02
+> 最近增量验证：2026-09-03
 >
 > 适用应用版本：0.2.0
 >
@@ -33,7 +33,7 @@
 
 | 仓库 | 基线提交 | 工作树 | 当前证据 |
 | --- | --- | --- | --- |
-| `odoo-agent` | `8e94ac7` 后的本轮待提交变更 | 确定性歧义路由、未开票差额指标、完整排名合同 | 后端 114/114；前端语法通过；静态黄金集 20/20；三个受影响 Case 的 Native/Wren 三轮均 9/9 |
+| `odoo-agent` | `313bdd4` 后的本轮待提交变更 | 产品名称中英回退 Guard 与当前代码全量 A/B | 后端 115/115；前端语法通过；静态黄金集 20/20；Native 全量 60/60，Wren 59/60 且唯一失败为上游 504，已执行结果签名均为 100% |
 | `custom_addons` | `7f8dda1` | 提交后干净 | SiliconFlow 模块 11 个 Python、2 个 XML 文件静态解析通过 |
 | `text2sql-benchmark-lab` | `3d7f01c` | 干净 | 7 项基准核心测试通过 |
 | `learn_odoo` | `a014c51` | 提交后干净 | Markdown 严格 UTF-8、Obsidian JSON 和 Canvas JSON 解析通过 |
@@ -46,7 +46,7 @@
 
 | ID | 范围 | 检查 | 当前 | 通过标准 |
 | --- | --- | --- | --- | --- |
-| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 114/114 | 全部通过，无测试进程残留 |
+| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 115/115 | 全部通过，无测试进程残留 |
 | AUTO-02 | Agent 前端 | `node --check app.js` | 🟢 | 退出码为 0 |
 | AUTO-03 | 静态黄金集 | 20 条意图路由静态评测 | 🟢 20/20 | 通过率 100% |
 | AUTO-04 | SQL 安全 | 写操作、未知表/字段、公司过滤、输出契约、LIMIT、JOIN/CTE/子查询、笛卡尔积、明细时间边界 | 🟢 | 所有安全断言通过；正常 4 表 Wren SQL 不回归 |
@@ -88,7 +88,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 | COLLAB-01 | 启动 Odoo/PostgreSQL 并检查 `/web/login` | 现有启动脚本会删除并重建受保护日志 | 启停、端口、HTTP、日志摘要 | 明确授权脚本修改日志 | 🟢 HTTP 200，已执行 |
 | COLLAB-02 | 启动 Agent 并检查 `/api/health`、`/docs`、首页 | 依赖本地 Odoo、状态库和环境配置 | 启停、API smoke、进程清理 | 允许使用当前本地配置 | 🟢 只读 DB/状态库/UI 已执行 |
 | COLLAB-03 | 真实 20 条销售黄金集 | 会访问只读业务库并调用付费模型 | 执行、比较、生成失败差异 | 确认可使用模型额度和本地只读数据 | 🟢 DeepSeek 20/20 |
-| COLLAB-04 | 最新三轮 Text2SQL 基准 | 会消耗模型额度 | 运行、统计结果签名、p50/p95、Token、Cost、Repair | 授权模型调用和只读数据库访问 | 🟢 Native/Wren 各 3×20，修前/修后均保留 |
+| COLLAB-04 | 最新三轮 Text2SQL 基准 | 会消耗模型额度 | 运行、统计结果签名、p50/p95、Token、Cost、Repair | 授权模型调用和只读数据库访问 | 🟢 2026-09-03 当前代码：Native 60/60；Wren 59/60，唯一失败为上游 504，结果签名 47/47 |
 | COLLAB-05 | Langfuse 实际 Trace | 会连接已配置的外部 Langfuse 项目 | 生成测试 Trace并核对字段、脱敏和 Cost | 授权使用该项目连接 | 🟢 已用于首错定位和真实 Trace 复核 |
 | COLLAB-06 | PostgreSQL Checkpointer 重启恢复 | 需要独立状态数据库和服务重启 | 创建测试会话、重启、验证恢复 | 确认可使用测试状态库 | 🟡 未执行 |
 | COLLAB-07 | SiliconFlow 模块安装/升级 | 安装或升级会写数据库元数据 | 在一次性测试库安装、记录日志和模块状态 | 授权创建/使用一次性测试库 | 🟡 未执行 |
@@ -118,7 +118,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 最终自动证据：
 
-- 后端 `unittest`：114/114；
+- 后端 `unittest`：115/115；
 - 静态黄金集：20/20；
 - 前端 `node --check app.js`：通过；
 - 真实黄金集：20/20；
@@ -153,7 +153,18 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 | 未开票差额 | 只返回销售量/开票量或只返回差额都会被结果签名拒绝 | 新增 `uninvoiced_quantity`，并强制 `product + sales_quantity + invoiced_quantity + uninvoiced_quantity` 输出合同 | Native 3/3；Wren 3/3 |
 | 无显式 Top N 排名 | Wren 为完整销售员排名反复补 `row_limit` 失败 | 显式 Top N 才要求 LIMIT；完整排名由 Guard 加 500 行上限，ChartPlan 展示前 10 | Native 3/3；Wren 3/3 |
 
-第一次针对性运行双方均为 6/9，结果签名指出发票差额列仍不完整；没有修改参考结果，而是新增确定性 QueryPlan 合同后重跑。修后 Native/Wren 都是总通过率、结构通过率和结果签名率 100%。后端全量 114/114、静态黄金集 20/20、Wren 9 模型构建和 `node --check app.js` 均通过。该结果是三个受影响 Case 的窄回归，不替代增量后的 20 Case 全量三轮 A/B。
+第一次针对性运行双方均为 6/9，结果签名指出发票差额列仍不完整；没有修改参考结果，而是新增确定性 QueryPlan 合同后重跑。修后 Native/Wren 都是总通过率、结构通过率和结果签名率 100%。后端全量 114/114、静态黄金集 20/20、Wren 9 模型构建和 `node --check app.js` 均通过。该结果是三个受影响 Case 的窄回归；4.4 记录了后续当前代码全量三轮。
+
+### 4.4 产品名称回退合同与当前代码全量三轮（2026-09-03）
+
+| 阶段 | 结果 | 结论 |
+| --- | --- | --- |
+| 首次全量复验 | Native 59/60；Wren 60/60 | Native 的 `comparison-invoice` 结构通过但结果签名失败，证明真实数据回归仍能发现 Prompt/结构断言之外的问题 |
+| Trace 根因 | 产品名只取 `zh_CN`，未回退 `en_US` | 中文名为空的产品被合并；参考 SQL 与既有业务规则正确，不放宽结果签名 |
+| Red → Green | 新增 Guard 失败测试并强制 `COALESCE(zh_CN, en_US)` 顺序 | 后端全量升至 115/115；针对该 Case 的 Native/Wren 各三轮均 3/3 |
+| 最终全量复验 | Native 60/60；Wren 59/60 | Wren 唯一失败为模型调用 HTTP 504、未生成 SQL；Native 48/48、Wren 47/47 已执行结果签名均为 100% |
+
+最终全量还通过静态黄金集 20/20、Wren 9 模型构建和 `node --check app.js`。Wren 相比 Native 的 p50 增加 5.39s、Token 增加 71,656、估算费用增加 $0.032997、Repair 增加 4 次；p95 降低 0.64s。外部 504 作为可用性失败原样保留，没有用重跑替换。完整数据见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。
 
 ## 5. 必须由用户完成的红灯验收
 
@@ -194,7 +205,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 | P0 | 笛卡尔积 | 无连接条件的 JOIN/CROSS JOIN 被拒绝 | 安全错误可进入一次修复或 Interrupt | 🟢 已拦截并分类 |
 | P0 | 明细时间范围 | 明细查询无时间范围时不直接执行 | 返回澄清或高成本确认 | 🟢 缺范围 Interrupt；单边界拒绝 |
 | P0 | SiliconFlow Odoo 测试 | 在一次性测试库运行现有 9 项测试 | 9/9 通过且测试库可回收 | 🟡 等授权 |
-| P0 | 当前代码真实基准 | 8 月 12 日旧基线不能代表最新代码 | 三轮新报告可复现并提交 | 🟢 9 月 1 日全量 + 9 月 2 日三个受影响 Case 三轮；增量后全量待重跑 |
+| P0 | 当前代码真实基准 | 旧基线不能代表最新代码 | 三轮新报告可复现并提交 | 🟢 2026-09-03 当前代码 Native/Wren 全量三轮已完成；唯一外部 504 已单独分类 |
 | P1 | 延迟预算 | 简单 KPI 超过目标 p50 时评测失败 | p50 ≤18 秒，准确率不下降 | 🟡 待建 |
 | P1 | Langfuse 环境 | Trace 缺少 development/test/production 时失败 | 环境、Prompt 版本、成本完整 | 🟡 待建 |
 | P1 | 扩展黄金集 | 退款、税、空值、多币种等缺少覆盖 | 至少 60 题，含有区分度测试数据 | 🔴 需业务确认口径 |
@@ -204,7 +215,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 | 改动类型 | 合并前必须运行 |
 | --- | --- |
-| Python 后端 | 受影响测试 + 当前 108 项后端全量测试 |
+| Python 后端 | 受影响测试 + 当前 115 项后端全量测试 |
 | SQL Guard / QueryPlan / Prompt | 后端全量 + 静态黄金集；获授权时加真实黄金集 |
 | 前端 JavaScript/HTML/CSS | `node --check` + 相关 API 测试；获授权时加 localhost UI smoke |
 | Wren MDL/语义层 | provider/审计测试 + Wren compile/dry-plan；获授权时加真实基准 |
@@ -228,8 +239,8 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 ## 9. 本轮结论
 
-当前自动化层是 🟢：Agent 114/114、前端语法、静态黄金集 20/20、结果签名、SQL 复杂度 Guard、基准汇总、模块静态解析、知识库格式和项目级 Skill/Waza 资产检查均通过。
+当前自动化层是 🟢：Agent 115/115、前端语法、静态黄金集 20/20、结果签名、SQL 复杂度 Guard、基准汇总、模块静态解析、知识库格式和项目级 Skill/Waza 资产检查均通过。
 
-当前运行层的本轮范围是 🟢：Odoo/Agent、只读数据库、DeepSeek、Langfuse、参考 SQL、Native/Wren 修前/修后各三轮基准、Chart Planner、Interrupt/Resume 和 localhost UI smoke 已执行。仍为 🟡 的是 SiliconFlow HTTP 402、服务重启后的 pending interrupt 恢复、SiliconFlow 模块安装及 Odoo TransactionCase。
+当前运行层的数据与 SQL 正确性是 🟢：Odoo/Agent、只读数据库、DeepSeek、Langfuse、参考 SQL、当前代码 Native/Wren 全量三轮、Chart Planner、Interrupt/Resume 和 localhost UI smoke 已执行；所有已执行候选结果签名均通过。模型服务可用性是 🟡：Wren 三轮中的一次请求收到上游 HTTP 504；此外 SiliconFlow HTTP 402、服务重启后的 pending interrupt 恢复、SiliconFlow 模块安装及 Odoo TransactionCase 仍未关闭。
 
 当前业务验收层是 🔴：销售数值口径、图表阅读体验、模型费用、权限隔离和任何写动作仍需用户确认。代码测试通过不代表这些业务判断已由用户签字。

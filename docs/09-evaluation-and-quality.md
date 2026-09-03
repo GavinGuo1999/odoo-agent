@@ -310,7 +310,7 @@ Set-Location D:\odoo19e\odoo-agent\backend
 
 ## 15. 下一步强化
 
-已完成：16 个可执行数据 Case 的参考 SQL、SHA-256 结果签名、数值容差、日期等价、三轮汇总和 Native/Wren 同条件 A/B。报告不保存业务结果行。2026-09-02 又完成三个剩余失败 Case 的针对性 Native/Wren 三轮闭环，双方均为 9/9。实测见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。
+已完成：16 个可执行数据 Case 的参考 SQL、SHA-256 结果签名、数值容差、日期等价、三轮汇总和 Native/Wren 同条件 A/B。报告不保存业务结果行。2026-09-02 完成三个剩余失败 Case 的针对性 Native/Wren 三轮闭环；2026-09-03 又补齐产品名称中英回退 Guard，并完成当前代码的 20 Case × 3 轮全量复验：Native 60/60，Wren 59/60，后者唯一失败为模型调用 HTTP 504，双方已执行结果签名均为 100%。实测见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。
 
 下一步：
 
@@ -318,8 +318,8 @@ Set-Location D:\odoo19e\odoo-agent\backend
 2. 增加 `sql-safe`、`metric-correct`、`answer-grounded` Scores；
 3. 在 CI 中运行静态集和无费用安全集；
 4. 建立点踩 Trace 到黄金案例的半自动流程；
-5. 在增量修改后重跑 20 Case × 3 轮全量 A/B；
-6. 增加基于 `EXPLAIN` 的可选动态成本预算。
+5. 增加基于 `EXPLAIN` 的可选动态成本预算；
+6. 将黄金集扩展到退款、税、空值、多币种等至少 60 个有区分度的业务 Case，并由用户确认口径。
 
 ## 16. 相关文档
 

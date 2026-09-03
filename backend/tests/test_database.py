@@ -128,6 +128,73 @@ class SqlGuardTests(unittest.TestCase):
         self.assertTrue(result.safe, result.errors)
         self.assertIn("LIMIT 500", result.sql or "")
 
+    def test_product_dimension_requires_chinese_name_with_english_fallback(self) -> None:
+        plan = QueryPlan.model_validate(
+            {
+                "query_type": "comparison",
+                "metric_ids": [
+                    "sales_quantity",
+                    "invoiced_quantity",
+                    "uninvoiced_quantity",
+                ],
+                "dimensions": ["product"],
+                "filters": [
+                    {"field": "company_id", "operator": "eq", "value": 1, "source": "system_required"},
+                    {"field": "state", "operator": "in", "value": ["sale", "done"], "source": "metric_rule"},
+                    {"field": "display_type", "operator": "eq", "value": None, "source": "metric_rule"},
+                ],
+                "result_shape": "table",
+                "select_columns": [
+                    "product",
+                    "sales_quantity",
+                    "invoiced_quantity",
+                    "uninvoiced_quantity",
+                ],
+                "sort": [],
+                "row_limit": None,
+            }
+        )
+        sql_tail = (
+            ", SUM(sol.product_uom_qty) AS sales_quantity, "
+            "SUM(sol.qty_invoiced) AS invoiced_quantity, "
+            "SUM(sol.product_uom_qty - sol.qty_invoiced) AS uninvoiced_quantity "
+            "FROM sale_order_line sol JOIN sale_order so ON so.id = sol.order_id "
+            "JOIN product_product pp ON pp.id = sol.product_id "
+            "JOIN product_template pt ON pt.id = pp.product_tmpl_id "
+            "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+            "AND sol.display_type IS NULL "
+        )
+        unsafe = self.guard.validate(
+            "SELECT pt.name->>'zh_CN' AS product" + sql_tail +
+            "GROUP BY pt.id, pt.name->>'zh_CN'",
+            plan=plan,
+            question="今年各产品销售数量与已开票数量的差额是多少？",
+        )
+        reversed_fallback = self.guard.validate(
+            "SELECT COALESCE(pt.name->>'en_US', pt.name->>'zh_CN') AS product" +
+            sql_tail + "GROUP BY pt.id, pt.name",
+            plan=plan,
+            question="今年各产品销售数量与已开票数量的差额是多少？",
+        )
+        mixed_columns = self.guard.validate(
+            "SELECT COALESCE(pt.name->>'zh_CN', so.name->>'en_US') AS product" +
+            sql_tail + "GROUP BY pt.id, pt.name, so.name",
+            plan=plan,
+            question="今年各产品销售数量与已开票数量的差额是多少？",
+        )
+        safe = self.guard.validate(
+            "SELECT COALESCE(pt.name->>'zh_CN', pt.name->>'en_US') AS product" +
+            sql_tail + "GROUP BY pt.id, pt.name",
+            plan=plan,
+            question="今年各产品销售数量与已开票数量的差额是多少？",
+        )
+
+        self.assertFalse(unsafe.safe)
+        self.assertTrue(any("en_US" in error for error in unsafe.errors))
+        self.assertFalse(reversed_fallback.safe)
+        self.assertFalse(mixed_columns.safe)
+        self.assertTrue(safe.safe, safe.errors)
+
     def test_declared_time_range_authorizes_date_filter(self) -> None:
         plan = QueryPlan.model_validate(
             {

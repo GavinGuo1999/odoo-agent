@@ -117,8 +117,16 @@ $env:PYTHONIOENCODING='utf-8'
 
 因此 Wren 是准确率改良组件，不是“一键解决 Text2SQL”的替代系统。最终是否默认启用，必须由同模型、同温度、同黄金集的 A/B 数据决定。
 
-## 9. 2026-09-01 三轮 A/B 结论
+## 9. 三轮 A/B 结论（更新于 2026-09-03）
 
 同一 DeepSeek `deepseek-v4-pro`、同一 20 Case、同一只读数据库和结果签名合同下，修后 Native 总通过率为 93.33%，Wren 为 86.67%；结果签名率分别为 93.75% 和 87.50%。Wren p50/p95 分别慢 1.21s/5.47s，并多使用 70,611 Token。
 
-Wren Guard 兼容缺陷修复使 2026-09-01 全量基准总通过率从 61.67% 提高到 86.67%。2026-09-02 又对 `ranking-salespeople`、`comparison-invoice` 和 `clarify-customer` 做了 TDD 修复；Native/Wren 针对性三轮都达到 9/9，结果签名均为 100%。由于尚未在这些增量修改后重跑 20 Case × 3 轮全量 A/B，当前仍保留 `native` 为默认、`wren` 为实验选项。完整方法和数据见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。
+Wren Guard 兼容缺陷修复使 2026-09-01 全量基准总通过率从 61.67% 提高到 86.67%。2026-09-02 又对 `ranking-salespeople`、`comparison-invoice` 和 `clarify-customer` 做了 TDD 修复；Native/Wren 针对性三轮都达到 9/9，结果签名均为 100%。
+
+2026-09-03 已在这些增量修改后完成当前代码的 20 Case × 3 轮全量 A/B，并补上产品名称必须 `zh_CN` 优先、`en_US` 回退的 Guard 合同：
+
+- Native 60/60，总通过率、结构通过率和结果签名率均为 100%；
+- Wren 59/60，总通过率和结构通过率为 98.33%，已执行结果签名 47/47；唯一失败是模型调用阶段的上游 HTTP 504，没有生成 SQL；
+- Wren 相对 Native 的 p50 增加 5.39s，p95 降低 0.64s，Token 增加 71,656，估算费用增加 $0.032997，Repair 增加 4 次。
+
+当前没有观察到 Wren 在成功查询上的准确率优势，而中位延迟、Token、费用和 Repair 更高，因此继续保留 `native` 为默认、`wren` 为实验选项。后续是否切换应由扩展业务黄金集和用户 UAT 决定。完整方法和数据见 [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)。

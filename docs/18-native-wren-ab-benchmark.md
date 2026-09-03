@@ -1,6 +1,6 @@
 # Native / Wren 三轮真实 A/B 基准
 
-> 执行日期：2026-09-01
+> 首次执行：2026-09-01；当前代码全量复验：2026-09-03
 >
 > 数据库：`odoo19_dev` / `codex_readonly` / `transaction_read_only=on`
 >
@@ -76,9 +76,41 @@ Wren 修复前后：总通过率 `61.67% → 86.67%`，结果签名率 `54.17% �
 | Native | 3/3、3/3、3/3 | 100% | 100% | 100% | 23.31s | 60.94s | 51,986 | 0.028854 | 3 |
 | Wren | 3/3、3/3、3/3 | 100% | 100% | 100% | 21.02s | 39.39s | 43,400 | 0.023253 | 0 |
 
-报告目录：`evals/reports/20260902-first-three-targeted-fixed`。这是三个受影响 Case 的针对性证据，不等同于增量修改后的 20 Case 全量三轮 A/B；是否把 Wren 改为默认仍需全量基准和业务 UAT。
+报告目录：`evals/reports/20260902-first-three-targeted-fixed`。这是三个受影响 Case 的针对性证据；下一节记录随后完成的 20 Case 全量三轮复验。
 
-## 6. 复现
+## 6. 2026-09-03 当前代码全量闭环
+
+前三项修复后的第一组全量复验中，Native 为 59/60，Wren 为 60/60。Native 唯一失败是 `comparison-invoice` 的真实结果签名不一致。Langfuse Trace 显示 SQL 只使用 `product_template.name->>'zh_CN'`，没有按既有语义规则回退 `en_US`；当中文名为空时，PostgreSQL 会把空值产品聚为一组。SQL 结构和 QueryPlan 当时都能通过，因此这是 Guard 合同缺口，不是参考结果问题。
+
+本轮按 TDD 修复：
+
+1. Red：新增产品维度 SQL 只取 `zh_CN` 时必须失败的 Guard 测试；
+2. Green：当 QueryPlan 包含 `product` 维度时，最终 `product` 投影必须使用 `COALESCE(zh_CN, en_US)` 且顺序正确；
+3. 针对性真实回归：`comparison-invoice` 的 Native/Wren 各三轮均为 3/3，结构和结果签名均为 100%；
+4. 全量复验：同一模型、数据库、Case 和参数重新执行 20 Case × 3 轮 × 2 provider。
+
+最终原始结果如下：
+
+| 语义层 | 三轮 | 总通过率 | 结构通过率 | 结果签名率 | p50 | p95 | Token | Cost USD | Repair |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Native | 20/20、20/20、20/20 | 100% | 100% | 100%（48/48） | 6.27s | 45.22s | 203,370 | 0.107130 | 4 |
+| Wren | 20/20、19/20、20/20 | 98.33% | 98.33% | 100%（47/47） | 11.66s | 44.58s | 275,026 | 0.140127 | 8 |
+
+Wren 第 2 轮的 `ranking-products` 在模型调用阶段收到上游 HTTP 504，`agent_run=false`，没有 SQL 可做结构或结果比较。报告保留这次真实可用性失败，没有用重跑替换原始数据。其余实际执行的 Wren SQL 没有结构不一致或结果签名失败。
+
+以原始端到端口径比较，Wren 相对 Native：
+
+- 总通过率低 1.67 个百分点，差异来自一次模型服务 504；
+- 已执行结果的签名率相同，均为 100%；
+- p50 慢 5.39s，p95 快 0.64s；
+- 多 71,656 Token，多约 $0.032997；
+- 多 4 次 Repair。
+
+当前证据说明 Wren 已达到可用实验状态，但没有显示出成功查询准确率优势，同时中位延迟、Token、费用和 Repair 更高。因此继续保持 `native` 为默认、`wren` 为实验选项；是否切换默认还需扩展到更有区分度的业务 Case，并完成用户业务 UAT。
+
+本地报告目录：`evals/reports/20260903-native-wren-ab-final`。报告默认被 Git 忽略，不保存业务结果行。
+
+## 7. 复现
 
 ```powershell
 Set-Location D:\odoo19e\odoo-agent

@@ -345,6 +345,14 @@ class ReadOnlySqlGuard:
                     "SQL 最终输出列与 QueryPlan.select_columns 不一致："
                     f"期望 {expected_columns}，实际 {actual_columns}。"
                 )
+        if (
+            final_select is not None
+            and "product" in {item.casefold() for item in plan.dimensions}
+            and not self._has_product_name_fallback(final_select)
+        ):
+            errors.append(
+                "QueryPlan 产品名称必须优先使用 zh_CN，并以 en_US 回退。"
+            )
 
         if (
             plan.query_type == "ranking"
@@ -423,6 +431,49 @@ class ReadOnlySqlGuard:
                 if field not in allowed_where_fields:
                     errors.append(f"SQL 包含 QueryPlan 未声明的过滤字段：{field}。")
         return errors
+
+    @staticmethod
+    def _has_product_name_fallback(final_select: exp.Select) -> bool:
+        projection = next(
+            (
+                item
+                for item in final_select.expressions
+                if item.alias_or_name.casefold() == "product"
+            ),
+            None,
+        )
+        if projection is None:
+            return False
+        expression = projection.this if isinstance(projection, exp.Alias) else projection
+        if not isinstance(expression, exp.Coalesce):
+            return False
+        arguments = [expression.this, *expression.expressions]
+        if len(arguments) < 2:
+            return False
+        primary = ReadOnlySqlGuard._json_name_locale(arguments[0])
+        fallback = ReadOnlySqlGuard._json_name_locale(arguments[1])
+        return bool(
+            primary
+            and fallback
+            and primary[0] == fallback[0]
+            and primary[1] == "zh_cn"
+            and fallback[1] == "en_us"
+        )
+
+    @staticmethod
+    def _json_name_locale(expression: exp.Expression) -> tuple[str, str] | None:
+        if not isinstance(expression, exp.JSONExtractScalar):
+            return None
+        column = expression.this
+        path = expression.expression
+        if not isinstance(column, exp.Column) or column.name.casefold() != "name":
+            return None
+        if not isinstance(path, exp.JSONPath):
+            return None
+        keys = list(path.find_all(exp.JSONPathKey))
+        if len(keys) != 1:
+            return None
+        return column.sql(dialect="postgres").casefold(), str(keys[0].this).casefold()
 
     @staticmethod
     def _has_sql_time_bounds(statement: exp.Query) -> bool:
