@@ -556,6 +556,7 @@
   const databaseCompanyInput = document.querySelector("[data-db-company-id]");
   const databaseMaxRowsInput = document.querySelector("[data-db-max-rows]");
   const databaseTimeoutInput = document.querySelector("[data-db-timeout]");
+  const databaseCostLimitInput = document.querySelector("[data-db-cost-limit]");
   const databaseResponse = document.querySelector("[data-db-response]");
   const testDatabaseButton = document.querySelector("[data-test-database]");
   const metricsTable = document.querySelector("[data-metrics-table]");
@@ -752,6 +753,7 @@
     if (databaseCompanyInput) databaseCompanyInput.value = config.company_id;
     if (databaseMaxRowsInput) databaseMaxRowsInput.value = config.max_rows;
     if (databaseTimeoutInput) databaseTimeoutInput.value = config.statement_timeout_ms;
+    if (databaseCostLimitInput) databaseCostLimitInput.value = config.explain_total_cost_limit;
     if (queryMaxRows) queryMaxRows.textContent = formatNumber(config.max_rows, 0);
     if (queryTimeout) queryTimeout.textContent = `${formatNumber(config.statement_timeout_ms / 1000)} 秒`;
     if (databasePasswordInput) {
@@ -960,7 +962,8 @@
       password: databasePasswordInput?.value.trim() || null,
       company_id: Number(databaseCompanyInput?.value || 1),
       max_rows: Number(databaseMaxRowsInput?.value || 500),
-      statement_timeout_ms: Number(databaseTimeoutInput?.value || 15000)
+      statement_timeout_ms: Number(databaseTimeoutInput?.value || 15000),
+      explain_total_cost_limit: Number(databaseCostLimitInput?.value || 1000000)
     };
   }
 
@@ -1562,6 +1565,19 @@
         const label = document.createElement("span");
         label.textContent = "这个回答有帮助吗？";
         feedback.appendChild(label);
+        const sendFeedback = async (positive, reason = null) => {
+          feedback.querySelectorAll("button, select").forEach((item) => { item.disabled = true; });
+          try {
+            await apiRequest("/chat/feedback", {
+              method: "POST",
+              body: JSON.stringify({ trace_id: metadata.trace_id, positive, reason })
+            });
+            label.textContent = "已记录到 Langfuse";
+          } catch (error) {
+            label.textContent = `反馈未记录：${error.message}`;
+            feedback.querySelectorAll("button, select").forEach((item) => { item.disabled = false; });
+          }
+        };
         [[true, "👍"], [false, "👎"]].forEach(([positive, symbol]) => {
           const button = document.createElement("button");
           button.type = "button";
@@ -1569,18 +1585,31 @@
           button.textContent = symbol;
           button.setAttribute("aria-label", positive ? "有帮助" : "没帮助");
           button.addEventListener("click", async () => {
-            feedback.querySelectorAll("button").forEach((item) => { item.disabled = true; });
-            try {
-              await apiRequest("/chat/feedback", {
-                method: "POST",
-                body: JSON.stringify({ trace_id: metadata.trace_id, positive })
-              });
+            if (positive) {
               button.classList.add("selected");
-              label.textContent = "已记录到 Langfuse";
-            } catch (error) {
-              label.textContent = `反馈未记录：${error.message}`;
-              feedback.querySelectorAll("button").forEach((item) => { item.disabled = false; });
+              await sendFeedback(true);
+              return;
             }
+            if (feedback.querySelector("select")) return;
+            button.classList.add("selected");
+            label.textContent = "主要哪里不对？";
+            const reason = document.createElement("select");
+            reason.className = "chat-feedback-reason";
+            [
+              ["number-wrong", "数字不对"],
+              ["metric-wrong", "指标口径不对"],
+              ["sql-wrong", "查询逻辑不对"],
+              ["missing-answer", "答非所问/缺内容"],
+              ["chart-wrong", "图表不合适"],
+              ["too-slow", "响应太慢"],
+              ["other", "其他"]
+            ].forEach(([value, text]) => reason.add(new Option(text, value)));
+            const submit = document.createElement("button");
+            submit.type = "button";
+            submit.className = "chat-feedback-submit";
+            submit.textContent = "提交";
+            submit.addEventListener("click", () => sendFeedback(false, reason.value));
+            feedback.append(reason, submit);
           });
           feedback.appendChild(button);
         });

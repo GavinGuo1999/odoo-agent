@@ -553,6 +553,7 @@ async def submit_chat_feedback(payload: ChatFeedbackRequest) -> ChatFeedbackResp
             record_user_feedback,
             trace_id=payload.trace_id,
             positive=payload.positive,
+            reason=payload.reason,
             comment=payload.comment,
         )
     except Exception as exc:

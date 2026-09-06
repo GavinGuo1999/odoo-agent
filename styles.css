@@ -1329,6 +1329,26 @@ button {
   background: #f5edf3;
 }
 
+.chat-feedback-reason,
+.chat-feedback-submit {
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-primary);
+  font-size: 11px;
+}
+
+.chat-feedback-reason {
+  max-width: 150px;
+  padding: 0 7px;
+}
+
+.chat-feedback-submit {
+  padding: 0 10px;
+  cursor: pointer;
+}
+
 .chat-progress {
   display: flex;
   align-items: center;

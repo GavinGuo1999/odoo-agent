@@ -11,6 +11,17 @@ from app.schemas.query_plan import QueryPlan
 from app.schemas.wiki import WikiCitationResponse
 
 
+FeedbackReason = Literal[
+    "number-wrong",
+    "metric-wrong",
+    "sql-wrong",
+    "missing-answer",
+    "chart-wrong",
+    "too-slow",
+    "other",
+]
+
+
 class ChatHistoryMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=4_000)
@@ -32,6 +43,7 @@ class ChatResumeRequest(BaseModel):
 class ChatFeedbackRequest(BaseModel):
     trace_id: str = Field(pattern=r"^[a-fA-F0-9]{32}$")
     positive: bool
+    reason: FeedbackReason | None = None
     comment: str | None = Field(default=None, max_length=500)
 
 

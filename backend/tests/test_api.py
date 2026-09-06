@@ -322,7 +322,37 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         record.assert_called_once_with(
             trace_id="a" * 32,
             positive=False,
+            reason=None,
             comment=None,
+        )
+
+    async def test_chat_negative_feedback_records_structured_reason(self) -> None:
+        with (
+            patch.dict(os.environ, self.environment, clear=True),
+            patch(
+                "app.api.routes.chat.record_user_feedback",
+                return_value=True,
+            ) as record,
+        ):
+            get_settings.cache_clear()
+            transport = ASGITransport(app=create_app())
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                response = await client.post(
+                    "/api/chat/feedback",
+                    json={
+                        "trace_id": "b" * 32,
+                        "positive": False,
+                        "reason": "metric-wrong",
+                        "comment": "统计口径不对",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        record.assert_called_once_with(
+            trace_id="b" * 32,
+            positive=False,
+            reason="metric-wrong",
+            comment="统计口径不对",
         )
 
     async def test_settings_never_returns_saved_secrets(self) -> None:

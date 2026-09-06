@@ -39,6 +39,11 @@ class DatabaseSettingsUpdate(BaseModel):
     company_id: int = Field(ge=1)
     statement_timeout_ms: int = Field(ge=1_000, le=120_000)
     max_rows: int = Field(ge=1, le=5_000)
+    explain_total_cost_limit: float = Field(
+        default=1_000_000.0,
+        gt=0,
+        le=1_000_000_000.0,
+    )
 
 
 class ModelRoleSettingsUpdate(BaseModel):
@@ -108,6 +113,7 @@ class DatabaseSettingsView(BaseModel):
     company_id: int
     statement_timeout_ms: int
     max_rows: int
+    explain_total_cost_limit: float
 
 
 class ModelRoleSettingsView(BaseModel):

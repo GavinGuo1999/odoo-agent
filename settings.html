@@ -122,6 +122,7 @@
                 <label><span class="label">公司 ID</span><input class="input" data-db-company-id type="number" min="1" value="1"></label>
                 <label><span class="label">最大返回行数</span><input class="input" data-db-max-rows type="number" min="1" max="5000" value="500"></label>
                 <label><span class="label">查询超时（毫秒）</span><input class="input" data-db-timeout type="number" min="1000" max="120000" value="15000"></label>
+                <label><span class="label">EXPLAIN 计划成本上限</span><input class="input" data-db-cost-limit type="number" min="1" max="1000000000" value="1000000"></label>
               </div>
               <div class="connection-row"><span class="connection-label">安全模式</span><span class="connection-value">强制只读 · 单条 SELECT</span></div>
               <div class="connection-row"><span class="connection-label">最近响应</span><span class="connection-value" data-db-response>正在检查…</span></div>
@@ -152,6 +153,7 @@
                 <div class="context-item"><span class="context-key">只允许 SELECT</span><label class="switch"><input type="checkbox" checked disabled aria-label="只允许 SELECT"><span class="switch-track"></span></label></div>
                 <div class="context-item"><span class="context-key">最大返回行数</span><span class="context-value" data-query-max-rows>读取中</span></div>
                 <div class="context-item"><span class="context-key">查询超时</span><span class="context-value" data-query-timeout>读取中</span></div>
+                <div class="context-item"><span class="context-key">执行前成本闸门</span><span class="context-value">EXPLAIN，不运行 ANALYZE</span></div>
                 <div class="context-item"><span class="context-key">自动修复次数</span><span class="context-value">2 次</span></div>
               </div>
             </section>

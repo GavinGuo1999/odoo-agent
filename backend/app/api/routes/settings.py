@@ -104,6 +104,7 @@ def _settings_view(*, restart_required: bool = False) -> SettingsView:
             company_id=settings.odoo_company_id,
             statement_timeout_ms=settings.odoo_statement_timeout_ms,
             max_rows=settings.odoo_max_rows,
+            explain_total_cost_limit=settings.odoo_explain_total_cost_limit,
         ),
         state_database=StateDatabaseSettingsView(
             enabled=state_database.enabled,
@@ -303,6 +304,9 @@ async def update_settings(payload: SettingsUpdateRequest) -> SettingsView:
         "ODOO_COMPANY_ID": str(payload.database.company_id),
         "ODOO_STATEMENT_TIMEOUT_MS": str(payload.database.statement_timeout_ms),
         "ODOO_MAX_ROWS": str(payload.database.max_rows),
+        "ODOO_EXPLAIN_TOTAL_COST_LIMIT": str(
+            payload.database.explain_total_cost_limit
+        ),
         "AGENT_STATE_ENABLED": str(payload.state_database.enabled).lower(),
         "AGENT_STATE_DB_HOST": payload.state_database.host.strip(),
         "AGENT_STATE_DB_PORT": str(payload.state_database.port),
