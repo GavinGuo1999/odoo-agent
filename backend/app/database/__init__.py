@@ -4,6 +4,7 @@ from .client import (
     DatabaseConnectionError,
     DatabaseHealth,
     OdooDatabase,
+    QueryCostExceededError,
     QueryResult,
 )
 from .sql_guard import ReadOnlySqlGuard, SqlComplexityLimits, SqlValidationResult
@@ -12,6 +13,7 @@ __all__ = [
     "DatabaseConnectionError",
     "DatabaseHealth",
     "OdooDatabase",
+    "QueryCostExceededError",
     "QueryResult",
     "ReadOnlySqlGuard",
     "SqlComplexityLimits",

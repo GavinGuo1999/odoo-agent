@@ -20,6 +20,10 @@ class DatabaseConnectionError(RuntimeError):
     pass
 
 
+class QueryCostExceededError(DatabaseConnectionError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class DatabaseHealth:
     connected: bool
@@ -41,6 +45,7 @@ class QueryResult:
     row_count: int
     truncated: bool
     duration_ms: float
+    estimated_plan_cost: float | None = None
 
 
 def _json_value(value: Any) -> Any:
@@ -55,6 +60,31 @@ def _json_value(value: Any) -> Any:
     if isinstance(value, (dict, list)):
         return json.loads(json.dumps(value, default=str))
     return str(value)
+
+
+def _explain_total_cost(row: Any) -> float | None:
+    """Extract PostgreSQL's root Total Cost without executing the query."""
+
+    if not isinstance(row, dict):
+        return None
+    payload = row.get("QUERY PLAN") or row.get("query_plan")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+    if isinstance(payload, list) and payload:
+        payload = payload[0]
+    if not isinstance(payload, dict):
+        return None
+    plan = payload.get("Plan", payload)
+    if not isinstance(plan, dict):
+        return None
+    value = plan.get("Total Cost")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 class OdooDatabase:
@@ -169,11 +199,25 @@ class OdooDatabase:
         params: Sequence[Any] | None = None,
     ) -> QueryResult:
         started = perf_counter()
+        estimated_plan_cost: float | None = None
         try:
             with self._connect() as connection:
+                explain_cursor = connection.execute(
+                    f"EXPLAIN (FORMAT JSON) {sql}",
+                    params,
+                )
+                explain_row = explain_cursor.fetchone()
+                estimated_plan_cost = _explain_total_cost(explain_row)
+                if (
+                    estimated_plan_cost is not None
+                    and estimated_plan_cost > self._config.explain_total_cost_limit
+                ):
+                    raise QueryCostExceededError("QueryCostExceeded")
                 cursor = connection.execute(sql, params)
                 raw_rows = cursor.fetchmany(self._config.max_rows + 1)
                 columns = [column.name for column in (cursor.description or [])]
+        except QueryCostExceededError:
+            raise
         except Exception as exc:
             raise DatabaseConnectionError(type(exc).__name__) from exc
 
@@ -189,8 +233,8 @@ class OdooDatabase:
             row_count=len(rows),
             truncated=truncated,
             duration_ms=round((perf_counter() - started) * 1000, 2),
+            estimated_plan_cost=estimated_plan_cost,
         )
-
     async def discover_columns(
         self,
         table_columns: dict[str, list[str]],

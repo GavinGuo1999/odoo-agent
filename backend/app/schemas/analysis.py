@@ -14,6 +14,7 @@ SqlErrorCategory = Literal[
     "unknown_column",
     "unknown_table",
     "type_mismatch",
+    "cost_limit",
     "timeout",
     "permission",
     "connection",

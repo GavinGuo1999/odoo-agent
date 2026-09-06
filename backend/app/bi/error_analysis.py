@@ -38,6 +38,8 @@ def _category(stage: SqlErrorStage, message: str) -> SqlErrorCategory:
         for marker in ("querycanceled", "querycancelederror", "statementtimeout", "timeout")
     ) or "超时" in message:
         return "timeout"
+    if "querycostexceeded" in normalized or "计划成本" in message:
+        return "cost_limit"
     if any(
         marker in normalized
         for marker in ("insufficientprivilege", "permissiondenied", "permission")
@@ -122,6 +124,7 @@ def analyze_sql_errors(
         "unknown_column",
         "unknown_table",
         "type_mismatch",
+        "cost_limit",
     } or (category == "unknown" and stage == "execution")
     needs_user_input = category == "ambiguous_request"
     hints = {
@@ -132,6 +135,7 @@ def analyze_sql_errors(
         "unknown_column": "改用语义上下文中实际存在且已开放的字段。",
         "unknown_table": "改用语义上下文中实际存在且已开放的模型或表。",
         "type_mismatch": "修正字段类型、比较值或显式转换。",
+        "cost_limit": "减少扫描、连接、子查询或结果范围，同时保持 QueryPlan 业务口径。",
     }
     clarification_question = (
         "这个查询存在会改变结果的歧义，请补充具体时间范围、对象或比较口径。"

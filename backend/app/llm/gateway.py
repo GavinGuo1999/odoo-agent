@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -37,6 +38,23 @@ class ProviderNotConfiguredError(RuntimeError):
 
 class EmptyModelResponseError(RuntimeError):
     pass
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code in {408, 409, 429, 500, 502, 503, 504}:
+        return True
+    normalized = type(exc).__name__.casefold()
+    return any(
+        marker in normalized
+        for marker in (
+            "timeout",
+            "apiconnection",
+            "ratelimit",
+            "serviceunavailable",
+            "internalserver",
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,41 +123,75 @@ class LLMGateway:
             "pricing_currency": active_config.pricing_currency,
             "pricing_is_estimate": True,
             "thinking_mode": active_config.thinking_mode,
+            "max_retries": active_config.max_retries,
             **(metadata or {}),
         }
+        langfuse_prompt = next(
+            (
+                getattr(message.get("content"), "langfuse_prompt", None)
+                for message in messages
+                if getattr(message.get("content"), "langfuse_prompt", None) is not None
+            ),
+            None,
+        )
+        trace_kwargs: dict[str, Any] = {
+            "name": generation_name,
+            "model": active_config.model,
+            "input_data": {"messages": messages},
+        }
+        if langfuse_prompt is not None:
+            trace_kwargs["prompt"] = langfuse_prompt
         with trace_generation(
-            name=generation_name,
-            model=active_config.model,
-            input_data={"messages": messages},
+            **trace_kwargs,
         ) as observation:
             update_observation(observation, metadata=trace_metadata)
-            try:
-                completion = await litellm.acompletion(
-                    model=litellm_model,
-                    messages=messages,
-                    api_key=active_config.api_key,
-                    api_base=active_config.base_url,
-                    timeout=active_config.timeout_seconds,
-                    temperature=0,
-                    stream=False,
-                    **request_options,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "LLM request failed provider=%s model=%s error=%s status=%s code=%s param=%s",
-                    active_config.name,
-                    active_config.model,
-                    type(exc).__name__,
-                    getattr(exc, "status_code", None),
-                    getattr(exc, "code", None),
-                    getattr(exc, "param", None),
-                )
-                update_observation(
-                    observation,
-                    level="ERROR",
-                    status_message=type(exc).__name__,
-                )
-                raise
+            retry_count = 0
+            while True:
+                try:
+                    completion = await litellm.acompletion(
+                        model=litellm_model,
+                        messages=messages,
+                        api_key=active_config.api_key,
+                        api_base=active_config.base_url,
+                        timeout=active_config.timeout_seconds,
+                        temperature=0,
+                        stream=False,
+                        **request_options,
+                    )
+                    break
+                except Exception as exc:
+                    if (
+                        retry_count >= active_config.max_retries
+                        or not _is_retryable_error(exc)
+                    ):
+                        logger.warning(
+                            "LLM request failed provider=%s model=%s error=%s status=%s code=%s param=%s retries=%s",
+                            active_config.name,
+                            active_config.model,
+                            type(exc).__name__,
+                            getattr(exc, "status_code", None),
+                            getattr(exc, "code", None),
+                            getattr(exc, "param", None),
+                            retry_count,
+                        )
+                        update_observation(
+                            observation,
+                            level="ERROR",
+                            status_message=type(exc).__name__,
+                            metadata={**trace_metadata, "retry_count": retry_count},
+                        )
+                        raise
+                    retry_count += 1
+                    logger.info(
+                        "Retrying LLM request provider=%s model=%s attempt=%s error=%s",
+                        active_config.name,
+                        active_config.model,
+                        retry_count,
+                        type(exc).__name__,
+                    )
+                    delay = active_config.retry_backoff_seconds * (2 ** (retry_count - 1))
+                    if delay:
+                        await asyncio.sleep(delay)
 
             content = completion.choices[0].message.content
             if not content:
@@ -156,6 +208,7 @@ class LLMGateway:
             update_observation(
                 observation,
                 output=content,
+                metadata={**trace_metadata, "retry_count": retry_count},
                 usage_details={
                     "input": input_tokens or 0,
                     "output": output_tokens or 0,

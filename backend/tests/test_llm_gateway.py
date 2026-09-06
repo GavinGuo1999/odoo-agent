@@ -17,6 +17,75 @@ from app.llm.gateway import LLMGateway  # noqa: E402
 
 
 class LLMGatewayTests(unittest.IsolatedAsyncioTestCase):
+    async def test_retryable_504_is_retried_once(self) -> None:
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok"))],
+            model="deepseek-v4-pro",
+            usage=None,
+        )
+        error = RuntimeError("gateway timeout")
+        error.status_code = 504
+        config = ProviderConfig(
+            name="deepseek",
+            api_key="sensitive-value",
+            base_url="https://api.deepseek.com",
+            model="deepseek-v4-pro",
+            timeout_seconds=30,
+            max_retries=1,
+            retry_backoff_seconds=0,
+        )
+
+        @contextmanager
+        def fake_generation(**_kwargs):
+            yield Mock()
+
+        with (
+            patch(
+                "app.llm.gateway.litellm.acompletion",
+                new=AsyncMock(side_effect=[error, completion]),
+            ) as complete,
+            patch("app.llm.gateway.trace_generation", side_effect=fake_generation),
+        ):
+            result = await LLMGateway(config).complete(
+                messages=[{"role": "user", "content": "重试"}],
+                generation_name="retry-test",
+            )
+
+        self.assertEqual(result.content, "ok")
+        self.assertEqual(complete.await_count, 2)
+
+    async def test_non_retryable_402_is_not_retried(self) -> None:
+        error = RuntimeError("payment required")
+        error.status_code = 402
+        config = ProviderConfig(
+            name="siliconflow",
+            api_key="sensitive-value",
+            base_url="https://api.siliconflow.cn/v1",
+            model="model",
+            timeout_seconds=30,
+            max_retries=1,
+            retry_backoff_seconds=0,
+        )
+
+        @contextmanager
+        def fake_generation(**_kwargs):
+            yield Mock()
+
+        with (
+            patch(
+                "app.llm.gateway.litellm.acompletion",
+                new=AsyncMock(side_effect=error),
+            ) as complete,
+            patch("app.llm.gateway.trace_generation", side_effect=fake_generation),
+            self.assertRaises(RuntimeError),
+        ):
+            await LLMGateway(config).complete(
+                messages=[{"role": "user", "content": "额度"}],
+                generation_name="no-retry-test",
+            )
+
+        self.assertEqual(complete.await_count, 1)
+
     async def test_completion_uses_stable_generation_name_and_returns_usage(self) -> None:
         completion = SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content="连接正常"))],

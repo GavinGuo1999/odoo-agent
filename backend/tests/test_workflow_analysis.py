@@ -70,6 +70,16 @@ class SqlErrorAnalyzerTests(unittest.TestCase):
         self.assertEqual(analysis.category, "contract_violation")
         self.assertTrue(analysis.repairable)
 
+    def test_explain_cost_limit_is_repairable_without_executing_query(self) -> None:
+        analysis = analyze_sql_errors(
+            stage="execution",
+            errors=["数据库执行失败：QueryCostExceeded。"],
+            sql="SELECT 1 FROM sale_order",
+        )
+
+        self.assertEqual(analysis.category, "cost_limit")
+        self.assertTrue(analysis.repairable)
+
     def test_missing_detail_time_range_requests_user_input(self) -> None:
         analysis = analyze_sql_errors(
             stage="validation",

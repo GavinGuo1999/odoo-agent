@@ -23,6 +23,8 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(provider.base_url, "https://api.deepseek.com")
         self.assertEqual(provider.model, "deepseek-v4-pro")
         self.assertFalse(provider.configured)
+        self.assertEqual(provider.max_retries, 1)
+        self.assertEqual(settings.database().explain_total_cost_limit, 1_000_000.0)
 
     def test_provider_key_is_loaded_without_being_exposed(self) -> None:
         with patch.dict(
@@ -36,7 +38,24 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(provider.configured)
         self.assertNotIn("sensitive-value", repr(settings.siliconflow_api_key))
 
+    def test_wiki_hybrid_retrieval_uses_siliconflow_without_exposing_key(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "SILICONFLOW_API_KEY": "wiki-sensitive-value",
+                "WIKI_RETRIEVAL_MODE": "hybrid",
+                "WIKI_EMBEDDING_MODEL": "BAAI/bge-m3",
+                "WIKI_RERANKER_MODEL": "BAAI/bge-reranker-v2-m3",
+            },
+            clear=True,
+        ):
+            wiki = Settings().wiki()
+
+        self.assertEqual(wiki.retrieval_mode, "hybrid")
+        self.assertEqual(wiki.embedding_model, "BAAI/bge-m3")
+        self.assertEqual(wiki.reranker_model, "BAAI/bge-reranker-v2-m3")
+        self.assertNotIn("wiki-sensitive-value", repr(wiki))
+
 
 if __name__ == "__main__":
     unittest.main()
-
