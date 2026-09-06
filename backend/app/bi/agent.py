@@ -76,6 +76,7 @@ class AgentState(TypedDict, total=False):
     provider: str
     model: str
     model_roles: dict[str, dict[str, str]]
+    role_usage: dict[str, dict[str, Any]]
     semantic_context: str
     semantic_provider: str
     semantic_version: str
@@ -133,6 +134,7 @@ class AgentOutcome:
     query_plan: QueryPlan | None = None
     answer_mode: AnswerMode = "llm"
     model_roles: dict[str, dict[str, str]] = field(default_factory=dict)
+    role_usage: dict[str, dict[str, Any]] = field(default_factory=dict)
     semantic_provider: str = "native"
     repair_count: int = 0
     interrupted: bool = False
@@ -538,10 +540,31 @@ def parse_sql_generation_payload(
 def _usage_fields(state: AgentState, result: LLMResult, *, role: str) -> dict[str, Any]:
     model_roles = dict(state.get("model_roles", {}))
     model_roles[role] = {"provider": result.provider, "model": result.model}
+    # `role` 与推给 Langfuse 的 generation_role 同名，这里按同一维度在本地累加，
+    # 使成本归因不必回查 Langfuse API（docs/20 P1-1）。
+    role_usage = {key: dict(value) for key, value in state.get("role_usage", {}).items()}
+    bucket = role_usage.setdefault(
+        role,
+        {
+            "calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "estimated_cost_usd": 0.0,
+        },
+    )
+    bucket["calls"] += 1
+    bucket["input_tokens"] += result.input_tokens or 0
+    bucket["output_tokens"] += result.output_tokens or 0
+    bucket["total_tokens"] += result.total_tokens or 0
+    bucket["estimated_cost_usd"] = round(
+        bucket["estimated_cost_usd"] + result.total_cost_usd, 10
+    )
     return {
         "provider": result.provider,
         "model": result.model,
         "model_roles": model_roles,
+        "role_usage": role_usage,
         "input_tokens": state.get("input_tokens", 0) + (result.input_tokens or 0),
         "output_tokens": state.get("output_tokens", 0) + (result.output_tokens or 0),
         "total_tokens": state.get("total_tokens", 0) + (result.total_tokens or 0),
@@ -748,6 +771,7 @@ class SalesAgent:
             "provider": self._routing.general.name,
             "model": self._routing.general.model,
             "model_roles": {},
+            "role_usage": {},
             "semantic_context": "",
             "semantic_provider": self._semantics.name,
             "semantic_version": self._semantics.version,
@@ -841,6 +865,7 @@ class SalesAgent:
             query_plan=plan,
             answer_mode=state.get("answer_mode", "llm"),
             model_roles=state.get("model_roles", {}),
+            role_usage=state.get("role_usage", {}),
             semantic_provider=state.get("semantic_provider", self._semantics.name),
             repair_count=state.get("repair_count", 0),
             interrupted=interrupted,
@@ -1014,6 +1039,9 @@ class SalesAgent:
                     "titles": [hit.title for hit in result.hits],
                     "headings": [hit.heading for hit in result.hits],
                     "index_fingerprint": result.index_fingerprint,
+                    "retrieval_mode": result.retrieval_mode,
+                    "reranked": result.reranked,
+                    "fallback_reason": result.fallback_reason,
                 },
             )
         return {
@@ -1521,6 +1549,7 @@ class SalesAgent:
                     "filled_time_buckets": filled_time_buckets,
                     "truncated": result.truncated,
                     "duration_ms": result.duration_ms,
+                    "estimated_plan_cost": result.estimated_plan_cost,
                 },
             )
         warnings = state.get("warnings", [])

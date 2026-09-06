@@ -644,5 +644,51 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[-1]["outcome"].answer, "你好。")
 
 
+class UsageAttributionTests(unittest.TestCase):
+    """docs/20 P1-1: generation_role 已经打在 Langfuse 上，本地也要能按 role 归因成本。"""
+
+    def test_usage_fields_accumulate_tokens_and_cost_per_role(self) -> None:
+        from app.bi.agent import _usage_fields
+
+        state: dict[str, object] = {}
+        sql_call = LLMResult(
+            content="SELECT 1",
+            provider="deepseek",
+            model="deepseek-chat",
+            input_tokens=100,
+            output_tokens=20,
+            total_tokens=120,
+            total_cost_usd=0.006,
+        )
+        answer_call = LLMResult(
+            content="结论",
+            provider="deepseek",
+            model="deepseek-chat",
+            input_tokens=40,
+            output_tokens=10,
+            total_tokens=50,
+            total_cost_usd=0.002,
+        )
+
+        state.update(_usage_fields(state, sql_call, role="sql"))
+        state.update(_usage_fields(state, sql_call, role="sql"))
+        state.update(_usage_fields(state, answer_call, role="answer"))
+
+        role_usage = state["role_usage"]
+        self.assertEqual(role_usage["sql"]["calls"], 2)
+        self.assertEqual(role_usage["sql"]["total_tokens"], 240)
+        self.assertEqual(role_usage["sql"]["input_tokens"], 200)
+        self.assertAlmostEqual(role_usage["sql"]["estimated_cost_usd"], 0.012, places=6)
+        self.assertEqual(role_usage["answer"]["calls"], 1)
+        self.assertAlmostEqual(role_usage["answer"]["estimated_cost_usd"], 0.002, places=6)
+        # 分角色之和必须等于总数，否则归因报表会对不上账。
+        self.assertEqual(state["total_tokens"], 290)
+        self.assertAlmostEqual(
+            sum(entry["estimated_cost_usd"] for entry in role_usage.values()),
+            state["estimated_cost_usd"],
+            places=8,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

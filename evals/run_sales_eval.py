@@ -8,7 +8,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from time import perf_counter
-from typing import Literal
+from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,7 +26,10 @@ from app.bi.semantic import SalesSemanticLayer  # noqa: E402
 from app.bi.time_series import complete_year_months  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.database import OdooDatabase, ReadOnlySqlGuard  # noqa: E402
-from app.observability import langfuse_is_configured  # noqa: E402
+from app.observability import (  # noqa: E402
+    configure_langfuse_environment,
+    langfuse_is_configured,
+)
 from app.schemas.query_plan import QueryType  # noqa: E402
 from app.state import get_state_store  # noqa: E402
 from app.windows_loop import selector_loop_factory  # noqa: E402
@@ -50,7 +53,7 @@ class GoldenInput(BaseModel):
 class GoldenExpected(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    intent: Literal["general", "semantic", "data"]
+    intent: Literal["general", "knowledge", "source", "semantic", "data", "hybrid"]
     query_type: QueryType | None = None
     metric_ids: list[str] = Field(default_factory=list)
     dimensions: list[str] = Field(default_factory=list)
@@ -300,6 +303,7 @@ async def run_live(
                         "answer_mode": outcome.answer_mode,
                         "total_tokens": outcome.total_tokens,
                         "estimated_cost_usd": outcome.estimated_cost_usd,
+                        "role_usage": outcome.role_usage,
                         "semantic_provider": outcome.semantic_provider,
                         "repair_count": outcome.repair_count,
                         "latency_ms": round((perf_counter() - started) * 1000, 2),
@@ -318,6 +322,7 @@ def sync_langfuse_dataset(items: list[GoldenItem]) -> None:
         raise RuntimeError("Langfuse is not configured")
     from langfuse import get_client
 
+    configure_langfuse_environment()
     client = get_client()
     client.create_dataset(
         name=DATASET_NAME,
@@ -333,6 +338,160 @@ def sync_langfuse_dataset(items: list[GoldenItem]) -> None:
             metadata={"case_id": item.id},
         )
     client.flush()
+
+
+def _boolean_evaluation(name: str, value: bool, comment: str) -> Any:
+    from langfuse import Evaluation
+
+    return Evaluation(
+        name=name,
+        value=value,
+        data_type="BOOLEAN",
+        comment=comment,
+        metadata={"evaluator": "odoo-agent-deterministic-v1"},
+    )
+
+
+def sql_safe_evaluator(
+    *,
+    input: Any,
+    output: Any,
+    expected_output: Any,
+    metadata: dict[str, Any] | None,
+    **kwargs: Any,
+) -> Any:
+    checks = output.get("checks", {}) if isinstance(output, dict) else {}
+    value = bool(checks.get("agent_run", True) and checks.get("readonly_sql", False))
+    return _boolean_evaluation(
+        "sql-safe",
+        value,
+        "Agent completed and the final SQL was empty or read-only." if value
+        else "Agent failed or the final SQL did not satisfy the read-only contract.",
+    )
+
+
+def metric_correct_evaluator(
+    *,
+    input: Any,
+    output: Any,
+    expected_output: Any,
+    metadata: dict[str, Any] | None,
+    **kwargs: Any,
+) -> Any:
+    checks = output.get("checks", {}) if isinstance(output, dict) else {}
+    fields = ("intent", "query_type", "metrics", "dimensions", "data_accessed")
+    value = bool(checks.get("agent_run", True) and all(checks.get(field) for field in fields))
+    return _boolean_evaluation(
+        "metric-correct",
+        value,
+        "Intent, QueryPlan metric/dimension shape, and data access match the golden contract."
+        if value
+        else "At least one intent, metric, dimension, query type, or data access check failed.",
+    )
+
+
+def answer_grounded_evaluator(
+    *,
+    input: Any,
+    output: Any,
+    expected_output: Any,
+    metadata: dict[str, Any] | None,
+    **kwargs: Any,
+) -> Any:
+    checks = output.get("checks", {}) if isinstance(output, dict) else {}
+    if "result_signature" in checks:
+        value = bool(checks["result_signature"])
+        basis = "reference result signature"
+    elif expected_output and expected_output.get("interrupt"):
+        value = bool(checks.get("interrupt"))
+        basis = "expected human clarification"
+    else:
+        value = bool(checks.get("intent") and checks.get("data_accessed"))
+        basis = "non-data behavior contract"
+    return _boolean_evaluation(
+        "answer-grounded",
+        value,
+        f"Deterministic grounding proxy: {basis}.",
+    )
+
+
+def run_langfuse_experiment(
+    items: list[GoldenItem],
+    *,
+    semantic_provider: Literal["native", "wren"] | None,
+    model_provider: Literal["deepseek", "siliconflow"] | None,
+    experiment_name: str,
+) -> Any:
+    if not langfuse_is_configured():
+        raise RuntimeError("Langfuse is not configured")
+    from langfuse import Evaluation, get_client
+
+    configure_langfuse_environment()
+    client = get_client()
+    dataset = client.get_dataset(DATASET_NAME)
+    assertions = load_result_assertions(DEFAULT_RESULT_REFERENCES)
+
+    async def task(*, item: Any, **kwargs: Any) -> dict[str, object]:
+        raw_input = item.input if hasattr(item, "input") else item["input"]
+        raw_expected = (
+            item.expected_output
+            if hasattr(item, "expected_output")
+            else item["expected_output"]
+        )
+        raw_metadata = item.metadata if hasattr(item, "metadata") else item.get("metadata", {})
+        golden = GoldenItem.model_validate(
+            {
+                "id": raw_metadata["case_id"],
+                "input": raw_input,
+                "expected_output": raw_expected,
+            }
+        )
+        return (
+            await run_live(
+                [golden],
+                semantic_provider=semantic_provider,
+                model_provider=model_provider,
+                result_assertions=assertions,
+            )
+        )[0]
+
+    def pass_rate_evaluator(*, item_results: list[Any], **kwargs: Any) -> Any:
+        passed = sum(
+            1
+            for item_result in item_results
+            if isinstance(item_result.output, dict) and item_result.output.get("passed")
+        )
+        value = passed / len(item_results) if item_results else 0.0
+        return Evaluation(
+            name="pass-rate",
+            value=value,
+            data_type="NUMERIC",
+            comment=f"{passed}/{len(item_results)} golden cases passed.",
+        )
+
+    run_name = (
+        f"{semantic_provider or 'configured'}-{model_provider or 'configured'}-"
+        f"{datetime.now().astimezone().strftime('%Y%m%d-%H%M%S')}"
+    )
+    return dataset.run_experiment(
+        name=experiment_name,
+        run_name=run_name,
+        description="Odoo Agent read-only sales golden regression.",
+        task=task,
+        evaluators=[
+            sql_safe_evaluator,
+            metric_correct_evaluator,
+            answer_grounded_evaluator,
+        ],
+        run_evaluators=[pass_rate_evaluator],
+        max_concurrency=1,
+        metadata={
+            "semantic_provider": semantic_provider or "configured",
+            "model_provider": model_provider or "configured",
+            "access_mode": "read-only",
+            "dataset": DATASET_NAME,
+        },
+    )
 
 
 def report(results: list[dict[str, object]], mode: str) -> dict[str, object]:
@@ -354,6 +513,15 @@ def main() -> int:
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--live", action="store_true", help="Call the configured models and Odoo read-only database.")
     parser.add_argument("--sync-langfuse", action="store_true", help="Upsert the local cases into a Langfuse Dataset.")
+    parser.add_argument(
+        "--langfuse-experiment",
+        action="store_true",
+        help="Run the live golden set as a Langfuse Dataset Experiment.",
+    )
+    parser.add_argument(
+        "--experiment-name",
+        default="odoo-agent-sales-regression",
+    )
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--semantic-provider", choices=("native", "wren"))
     parser.add_argument("--model-provider", choices=("deepseek", "siliconflow"))
@@ -364,8 +532,41 @@ def main() -> int:
     items = load_dataset(args.dataset)
     if args.limit > 0:
         items = items[: args.limit]
+    if args.langfuse_experiment and (not args.live or args.limit > 0):
+        parser.error("--langfuse-experiment requires --live and the complete dataset")
     if args.sync_langfuse:
         sync_langfuse_dataset(items)
+
+    if args.langfuse_experiment:
+        sync_langfuse_dataset(items)
+        experiment = run_langfuse_experiment(
+            items,
+            semantic_provider=args.semantic_provider,
+            model_provider=args.model_provider,
+            experiment_name=args.experiment_name,
+        )
+        experiment_payload = {
+            "dataset": DATASET_NAME,
+            "experiment_name": args.experiment_name,
+            "dataset_run_id": getattr(experiment, "dataset_run_id", None),
+            "dataset_run_url": getattr(experiment, "dataset_run_url", None),
+            "total": len(experiment.item_results),
+            "passed": sum(
+                1
+                for item_result in experiment.item_results
+                if isinstance(item_result.output, dict)
+                and item_result.output.get("passed")
+            ),
+        }
+        experiment_payload["failed"] = (
+            experiment_payload["total"] - experiment_payload["passed"]
+        )
+        rendered = json.dumps(experiment_payload, ensure_ascii=False, indent=2)
+        print(rendered)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(rendered + "\n", encoding="utf-8")
+        return 0 if experiment_payload["failed"] == 0 else 1
 
     mode = "live" if args.live else "static"
     if args.live:
