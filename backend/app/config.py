@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -14,6 +14,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ProviderName = Literal["deepseek", "siliconflow"]
 ModelRole = Literal["sql", "answer", "general"]
 SemanticProviderName = Literal["native", "wren"]
+WikiRetrievalMode = Literal["lexical", "hybrid"]
 ThinkingMode = Literal["auto", "enabled", "disabled"]
 
 
@@ -29,6 +30,8 @@ class ProviderConfig:
     pricing_currency: Literal["USD", "CNY"] = "USD"
     cny_per_usd: float = 7.2
     thinking_mode: ThinkingMode = "auto"
+    max_retries: int = 1
+    retry_backoff_seconds: float = 0.5
 
     @property
     def configured(self) -> bool:
@@ -68,6 +71,7 @@ class DatabaseConfig:
     company_id: int
     statement_timeout_ms: int
     max_rows: int
+    explain_total_cost_limit: float = 1_000_000.0
 
     @property
     def configured(self) -> bool:
@@ -115,6 +119,15 @@ class WikiConfig:
     index_path: Path
     allowed_statuses: tuple[str, ...]
     max_results: int
+    retrieval_mode: WikiRetrievalMode = "hybrid"
+    vector_index_path: Path | None = None
+    embedding_api_key: str | None = field(default=None, repr=False)
+    embedding_base_url: str = "https://api.siliconflow.cn/v1"
+    embedding_model: str = "BAAI/bge-m3"
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    vector_candidates: int = 24
+    rerank_candidates: int = 12
+    api_timeout_seconds: float = 30.0
 
 
 class Settings(BaseSettings):
@@ -145,6 +158,18 @@ class Settings(BaseSettings):
         ge=1.0,
         le=300.0,
         validation_alias="LLM_TIMEOUT_SECONDS",
+    )
+    llm_max_retries: int = Field(
+        default=1,
+        ge=0,
+        le=3,
+        validation_alias="LLM_MAX_RETRIES",
+    )
+    llm_retry_backoff_seconds: float = Field(
+        default=0.5,
+        ge=0,
+        le=10,
+        validation_alias="LLM_RETRY_BACKOFF_SECONDS",
     )
 
     deepseek_api_key: SecretStr | None = Field(
@@ -267,6 +292,40 @@ class Settings(BaseSettings):
         le=12,
         validation_alias="WIKI_MAX_RESULTS",
     )
+    wiki_retrieval_mode: WikiRetrievalMode = Field(
+        default="hybrid",
+        validation_alias="WIKI_RETRIEVAL_MODE",
+    )
+    wiki_vector_index_path: str | None = Field(
+        default=None,
+        validation_alias="WIKI_VECTOR_INDEX_PATH",
+    )
+    wiki_embedding_model: str = Field(
+        default="BAAI/bge-m3",
+        validation_alias="WIKI_EMBEDDING_MODEL",
+    )
+    wiki_reranker_model: str = Field(
+        default="BAAI/bge-reranker-v2-m3",
+        validation_alias="WIKI_RERANKER_MODEL",
+    )
+    wiki_vector_candidates: int = Field(
+        default=24,
+        ge=6,
+        le=100,
+        validation_alias="WIKI_VECTOR_CANDIDATES",
+    )
+    wiki_rerank_candidates: int = Field(
+        default=12,
+        ge=1,
+        le=50,
+        validation_alias="WIKI_RERANK_CANDIDATES",
+    )
+    wiki_api_timeout_seconds: float = Field(
+        default=30.0,
+        ge=1.0,
+        le=120.0,
+        validation_alias="WIKI_API_TIMEOUT_SECONDS",
+    )
 
     odoo_db_host: str = Field(
         default="127.0.0.1",
@@ -306,6 +365,12 @@ class Settings(BaseSettings):
         ge=1,
         le=5_000,
         validation_alias="ODOO_MAX_ROWS",
+    )
+    odoo_explain_total_cost_limit: float = Field(
+        default=1_000_000.0,
+        gt=0,
+        le=1_000_000_000.0,
+        validation_alias="ODOO_EXPLAIN_TOTAL_COST_LIMIT",
     )
 
     agent_state_enabled: bool = Field(
@@ -360,6 +425,8 @@ class Settings(BaseSettings):
                 pricing_currency="USD",
                 cny_per_usd=self.cny_per_usd,
                 thinking_mode=thinking_mode,
+                max_retries=self.llm_max_retries,
+                retry_backoff_seconds=self.llm_retry_backoff_seconds,
             )
 
         secret = (
@@ -378,6 +445,8 @@ class Settings(BaseSettings):
             pricing_currency="CNY",
             cny_per_usd=self.cny_per_usd,
             thinking_mode=thinking_mode,
+            max_retries=self.llm_max_retries,
+            retry_backoff_seconds=self.llm_retry_backoff_seconds,
         )
 
     def routing(self, override_provider: ProviderName | None = None) -> ModelRoutingConfig:
@@ -422,6 +491,7 @@ class Settings(BaseSettings):
             company_id=self.odoo_company_id,
             statement_timeout_ms=self.odoo_statement_timeout_ms,
             max_rows=self.odoo_max_rows,
+            explain_total_cost_limit=self.odoo_explain_total_cost_limit,
         )
 
     def state_database(self) -> StateDatabaseConfig:
@@ -486,11 +556,30 @@ class Settings(BaseSettings):
             if self.wiki_index_path
             else project_path / ".wiki-index" / "wiki.db"
         )
+        vector_index_path = (
+            Path(self.wiki_vector_index_path).expanduser().resolve()
+            if self.wiki_vector_index_path
+            else project_path / ".wiki-index" / "wiki.faiss"
+        )
+        embedding_api_key = (
+            self.siliconflow_api_key.get_secret_value()
+            if self.siliconflow_api_key
+            else None
+        )
         return WikiConfig(
             root_path=root_path,
             index_path=index_path,
             allowed_statuses=("reviewed", "evergreen"),
             max_results=self.wiki_max_results,
+            retrieval_mode=self.wiki_retrieval_mode,
+            vector_index_path=vector_index_path,
+            embedding_api_key=embedding_api_key,
+            embedding_base_url=str(self.siliconflow_base_url).rstrip("/"),
+            embedding_model=self.wiki_embedding_model,
+            reranker_model=self.wiki_reranker_model,
+            vector_candidates=self.wiki_vector_candidates,
+            rerank_candidates=self.wiki_rerank_candidates,
+            api_timeout_seconds=self.wiki_api_timeout_seconds,
         )
 
 

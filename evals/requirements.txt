@@ -1,0 +1,3 @@
+# Evaluation-only dependencies. Install after backend/requirements.txt.
+ragas==0.4.3
+langchain-community==0.3.31
