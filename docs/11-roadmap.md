@@ -18,7 +18,10 @@
 | 节点模型路由 | 已完成 | SQL、回答、普通聊天独立配置 |
 | LiteLLM | 已完成 SDK 首版 | 统一 DeepSeek 与硅基流动调用；尚未启用 Proxy/Router fallback |
 | Langfuse | 已完成首版 | Trace、Session、Token、Cost、Score、Dataset |
-| 黄金问题集 | 已完成首版 | 20 条、静态和真实运行器 |
+| 黄金问题集 | 已完成首版 | 销售 20 条，静态和真实运行器；另有 Wiki 知识黄金集 20 条 |
+| Wiki 检索 | 已完成 lexical 与 hybrid | 2026-09-06 实测 hybrid recall 0.95、lexical 0.80，无 fallback |
+| Prompt Management | 已完成 | production label、缓存、超时、代码 fallback、版本回链 Generation |
+| Langfuse Dataset Experiment | 代码已完成，未执行 | 三个确定性 evaluator 与 pass-rate 聚合已实现 |
 | 持久会话 | 已完成 | PostgreSQL Checkpointer、内存降级 |
 | Interrupt | 已完成首版 | QueryPlan 歧义暂停/恢复 |
 | SSE | 已完成阶段流 | 尚未流式输出模型 Token |
@@ -58,13 +61,22 @@
 - 保留期；
 - Checkpoint 迁移工具。
 
-### 2.4 观测治理仍需补齐
+### 2.4 观测治理（2026-09-06 更新）
 
-- 尚未显式设置 Langfuse environment；
-- Prompt 未迁移到 Prompt Management；
-- 尚无自动 Dataset Experiment；
-- 点踩没有原因分类；
-- 尚无 LLM Judge 和发布门禁。
+已完成：
+
+- Langfuse environment 显式映射（`configure_langfuse_environment`）；
+- Prompt 已迁移到 Prompt Management，并回链到 Generation；
+- 点踩原因分类（`user-feedback-reason`，CATEGORICAL）；
+- Dataset 与 Experiment 代码，含 `sql-safe`、`metric-correct`、`answer-grounded` 三个确定性 evaluator。
+
+仍需补齐：
+
+- Experiment 从未实际执行；
+- 基准的 p50/p95、Token 与 Cost 仍只落本地 JSON，Langfuse 内无版本间对比视图；
+- 延迟与成本没有会失败的门禁阈值；
+- 尚无 LLM Judge（BI 侧）；
+- 生产部署中 `LANGFUSE_ENABLED` 默认为 `false`。
 
 ## 3. 近期路线：P0
 
@@ -109,6 +121,8 @@
 
 ### P0.4 Langfuse 环境和 Prompt 版本
 
+> 状态（2026-09-06）：环境映射与 Prompt 版本回链已完成；仅剩“发布前 Dataset Run 对比 Prompt 版本”未执行。
+
 - 显式映射 development/test/production；
 - SQL、repair、answer Prompt 建立稳定名称；
 - Trace 关联 Prompt 版本；
@@ -131,6 +145,8 @@ POST   /api/chat/conversations/{session_id}/detach
 
 ### P1.2 用户反馈原因
 
+> 状态（2026-09-06）：已完成。后端记录 `user-thumbs`（BOOLEAN）与 `user-feedback-reason`（CATEGORICAL），前端已提供原因下拉。
+
 点踩后增加可选原因：
 
 - 数字不对；
@@ -144,6 +160,8 @@ POST   /api/chat/conversations/{session_id}/detach
 每个信号使用稳定 Score/metadata，避免把全部问题压成一个综合分数。
 
 ### P1.3 自动 Experiment 和 CI
+
+> 状态（2026-09-06）：Experiment 与 evaluator 代码已实现但从未运行；CI 与阈值门禁未开始。
 
 - Langfuse Dataset Experiment；
 - 静态集在每次提交运行；

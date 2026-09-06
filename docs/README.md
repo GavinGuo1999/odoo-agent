@@ -92,6 +92,18 @@
 
     仓库级 Codex Skills、Waza 兼容配置、离线 Trigger 样例和各评测层职责边界。
 
+18. [Native / Wren 三轮真实 A/B 基准](18-native-wren-ab-benchmark.md)
+
+    同条件三轮基准的通过率、结果签名、延迟、Token 与成本对比。
+
+19. [当前状态与未关闭差异](19-current-status-and-open-gaps.md)
+
+    已验证事实、未关闭差异和证据标注；开始新一轮工作前先读这一篇。
+
+20. [下一步任务队列](20-next-actions.md)
+
+    待办、验收标准、执行环境约束和已定结论；接手新会话时与 19 一起读。
+
 ## 3. 当前能力快照
 
 | 能力 | 状态 |
@@ -108,6 +120,8 @@
 | 实时进度 | 已支持，SSE 阶段事件 |
 | 可观测性 | 已支持，Langfuse Trace、Session、Token、Cost、Score、Dataset |
 | 自动评测 | 已支持，20 条首批黄金问题和静态/真实回归运行器 |
+| Wiki 向量检索 | 已支持，默认 hybrid：FAISS + bge-m3 + bge-reranker-v2-m3，失败自动降级词法 |
+| RAG 评测 | 已支持两层 RAGAS；免模型一层已有基线，需 LLM 评审一层尚未运行 |
 | 项目级 Skills | 已支持，三个仓库级 Skill 和 Waza Mock 触发评测样例 |
 | 用户权限 | 当前不支持；应用按单用户本地工具设计 |
 | 写回 Odoo | 当前不支持；第一阶段严格只读 |

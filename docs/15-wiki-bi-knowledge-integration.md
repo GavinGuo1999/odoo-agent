@@ -115,7 +115,9 @@ Dataview 代码块、图片链接和纯导航内容会被清理。超长章节�
 
 ### 4.3 检索方式
 
-第一阶段不增加向量数据库和 Embedding API，使用本地混合检索：
+> 2026-09-06 更新：本节描述的“第一阶段只用本地词法检索”已经演进。`WikiConfig.retrieval_mode` 的默认值现为 `hybrid`：在下列词法检索之上叠加 SiliconFlow `bge-m3` 向量检索（经 LlamaIndex 持久化到 FAISS）与 `bge-reranker-v2-m3` 重排，任一环节失败都会记录 `fallback_reason` 并降级回纯词法。实测 hybrid recall 0.95、lexical 0.80，详见 [当前状态与未关闭差异](19-current-status-and-open-gaps.md)。
+
+词法检索层（也是降级时的兜底）：
 
 1. SQLite FTS5；
 2. 中文二元/三元字符匹配；

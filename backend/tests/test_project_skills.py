@@ -18,6 +18,20 @@ EXPECTED_SKILLS = {
 FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 DOC_LINK = re.compile(r"\((\.\./\.\./\.\./docs/[^)]+)\)")
 
+# A Skill that denies a capability the repository already ships sends the agent
+# down an obsolete path. Each entry pairs a denial pattern with the files whose
+# existence proves the denial false.
+SHIPPED_CAPABILITY_CLAIMS = (
+    (
+        "odoo-rag-evaluation",
+        re.compile(r"not yet production|no vector retrieval|RAGAS is not", re.IGNORECASE),
+        (
+            PROJECT_DIR / "backend" / "app" / "services" / "wiki_vector.py",
+            PROJECT_DIR / "evals" / "run_wiki_rag_eval.py",
+        ),
+    ),
+)
+
 
 def load_yaml(path: Path) -> dict:
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -61,6 +75,19 @@ class ProjectSkillTests(unittest.TestCase):
             for link in links:
                 with self.subTest(skill=name, link=link):
                     self.assertTrue((skill_path.parent / link).resolve().is_file())
+
+    def test_skill_bodies_do_not_deny_shipped_capabilities(self) -> None:
+        for name, denial, shipped_paths in SHIPPED_CAPABILITY_CLAIMS:
+            with self.subTest(skill=name):
+                _, body = load_skill(SKILLS_DIR / name / "SKILL.md")
+                shipped = [path.name for path in shipped_paths if path.is_file()]
+                match = denial.search(body)
+                if shipped and match:
+                    self.fail(
+                        f"{name}/SKILL.md still claims {match.group(0)!r} while "
+                        f"{', '.join(shipped)} exist. Update the Skill body when a "
+                        "capability ships."
+                    )
 
     def test_waza_defaults_are_offline_and_repo_scoped(self) -> None:
         config = load_yaml(PROJECT_DIR / ".waza.yaml")

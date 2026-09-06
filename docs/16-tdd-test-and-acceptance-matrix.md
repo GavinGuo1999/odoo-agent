@@ -38,6 +38,8 @@
 | `text2sql-benchmark-lab` | `3d7f01c` | 干净 | 7 项基准核心测试通过 |
 | `learn_odoo` | `a014c51` | 提交后干净 | Markdown 严格 UTF-8、Obsidian JSON 和 Canvas JSON 解析通过 |
 
+> 2026-09-06 提醒：`313bdd4` 之后仍有一批未提交改动（Wiki 向量检索、RAGAS 评测、Prompt Management、Langfuse Dataset Experiment、settings 前端），因此上表的 115/115 基线**不代表当前工作树**。提交前需重跑全量门禁。未关闭差异见 [当前状态与未关闭差异](19-current-status-and-open-gaps.md)。
+
 本轮已在 `odoo19_dev`、`codex_readonly`、DeepSeek 真实模型和 Langfuse development 环境完成三轮 Native/Wren A/B。Odoo 模块安装、一次性测试库 TransactionCase 和用户业务验收仍未执行。
 
 ## 3. Codex 可独立完成的绿灯测试

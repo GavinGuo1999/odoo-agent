@@ -12,12 +12,20 @@
 | --- | --- | --- | --- |
 | SQLGlot | 已落地 | SQL AST 解析、只读安全、字段/表/限制检查 | `backend/app/database/sql_guard.py` |
 | Pydantic | 已落地 | QueryPlan、SqlErrorAnalysis、DataProfile、ChartPlan、API Schema 和评测协议 | `backend/app/schemas/`、`backend/app/config.py` |
-| Instructor | 未接入 | 让 LLM 返回经过 Pydantic 校验的结构化对象，并自动重试修复 | 当前由 JSON Mode + Pydantic + 自定义 repair 代替 |
+| Instructor | 未接入 | 让 LLM 返回经过 Pydantic 校验的结构化对象，并自动重试修复 | 当前由 JSON Mode + Pydantic + 自定义 repair 代替。注意：`instructor` 已随 `ragas` 传递安装进 `.venv`，但应用代码未调用，安装存在不等于接入 |
 | Langfuse | 已落地首版 | Trace、Session、Token、Cost、Score、Dataset | `backend/app/observability/`、`evals/` |
 | dbt Core | 未接入 | 建模、转换、数据测试、文档、血缘、分析宽表 | 当前直接查询 Odoo PostgreSQL |
 | LiteLLM | 已落地 SDK 首版 | 统一模型供应商调用和异常接口，后续支持 Router/fallback | `backend/app/llm/gateway.py` |
 
-结论：五项里，SQLGlot、Pydantic、Langfuse、LiteLLM 已实际进入运行链路；“Pydantic + Instructor”只完成了 Pydantic 部分；dbt Core 尚未引入。
+2026-09-06 补充的检索与评测组件：
+
+| 组件 | 当前状态 | 主要用途 | 当前落点 |
+| --- | --- | --- | --- |
+| LlamaIndex + FAISS | 已落地 | Wiki 向量索引的持久化与检索（`IndexFlatIP`，归一化内积） | `backend/app/services/wiki_vector.py` |
+| SiliconFlow Embedding / Reranker | 已落地 | `bge-m3` 向量化与 `bge-reranker-v2-m3` 重排，失败自动降级到 lexical | `backend/app/services/wiki_vector.py`、`wiki_knowledge.py` |
+| RAGAS | 已落地两层 | 免模型的 ID-based Context Precision/Recall，以及 `--ragas` 下的 Faithfulness/Answer Relevancy | `evals/run_wiki_rag_eval.py` |
+
+结论：SQLGlot、Pydantic、Langfuse、LiteLLM、LlamaIndex/FAISS、Embedding/Reranker 与 RAGAS 已实际进入运行或评测链路；“Pydantic + Instructor”只完成了 Pydantic 部分；dbt Core 尚未引入。RAGAS 中需要 LLM 评审的一层至今未运行，详见 [当前状态与未关闭差异](19-current-status-and-open-gaps.md)。
 
 ## 2. SQLGlot
 

@@ -9,7 +9,24 @@ Improve Wiki retrieval with measured before/after evidence while preserving the 
 
 ## Establish the baseline
 
-Read the [Wiki integration contract](../../../docs/15-wiki-bi-knowledge-integration.md) and inspect `backend/app/services/wiki_knowledge.py` before proposing changes. The current baseline uses SQLite FTS5 plus character/token matching; FAISS, LlamaIndex, external embeddings, reranking, and RAGAS are not yet production capabilities.
+Read the [Wiki integration contract](../../../docs/15-wiki-bi-knowledge-integration.md) and inspect `backend/app/services/wiki_knowledge.py` and `backend/app/services/wiki_vector.py` before proposing changes.
+
+Implemented pipeline, verified 2026-09-06:
+
+- `lexical`: SQLite FTS5 with the trigram tokenizer plus character-gram scoring over title, heading, metadata, and content, then one Obsidian link neighbour when room remains.
+- `hybrid` (the `WikiConfig` default): SiliconFlow `bge-m3` embeddings persisted through the LlamaIndex FAISS adapter, fused with the lexical ranking, then `bge-reranker-v2-m3`. Any embedding or rerank failure records `fallback_reason` and degrades to `lexical`.
+- RAGAS 0.4.3 in `evals/run_wiki_rag_eval.py`, in two tiers: ID-based context precision/recall that needs no model call, and LLM-judged Faithfulness, Answer Relevancy, Context Precision, and Context Recall behind `--ragas`.
+
+Measured on `evals/datasets/wiki_rag_golden.jsonl` (20 cases, top-6), recorded in `evals/reports/wiki-rag-latest.json`:
+
+| mode | recall | hit@6 | MRR | ID context precision |
+| --- | --- | --- | --- | --- |
+| lexical | 0.8000 | 0.8000 | 0.5367 | 0.1334 |
+| hybrid + rerank, 2026-09-06 | 0.9500 | 0.9500 | 0.7292 | 0.1584 |
+
+Hybrid ran with an empty `fallback_reasons` list and reranking active on every case. It recovered the three Chinese-question / English-title concept notes (`wiki-sale-order`, `wiki-stock-rule`, `wiki-manifest`) that lexical ranked out of the top 6.
+
+Still open, and not to be described as solved: `wiki-stock-picking` misses under both modes; `wiki-external-id` MRR falls from 1.00 to 0.50 under hybrid; the LLM-judged RAGAS tier behind `--ragas` has never run. ID-based context precision is top-k sensitive — most cases carry one reference note against top-6 — so never quote it as a quality verdict.
 
 Preserve these boundaries:
 

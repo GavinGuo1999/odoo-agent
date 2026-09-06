@@ -93,7 +93,26 @@ waza run evals/skills/odoo-rag-evaluation/eval.yaml
 
 ## 6. RAG 下一阶段
 
-`$odoo-rag-evaluation` 固化的是升级和评测方法，不代表 FAISS、LlamaIndex、SiliconFlow Embedding/Reranker 或 RAGAS 已经接入生产代码。实施前先建立带相关文档/Chunk 标注的 Wiki 数据集，并保存当前 SQLite FTS/字符检索基线；之后按 LlamaIndex、FAISS、Embedding、Hybrid、Reranker 的顺序逐项 A/B，避免同时改动后无法归因。
+`$odoo-rag-evaluation` 固化的是升级和评测方法。截至 2026-09-06，FAISS、LlamaIndex、SiliconFlow Embedding/Reranker 和 RAGAS 均已进入代码：`backend/app/services/wiki_vector.py` 提供向量检索与重排，`evals/run_wiki_rag_eval.py` 提供两层 RAGAS 评测，`evals/datasets/wiki_rag_golden.jsonl` 提供 20 条带参考路径的知识黄金集。
+
+2026-09-06 已完成 lexical 与 hybrid 的同条件对照（`--mode both --limit 6`，20 题）：
+
+| 检索模式 | recall | hit@6 | MRR | ID context precision |
+| --- | ---: | ---: | ---: | ---: |
+| lexical | 0.8000 | 0.8000 | 0.5367 | 0.1334 |
+| hybrid + rerank | 0.9500 | 0.9500 | 0.7292 | 0.1584 |
+
+hybrid 的 `fallback_reasons` 为空、20 个 case 全部经过 reranker，说明 FAISS 索引、SiliconFlow Embedding 与 Reranker 均已实际生效。相对 lexical：recall +0.15、MRR +0.1925、hit@6 +0.15。
+
+hybrid 修复的正是 lexical 中“中文提问 / 英文标题概念笔记”的三条：`wiki-sale-order`、`wiki-stock-rule`、`wiki-manifest`。
+
+仍未关闭的问题：
+
+- `wiki-stock-picking` 在两种模式下都未召回 `Stock Picking.md` 与 `Stock Move.md`；
+- `wiki-external-id` 的 MRR 在 hybrid 下从 1.00 降到 0.50，是本轮唯一的排序退化；
+- 需要 LLM 评审的 RAGAS 一层（Faithfulness、Answer Relevancy）仍未运行，报告中 `ragas` 为 `null`。
+
+ID-based context precision 对 top-k 敏感（多数 case 只有 1～2 篇参考笔记却取 top6），不能单独作为质量结论。后续继续按 Embedding、Hybrid 融合权重、Reranker 逐项 A/B，避免同时改动后无法归因。
 
 至少记录：Recall/Hit@K、MRR 或 nDCG、Context Precision、Context Recall、Faithfulness、Answer Relevancy、引用覆盖、延迟、成本和失败回退率。
 
