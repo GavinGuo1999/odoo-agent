@@ -1,6 +1,7 @@
 """Observability helpers for Odoo Agent."""
 
 from .langfuse_tracing import (
+    configure_langfuse_environment,
     flush_langfuse,
     get_current_trace_id,
     get_current_trace_url,
@@ -17,6 +18,7 @@ from .langfuse_tracing import (
 )
 
 __all__ = [
+    "configure_langfuse_environment",
     "langfuse_is_configured",
     "flush_langfuse",
     "record_user_feedback",

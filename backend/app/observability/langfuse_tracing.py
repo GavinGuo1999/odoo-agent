@@ -41,7 +41,19 @@ _REDACTED = "[REDACTED]"
 def _langfuse_client() -> Any:
     # Langfuse 4.14 returns a new facade from get_client() on each call. A
     # process-level client retains the project ID needed for immediate URLs.
+    configure_langfuse_environment()
     return get_client()
+
+
+def configure_langfuse_environment() -> str:
+    """Map the application environment to the Langfuse SDK before client init."""
+
+    environment = (
+        os.getenv("ODOO_AGENT_ENVIRONMENT", "development").strip().casefold()
+        or "development"
+    )
+    os.environ.setdefault("LANGFUSE_TRACING_ENVIRONMENT", environment)
+    return os.environ["LANGFUSE_TRACING_ENVIRONMENT"]
 
 
 def _is_enabled() -> bool:
@@ -102,6 +114,7 @@ def record_user_feedback(
     *,
     trace_id: str,
     positive: bool,
+    reason: str | None = None,
     comment: str | None = None,
 ) -> bool:
     """Record explicit chat feedback as a BOOLEAN trace score."""
@@ -117,6 +130,15 @@ def record_user_feedback(
         comment=comment,
         metadata={"source": "odoo-agent-chat"},
     )
+    if reason:
+        client.create_score(
+            trace_id=trace_id,
+            name="user-feedback-reason",
+            value=reason,
+            data_type="CATEGORICAL",
+            comment=comment,
+            metadata={"source": "odoo-agent-chat"},
+        )
     client.flush()
     return True
 
@@ -176,6 +198,7 @@ def _observation(
     name: str,
     input_data: Any = None,
     model: str | None = None,
+    prompt: Any | None = None,
 ) -> Iterator[Any | None]:
     if not langfuse_is_configured():
         yield None
@@ -189,6 +212,8 @@ def _observation(
     }
     if model:
         kwargs["model"] = model
+    if prompt is not None:
+        kwargs["prompt"] = prompt
 
     with client.start_as_current_observation(**kwargs) as observation:
         try:
@@ -248,6 +273,7 @@ def trace_generation(
     name: str,
     model: str,
     input_data: Any,
+    prompt: Any | None = None,
 ) -> Iterator[Any | None]:
     """Trace an LLM generation, e.g. question-to-SQL or answer synthesis."""
 
@@ -256,6 +282,7 @@ def trace_generation(
         name=name,
         input_data=input_data,
         model=model,
+        prompt=prompt,
     ) as observation:
         yield observation
 

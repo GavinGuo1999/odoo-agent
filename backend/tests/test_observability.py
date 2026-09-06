@@ -18,9 +18,19 @@ from app.observability import (  # noqa: E402
     trace_chat_turn,
     update_observation,
 )
+from app.observability.langfuse_tracing import _langfuse_client  # noqa: E402
 
 
 class ObservabilityTests(unittest.TestCase):
+    # `_langfuse_client` 带 lru_cache：任何在 patch 生效期间触发它的用例都会把 Mock
+    # 永久缓存下来，泄漏到同一进程的后续测试（曾导致 test_query_plan 拿到 Mock 版
+    # prompt 而失败）。每个用例前后各清一次，保证隔离。
+    def setUp(self) -> None:
+        _langfuse_client.cache_clear()
+
+    def tearDown(self) -> None:
+        _langfuse_client.cache_clear()
+
     def test_redacts_sensitive_nested_fields(self) -> None:
         value = {
             "question": "本月销售额是多少？",
@@ -114,6 +124,7 @@ class ObservabilityTests(unittest.TestCase):
             recorded = record_user_feedback(
                 trace_id="a" * 32,
                 positive=False,
+                reason=None,
                 comment="结果不对",
             )
 
@@ -126,7 +137,59 @@ class ObservabilityTests(unittest.TestCase):
             comment="结果不对",
             metadata={"source": "odoo-agent-chat"},
         )
+
+    def test_negative_feedback_reason_uses_categorical_score(self) -> None:
+        client = Mock()
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "LANGFUSE_PUBLIC_KEY": "public",
+                    "LANGFUSE_SECRET_KEY": "secret",
+                    "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
+                },
+                clear=True,
+            ),
+            patch("app.observability.langfuse_tracing._langfuse_client", return_value=client),
+        ):
+            recorded = record_user_feedback(
+                trace_id="b" * 32,
+                positive=False,
+                reason="sql-wrong",
+            )
+
+        self.assertTrue(recorded)
+        self.assertEqual(client.create_score.call_count, 2)
+        reason_call = client.create_score.call_args_list[1].kwargs
+        self.assertEqual(reason_call["name"], "user-feedback-reason")
+        self.assertEqual(reason_call["value"], "sql-wrong")
+        self.assertEqual(reason_call["data_type"], "CATEGORICAL")
         client.flush.assert_called_once_with()
+
+    def test_client_maps_application_environment_before_initialization(self) -> None:
+        environment = {
+            "LANGFUSE_ENABLED": "true",
+            "LANGFUSE_TRACING_ENABLED": "true",
+            "LANGFUSE_PUBLIC_KEY": "test-public",
+            "LANGFUSE_SECRET_KEY": "test-secret",
+            "LANGFUSE_BASE_URL": "https://cloud.langfuse.com",
+            "ODOO_AGENT_ENVIRONMENT": "test",
+        }
+        client = Mock()
+        _langfuse_client.cache_clear()
+        try:
+            with (
+                patch.dict(os.environ, environment, clear=True),
+                patch(
+                    "app.observability.langfuse_tracing.get_client",
+                    return_value=client,
+                ) as get_client,
+            ):
+                self.assertIs(_langfuse_client(), client)
+                self.assertEqual(os.environ["LANGFUSE_TRACING_ENVIRONMENT"], "test")
+            get_client.assert_called_once_with()
+        finally:
+            _langfuse_client.cache_clear()
 
 
 if __name__ == "__main__":
