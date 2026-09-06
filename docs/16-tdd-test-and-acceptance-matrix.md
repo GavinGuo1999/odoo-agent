@@ -33,12 +33,12 @@
 
 | 仓库 | 基线提交 | 工作树 | 当前证据 |
 | --- | --- | --- | --- |
-| `odoo-agent` | `313bdd4` 后的本轮待提交变更 | 产品名称中英回退 Guard 与当前代码全量 A/B | 后端 115/115；前端语法通过；静态黄金集 20/20；Native 全量 60/60，Wren 59/60 且唯一失败为上游 504，已执行结果签名均为 100% |
+| `odoo-agent` | `ba266bd` | 提交后干净 | 后端 138/138；前端语法通过；静态黄金集 60/60；Native 全量 60/60，Wren 59/60 且唯一失败为上游 504，已执行结果签名均为 100% |
 | `custom_addons` | `7f8dda1` | 提交后干净 | SiliconFlow 模块 11 个 Python、2 个 XML 文件静态解析通过 |
 | `text2sql-benchmark-lab` | `3d7f01c` | 干净 | 7 项基准核心测试通过 |
 | `learn_odoo` | `a014c51` | 提交后干净 | Markdown 严格 UTF-8、Obsidian JSON 和 Canvas JSON 解析通过 |
 
-> 2026-09-06 提醒：`313bdd4` 之后仍有一批未提交改动（Wiki 向量检索、RAGAS 评测、Prompt Management、Langfuse Dataset Experiment、settings 前端），因此上表的 115/115 基线**不代表当前工作树**。提交前需重跑全量门禁。未关闭差异见 [当前状态与未关闭差异](19-current-status-and-open-gaps.md)。
+> 2026-09-07 更新：`313bdd4` 之后累积的那批改动（Wiki 向量检索与词法打分修复、RAGAS 评测、Prompt Management、Langfuse 对比层与成本归因、查询成本护栏、settings 前端、黄金集扩充）已分 8 个提交落到 `ba266bd`，工作树干净，上表为提交后重跑的实测结果。测试计数从 115 升至 138。未关闭差异见 [当前状态与未关闭差异](19-current-status-and-open-gaps.md)。
 
 本轮已在 `odoo19_dev`、`codex_readonly`、DeepSeek 真实模型和 Langfuse development 环境完成三轮 Native/Wren A/B。Odoo 模块安装、一次性测试库 TransactionCase 和用户业务验收仍未执行。
 
@@ -48,9 +48,9 @@
 
 | ID | 范围 | 检查 | 当前 | 通过标准 |
 | --- | --- | --- | --- | --- |
-| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 115/115 | 全部通过，无测试进程残留 |
+| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 138/138 | 全部通过，无测试进程残留 |
 | AUTO-02 | Agent 前端 | `node --check app.js` | 🟢 | 退出码为 0 |
-| AUTO-03 | 静态黄金集 | 20 条意图路由静态评测 | 🟢 20/20 | 通过率 100% |
+| AUTO-03 | 静态黄金集 | 60 条意图路由静态评测 | 🟢 60/60 | 通过率 100% |
 | AUTO-04 | SQL 安全 | 写操作、未知表/字段、公司过滤、输出契约、LIMIT、JOIN/CTE/子查询、笛卡尔积、明细时间边界 | 🟢 | 所有安全断言通过；正常 4 表 Wren SQL 不回归 |
 | AUTO-05 | Agent 工作流 | 路由、Interrupt/Resume、SSE、会话、快速回答 | 🟢 | 对应单元/API 测试全部通过 |
 | AUTO-06 | 语义能力 | Wren provider、语义审计、Wiki 检索与引用 | 🟢 | 对应测试全部通过 |
@@ -241,7 +241,7 @@ Set-Location D:\odoo19e\text2sql-benchmark-lab
 
 ## 9. 本轮结论
 
-当前自动化层是 🟢：Agent 115/115、前端语法、静态黄金集 20/20、结果签名、SQL 复杂度 Guard、基准汇总、模块静态解析、知识库格式和项目级 Skill/Waza 资产检查均通过。
+当前自动化层是 🟢：Agent 138/138、前端语法、静态黄金集 60/60、结果签名、SQL 复杂度 Guard、基准汇总、模块静态解析、知识库格式和项目级 Skill/Waza 资产检查均通过。
 
 当前运行层的数据与 SQL 正确性是 🟢：Odoo/Agent、只读数据库、DeepSeek、Langfuse、参考 SQL、当前代码 Native/Wren 全量三轮、Chart Planner、Interrupt/Resume 和 localhost UI smoke 已执行；所有已执行候选结果签名均通过。模型服务可用性是 🟡：Wren 三轮中的一次请求收到上游 HTTP 504；此外 SiliconFlow HTTP 402、服务重启后的 pending interrupt 恢复、SiliconFlow 模块安装及 Odoo TransactionCase 仍未关闭。
 
