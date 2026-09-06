@@ -19,6 +19,14 @@ from uuid import uuid4
 import yaml
 
 from app.config import WikiConfig
+from app.services.wiki_vector import (
+    EmbeddingClient,
+    LlamaIndexFaissStore,
+    RerankerClient,
+    SiliconFlowEmbeddingClient,
+    SiliconFlowRerankerClient,
+    VectorRecord,
+)
 
 
 _FRONTMATTER = re.compile(r"\A---\s*\r?\n(.*?)\r?\n---\s*\r?\n", re.DOTALL)
@@ -50,6 +58,11 @@ class WikiStatus:
     source_fingerprint: str | None
     tokenizer: str | None
     allowed_statuses: list[str]
+    retrieval_mode: str = "lexical"
+    vector_available: bool = False
+    embedding_model: str | None = None
+    reranker_model: str | None = None
+    fallback_reason: str | None = None
     error_type: str | None = None
 
 
@@ -82,6 +95,9 @@ class WikiSearchResult:
     query: str
     index_fingerprint: str
     hits: list[WikiHit]
+    retrieval_mode: str = "lexical"
+    reranked: bool = False
+    fallback_reason: str | None = None
 
     def context(self, *, max_chars: int = 8_000) -> str:
         blocks: list[str] = []
@@ -250,9 +266,36 @@ def _fts_query(value: str, tokenizer: str | None) -> str:
 
 
 class WikiKnowledgeService:
-    def __init__(self, config: WikiConfig) -> None:
+    def __init__(
+        self,
+        config: WikiConfig,
+        *,
+        embedding_client: EmbeddingClient | None = None,
+        reranker_client: RerankerClient | None = None,
+    ) -> None:
         self._config = config
         self._lock = threading.RLock()
+        self._vector_store = LlamaIndexFaissStore(
+            config.vector_index_path or config.index_path.with_suffix(".faiss")
+        )
+        self._embedding_client = embedding_client
+        self._reranker_client = reranker_client
+        if config.retrieval_mode == "hybrid" and config.embedding_api_key:
+            self._embedding_client = self._embedding_client or SiliconFlowEmbeddingClient(
+                api_key=config.embedding_api_key,
+                base_url=config.embedding_base_url,
+                model=config.embedding_model,
+                timeout_seconds=config.api_timeout_seconds,
+            )
+            self._reranker_client = self._reranker_client or SiliconFlowRerankerClient(
+                api_key=config.embedding_api_key,
+                base_url=config.embedding_base_url,
+                model=config.reranker_model,
+                timeout_seconds=config.api_timeout_seconds,
+            )
+        self._vector_attempted_fingerprint: str | None = None
+        self._vector_available = False
+        self._vector_error_type: str | None = None
 
     def _source_files(self) -> list[Path]:
         source_root = self._config.root_path / "01_Odoo"
@@ -289,6 +332,10 @@ class WikiKnowledgeService:
 
     def ensure_index(self, *, force: bool = False) -> WikiStatus:
         with self._lock:
+            if force:
+                self._vector_attempted_fingerprint = None
+                self._vector_available = False
+                self._vector_error_type = None
             files = self._source_files()
             if not files:
                 return WikiStatus(
@@ -312,6 +359,9 @@ class WikiKnowledgeService:
             return self._rebuild(files, fingerprint)
 
     def _status_from_meta(self, meta: dict[str, str]) -> WikiStatus:
+        source_fingerprint = meta.get("source_fingerprint")
+        if source_fingerprint:
+            self._ensure_vector_index(source_fingerprint)
         return WikiStatus(
             available=True,
             root_path=str(self._config.root_path),
@@ -319,10 +369,77 @@ class WikiKnowledgeService:
             note_count=int(meta.get("note_count", 0)),
             chunk_count=int(meta.get("chunk_count", 0)),
             indexed_at=meta.get("indexed_at"),
-            source_fingerprint=meta.get("source_fingerprint"),
+            source_fingerprint=source_fingerprint,
             tokenizer=meta.get("tokenizer"),
             allowed_statuses=list(self._config.allowed_statuses),
+            retrieval_mode=(
+                "hybrid" if self._vector_available else "lexical"
+            ),
+            vector_available=self._vector_available,
+            embedding_model=(
+                self._embedding_client.model if self._embedding_client else None
+            ),
+            reranker_model=(
+                self._reranker_client.model if self._reranker_client else None
+            ),
+            fallback_reason=self._vector_error_type,
         )
+
+    def _ensure_vector_index(self, source_fingerprint: str) -> None:
+        if self._config.retrieval_mode != "hybrid":
+            self._vector_available = False
+            self._vector_error_type = None
+            return
+        if self._embedding_client is None:
+            self._vector_available = False
+            self._vector_error_type = "EmbeddingNotConfigured"
+            return
+        if self._vector_store.is_current(
+            source_fingerprint=source_fingerprint,
+            model=self._embedding_client.model,
+        ):
+            self._vector_available = True
+            self._vector_error_type = None
+            return
+        if self._vector_attempted_fingerprint == source_fingerprint:
+            return
+
+        self._vector_attempted_fingerprint = source_fingerprint
+        try:
+            with closing(self._connect(self._config.index_path)) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT chunks.chunk_id, chunks.heading, chunks.content,
+                           notes.title, notes.metadata_text
+                    FROM chunks
+                    JOIN notes ON notes.note_id = chunks.note_id
+                    ORDER BY chunks.chunk_id
+                    """
+                ).fetchall()
+            records = [
+                VectorRecord(
+                    chunk_id=str(row["chunk_id"]),
+                    text=(
+                        f"标题：{row['title']}\n章节：{row['heading']}\n"
+                        f"元数据：{row['metadata_text']}\n内容：{row['content']}"
+                    ),
+                )
+                for row in rows
+            ]
+            embeddings = self._embedding_client.embed(
+                [record.text for record in records]
+            )
+            self._vector_store.build(
+                records=records,
+                embeddings=embeddings,
+                source_fingerprint=source_fingerprint,
+                model=self._embedding_client.model,
+            )
+            self._vector_available = True
+            self._vector_error_type = None
+        except Exception as exc:
+            self._vector_available = False
+            self._vector_error_type = type(exc).__name__
 
     def _rebuild(self, files: list[Path], fingerprint: str) -> WikiStatus:
         self._config.index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -469,12 +586,6 @@ class WikiKnowledgeService:
         result_limit = max(1, min(limit or self._config.max_results, 12))
         searchable_query = _searchable_query(query)
         query_grams = _character_grams(searchable_query)
-        if not query_grams:
-            return WikiSearchResult(
-                query=query,
-                index_fingerprint=status.source_fingerprint,
-                hits=[],
-            )
 
         with closing(self._connect(self._config.index_path)) as connection:
             fts_bonus: dict[str, float] = {}
@@ -486,11 +597,15 @@ class WikiKnowledgeService:
                         "FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rank LIMIT 100",
                         (match_query,),
                     ).fetchall()
-                    for match in matches:
-                        fts_bonus[str(match["chunk_id"])] = 2.0 + max(
-                            0.0,
-                            min(3.0, -float(match["rank"])),
-                        )
+                    raw_magnitudes = {
+                        str(match["chunk_id"]): max(0.0, -float(match["rank"]))
+                        for match in matches
+                    }
+                    peak_magnitude = max(raw_magnitudes.values(), default=0.0) or 1.0
+                    fts_bonus = {
+                        chunk_id: 2.0 + 3.0 * (magnitude / peak_magnitude)
+                        for chunk_id, magnitude in raw_magnitudes.items()
+                    }
                 except sqlite3.OperationalError:
                     fts_bonus = {}
             rows = connection.execute(
@@ -513,17 +628,26 @@ class WikiKnowledgeService:
                 JOIN notes ON notes.note_id = chunks.note_id
                 """
             ).fetchall()
+            rows_by_chunk = {str(row["chunk_id"]): row for row in rows}
 
-            ranked: list[tuple[float, sqlite3.Row]] = []
+            lexical_ranked: list[tuple[float, sqlite3.Row]] = []
             for row in rows:
                 title_grams = _character_grams(str(row["title"]))
                 heading_grams = _character_grams(str(row["heading"]))
                 metadata_grams = _character_grams(str(row["metadata_text"]))
                 content_grams = _character_grams(str(row["content"]))
-                title_overlap = len(query_grams & title_grams)
-                heading_overlap = len(query_grams & heading_grams)
-                metadata_overlap = len(query_grams & metadata_grams)
-                content_overlap = len(query_grams & content_grams)
+                title_overlap = len(query_grams & title_grams) / math.sqrt(
+                    max(len(title_grams), 1)
+                )
+                heading_overlap = len(query_grams & heading_grams) / math.sqrt(
+                    max(len(heading_grams), 1)
+                )
+                metadata_overlap = len(query_grams & metadata_grams) / math.sqrt(
+                    max(len(metadata_grams), 1)
+                )
+                content_overlap = len(query_grams & content_grams) / math.sqrt(
+                    max(len(content_grams), 1)
+                )
                 exact_bonus = 0.0
                 query_lower = query.casefold()
                 if str(row["title"]).casefold() in query_lower:
@@ -537,8 +661,52 @@ class WikiKnowledgeService:
                     + fts_bonus.get(str(row["chunk_id"]), 0.0)
                 ) / math.sqrt(max(len(query_grams), 1))
                 if score > 0:
-                    ranked.append((score, row))
-            ranked.sort(key=lambda item: (-item[0], str(item[1]["relative_path"])))
+                    lexical_ranked.append((score, row))
+            lexical_ranked.sort(
+                key=lambda item: (-item[0], str(item[1]["relative_path"]))
+            )
+
+            ranked = lexical_ranked
+            retrieval_mode = "lexical"
+            reranked = False
+            fallback_reason = status.fallback_reason
+            if status.vector_available and self._embedding_client is not None:
+                try:
+                    query_embedding = self._embedding_client.embed([query])[0]
+                    vector_ranked = self._vector_store.search(
+                        query_embedding,
+                        limit=self._config.vector_candidates,
+                    )
+                    ranked = self._fuse_rankings(
+                        lexical_ranked=lexical_ranked,
+                        vector_ranked=vector_ranked,
+                        rows_by_chunk=rows_by_chunk,
+                    )
+                    retrieval_mode = "hybrid"
+                except Exception as exc:
+                    fallback_reason = type(exc).__name__
+
+            if retrieval_mode == "hybrid" and ranked and self._reranker_client:
+                candidates = ranked[: self._config.rerank_candidates]
+                documents = [
+                    f"{row['title']}\n{row['heading']}\n{row['content']}"
+                    for _, row in candidates
+                ]
+                try:
+                    reranker_results = self._reranker_client.rerank(
+                        query,
+                        documents,
+                        top_n=len(documents),
+                    )
+                    if reranker_results:
+                        ranked = self._apply_reranking(
+                            ranked=ranked,
+                            candidate_count=len(candidates),
+                            reranker_results=reranker_results,
+                        )
+                        reranked = True
+                except Exception as exc:
+                    fallback_reason = fallback_reason or type(exc).__name__
 
             selected: list[WikiHit] = []
             seen_notes: set[str] = set()
@@ -580,7 +748,58 @@ class WikiKnowledgeService:
             query=query,
             index_fingerprint=status.source_fingerprint,
             hits=selected,
+            retrieval_mode=retrieval_mode,
+            reranked=reranked,
+            fallback_reason=fallback_reason,
         )
+
+    @staticmethod
+    def _fuse_rankings(
+        *,
+        lexical_ranked: list[tuple[float, sqlite3.Row]],
+        vector_ranked: list[tuple[str, float]],
+        rows_by_chunk: dict[str, sqlite3.Row],
+    ) -> list[tuple[float, sqlite3.Row]]:
+        # Reciprocal-rank fusion keeps exact identifiers competitive while
+        # allowing dense retrieval to recover terminology mismatches.
+        scores: dict[str, float] = {}
+        for rank, (_, row) in enumerate(lexical_ranked, start=1):
+            chunk_id = str(row["chunk_id"])
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + 0.45 / (60 + rank)
+        for rank, (chunk_id, _) in enumerate(vector_ranked, start=1):
+            if chunk_id not in rows_by_chunk:
+                continue
+            scores[chunk_id] = scores.get(chunk_id, 0.0) + 0.55 / (60 + rank)
+        return sorted(
+            (
+                (score, rows_by_chunk[chunk_id])
+                for chunk_id, score in scores.items()
+            ),
+            key=lambda item: (-item[0], str(item[1]["relative_path"])),
+        )
+
+    @staticmethod
+    def _apply_reranking(
+        *,
+        ranked: list[tuple[float, sqlite3.Row]],
+        candidate_count: int,
+        reranker_results: list[tuple[int, float]],
+    ) -> list[tuple[float, sqlite3.Row]]:
+        candidates = ranked[:candidate_count]
+        ordered: list[tuple[float, sqlite3.Row]] = []
+        used: set[int] = set()
+        for index, score in reranker_results:
+            if index in used or index < 0 or index >= len(candidates):
+                continue
+            ordered.append((score, candidates[index][1]))
+            used.add(index)
+        ordered.extend(
+            candidate
+            for index, candidate in enumerate(candidates)
+            if index not in used
+        )
+        ordered.extend(ranked[candidate_count:])
+        return ordered
 
     def _hit(
         self,

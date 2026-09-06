@@ -13,6 +13,11 @@ class WikiStatusResponse(BaseModel):
     source_fingerprint: str | None = None
     tokenizer: str | None = None
     allowed_statuses: list[str] = Field(default_factory=list)
+    retrieval_mode: str = "lexical"
+    vector_available: bool = False
+    embedding_model: str | None = None
+    reranker_model: str | None = None
+    fallback_reason: str | None = None
     error_type: str | None = None
 
 
@@ -37,3 +42,6 @@ class WikiSearchResponse(BaseModel):
     query: str
     index_fingerprint: str
     hits: list[WikiCitationResponse] = Field(default_factory=list)
+    retrieval_mode: str = "lexical"
+    reranked: bool = False
+    fallback_reason: str | None = None

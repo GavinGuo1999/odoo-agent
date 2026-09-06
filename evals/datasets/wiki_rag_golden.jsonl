@@ -1,0 +1,20 @@
+{"id":"wiki-sale-order","question":"Odoo 销售订单的技术模型名是什么，订单行承担什么？","reference_paths":["01_Odoo/06_Concepts/Sale Order.md"],"reference_answer":"销售订单头的技术模型是 sale.order；数量、价格、税、交付和开票明细主要位于 sale.order.line。"}
+{"id":"wiki-account-move","question":"客户发票、供应商账单和普通日记账分录最终落在哪个模型？","reference_paths":["01_Odoo/06_Concepts/Account Move.md"],"reference_answer":"这些会计业务最终落到 account.move 与 account.move.line。"}
+{"id":"wiki-stock-move","question":"什么记录负责描述产品从一个库位移动到另一个库位？","reference_paths":["01_Odoo/06_Concepts/Stock Move.md"],"reference_answer":"stock.move 是描述产品在库位之间移动的核心记录，并连接销售、采购、制造、估值和会计。"}
+{"id":"wiki-stock-picking","question":"仓库一次收货或发货由什么单据组织，它和库存移动是什么关系？","reference_paths":["01_Odoo/06_Concepts/Stock Picking.md","01_Odoo/06_Concepts/Stock Move.md"],"reference_answer":"stock.picking 把一组 stock.move 组织成一次可执行、可验证和可追踪的仓库作业。"}
+{"id":"wiki-stock-rule","question":"库存需求到底采购、制造还是调拨，是哪个路线规则决定的？","reference_paths":["01_Odoo/06_Concepts/Stock Rule.md"],"reference_answer":"stock.rule 根据路线决定需求应采购、制造、从其他库位拉取或直接生成库存移动。"}
+{"id":"wiki-procurement","question":"Procurement 在 Odoo 里是 ORM 模型吗，它表达什么？","reference_paths":["01_Odoo/06_Concepts/Procurement.md"],"reference_answer":"Procurement 不是 ORM 模型，而是产品、数量、目标库位、来源单据与上下文组成的需求描述。"}
+{"id":"wiki-mrp-production","question":"制造订单的技术名是什么，原料消耗和成品入库如何串起来？","reference_paths":["01_Odoo/06_Concepts/MRP Production.md"],"reference_answer":"制造订单模型是 mrp.production，它围绕原料和成品 stock.move 组织 BOM、工单、消耗、入库与成本。"}
+{"id":"wiki-ir-model","question":"Python 模型类加载后会反射到哪里，为什么系统能自描述模型结构？","reference_paths":["01_Odoo/06_Concepts/IR Model.md"],"reference_answer":"模型类进入 Registry 后反射到 ir.model 和 ir.model.fields，为 UI、权限、Studio 与模块升级提供元数据。"}
+{"id":"wiki-external-id","question":"ref('module.xml_id') 为什么能稳定找到一条记录？","reference_paths":["01_Odoo/06_Concepts/IR Model Data.md"],"reference_answer":"ir.model.data 保存外部 ID 与数据库记录的映射，使模块可稳定引用和升级记录。"}
+{"id":"wiki-record-rule","question":"ACL 已允许模型访问后，什么机制继续限制用户能看到哪些具体记录？","reference_paths":["01_Odoo/06_Concepts/Record Rule.md"],"reference_answer":"ir.rule 记录规则在模型 ACL 之后通过 domain 实施记录级访问控制。"}
+{"id":"wiki-registry","question":"为什么同一套 Odoo 源码服务不同数据库时会有不同的运行时模型表？","reference_paths":["01_Odoo/06_Concepts/Registry.md"],"reference_answer":"每个数据库按已安装模块独立装配 Registry，因此形成各自的模型类、字段、继承与元数据集合。"}
+{"id":"wiki-manifest","question":"模块依赖、数据文件、assets 和 auto_install 在哪里声明？","reference_paths":["01_Odoo/06_Concepts/Addons Manifest.md"],"reference_answer":"这些信息声明在模块的 __manifest__.py 中，Manifest 决定依赖图与安装升级加载顺序。"}
+{"id":"wiki-valuation","question":"库存移动说明货动了，那这次移动值多少钱由哪一层记录？","reference_paths":["01_Odoo/06_Concepts/Valuation Layer.md"],"reference_answer":"库存估值事实层记录库存移动对应的价值、数量、剩余数量和剩余价值。"}
+{"id":"wiki-product-category","question":"产品默认成本方法、库存估值方式和库存会计科目集中配置在哪里？","reference_paths":["01_Odoo/06_Concepts/Product Category.md"],"reference_answer":"产品分类集中承载成本方法、估值方式、库存日记账和库存相关科目配置。"}
+{"id":"wiki-purchase-order","question":"采购订单怎样连接收货与供应商账单？","reference_paths":["01_Odoo/06_Concepts/Purchase Order.md"],"reference_answer":"purchase.order 通过 purchase_stock 连接收货，并通过 purchase 与 account 连接供应商账单。"}
+{"id":"wiki-runtime","question":"HTTP 请求进入 Odoo 后，从路由到 env 再到 ORM 的运行时链路是什么？","reference_paths":["01_Odoo/01_Architecture/Odoo 运行时整体架构.md"],"reference_answer":"请求经 HTTP 路由与数据库选择建立 Registry 和 Environment，再由 ORM、权限与业务模型处理。"}
+{"id":"wiki-sales-flow","question":"销售确认后，交货、开票、回款与会计凭证如何形成闭环？","reference_paths":["01_Odoo/03_Functional_Flows/销售库存财务链深挖.md"],"reference_answer":"销售确认触发履约与库存移动，交付和开票进入会计，应收再通过付款与核销闭环。"}
+{"id":"wiki-ocr-bill","question":"OCR 识别供应商账单后为什么仍需要人工校验再过账？","reference_paths":["01_Odoo/03_Functional_Flows/OCR 到账单闭环.md"],"reference_answer":"OCR 结果先进入草稿账单，人工核对供应商、税额、科目等关键字段后才进入正式过账。"}
+{"id":"wiki-ai-actions","question":"让 AI Agent 调用 Odoo 业务动作时，怎样避免直接越权执行？","reference_paths":["01_Odoo/05_AI_Integration/AI Agent 调用业务动作闭环.md"],"reference_answer":"业务动作需要工具白名单、参数校验、权限上下文、幂等与人工确认等控制形成安全闭环。"}
+{"id":"wiki-dashboard","question":"Odoo Spreadsheet Dashboard 的指标为什么要保留可追溯的数据源和口径？","reference_paths":["01_Odoo/04_Reporting/Odoo 业务驾驶舱与 Spreadsheet Dashboard.md"],"reference_answer":"驾驶舱指标应能追溯到业务模型、过滤条件与计算口径，才能验证、复用和审计。"}

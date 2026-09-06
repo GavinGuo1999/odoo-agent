@@ -34,6 +34,9 @@ async def wiki_search(
         query=result.query,
         index_fingerprint=result.index_fingerprint,
         hits=[hit.citation() for hit in result.hits],
+        retrieval_mode=result.retrieval_mode,
+        reranked=result.reranked,
+        fallback_reason=result.fallback_reason,
     )
 
 
