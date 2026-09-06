@@ -16,14 +16,25 @@
 
 ## 2. 优先队列
 
-### P0-1 提交 9-03 之后的未提交改动
+### P0-1 提交 9-03 之后的未提交改动——已完成，2026-09-07
 
-`313bdd4` 之后存在一批未提交改动：Wiki 向量检索、RAGAS 评测、Prompt Management、Langfuse Dataset Experiment、settings 前端。
+`313bdd4` 之后累积的 55 项改动已分 8 个提交落到分支 `feat/hybrid-rag-and-langfuse-comparison`（末位提交 `1edec64`）：
 
-- 交付：跑完全量门禁后分组提交，提交信息对应测试证据。
-- 验收：后端 `unittest` 全绿、`node --check app.js` 通过、静态黄金集 20/20、`git status --short` 干净。
-- 完成后更新 [16](16-tdd-test-and-acceptance-matrix.md) 的基线提交与测试计数。
-- **状态（2026-09-06）**：此前阻塞"全量绿灯"的 `test_query_plan` 失败已定位并修复（`test_observability` 的 lru_cache Mock 泄漏，见 P1-1）。当前工作树 **138/138 全绿**、`node --check app.js` 通过，提交前的门禁条件已具备。
+| 提交 | 内容 |
+| --- | --- |
+| `420a851` | 配置与依赖（hybrid 检索设置、`explain_total_cost_limit`、评测依赖、容器构建） |
+| `d4e49ed` | Wiki hybrid 检索 + P0-2 词法打分修复 |
+| `46b1709` | Langfuse Prompt Management + 测试隔离修复 |
+| `d0b2825` | P1-1 成本归因与 Langfuse 对比层 |
+| `b6ffd5c` | EXPLAIN 成本护栏与 LLM Gateway 加固 |
+| `3fc42c6` | settings 前端与每条消息成本显示 |
+| `ef73181` | 黄金集 20 → 60 题 |
+| `ba266bd` / `1edec64` | 文档（19/20 新增、既有文档修订、基线更新） |
+
+- 验收结果（提交后重跑）：后端 `unittest` **138/138**、`node --check app.js` 通过、静态黄金集 **60/60**、`git status --short` 干净。
+- [16](16-tdd-test-and-acceptance-matrix.md) 的基线提交与测试计数已更新；§4.1/4.3/4.4 的历史轮次证据保持原值不动。
+- 提交前做过密钥扫描，唯二命中是脱敏测试里的假值 `sensitive-value`（断言密钥**不**出现）。`.gitignore` 已覆盖 `.env*`、`.venv/`、`.wiki-index/`、`evals/reports/`。
+- **待办**：该分支尚未合回 `main`，也未推送到 `origin`。需要用户决定是直接 fast-forward 到 `main` 还是走 PR。
 
 ### P0-2 Wiki 词法打分修复（TDD）——已完成，2026-09-06
 
