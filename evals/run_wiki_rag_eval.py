@@ -447,25 +447,27 @@ def push_wiki_scores(report: dict[str, Any], *, run_id: str) -> str | None:
 
     configure_langfuse_environment()
     client = get_client()
-    with client.start_as_current_span(name="wiki-rag-eval") as span:
-        span.update_trace(
-            name=f"wiki-rag-eval-{run_id}",
+    # 4.x 客户端没有 start_as_current_span；用 start_as_current_observation，
+    # 与 backend/app/observability 中已跑通的写法一致。
+    with client.start_as_current_observation(
+        as_type="span",
+        name=f"wiki-rag-eval-{run_id}",
+    ) as span:
+        span.update(
             input={"dataset": report.get("dataset"), "case_count": report.get("case_count")},
             output={
                 mode: summary.get("metrics")
                 for mode, summary in report.get("retrieval", {}).items()
             },
-            metadata={"run_id": run_id, "evaluator": "odoo-agent-wiki-rag-v1"},
+            metadata={
+                "run_id": run_id,
+                "evaluator": "odoo-agent-wiki-rag-v1",
+                "ragas_status": (report.get("ragas") or {}).get("status"),
+            },
         )
         trace_id = span.trace_id
-    for name, value, comment in wiki_score_payload(report):
-        client.create_score(
-            trace_id=trace_id,
-            name=name,
-            value=value,
-            data_type="NUMERIC",
-            comment=comment,
-        )
+        for name, value, comment in wiki_score_payload(report):
+            span.score_trace(name=name, value=value, data_type="NUMERIC", comment=comment)
     client.flush()
     return trace_id
 

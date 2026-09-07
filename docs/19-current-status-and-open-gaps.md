@@ -1,6 +1,6 @@
 # 当前状态与未关闭差异
 
-> 状态日期：2026-09-06
+> 状态日期：2026-09-07
 >
 > 适用应用版本：0.2.0
 >
@@ -43,7 +43,24 @@
 
 Wren 相对 native：p50 +5.39s、Token +71,656、Cost +$0.033、Repair +4，通过率 -1.67 个百分点。
 
-### 2.3 自动化门禁（`实测` 2026-09-03 基线）
+### 2.3 RAGAS 首个基线（`实测` 2026-09-07）
+
+命令：`run_wiki_rag_eval.py --mode hybrid --ragas --ragas-max-cases 5 --ragas-timeout 300 --ragas-max-tokens 8192`。判官与作答模型均为 SiliconFlow `deepseek-ai/DeepSeek-V4-Pro`，embedding 为 `BAAI/bge-m3`，样本 5 个 case。
+
+| 指标 | 值 |
+| --- | ---: |
+| Faithfulness | 0.9075 |
+| Answer Relevancy | 0.8376 |
+| Context Precision | 0.8820 |
+| Context Recall | 1.0000 |
+
+四项全部评分成功（`status: completed`），归档于 `evals/reports/20260907-095649-wiki-rag/`，并已推送 Langfuse（trace `638540427c…`，8 个 `wiki-*` NUMERIC Score，含检索侧 4 项）。
+
+**只有 5 个样本**，且判官与被评作答用的是同一个模型（自评偏高的风险已知未消除）。这是基线不是结论，扩样本与换判官模型后需复验。
+
+跑通前踩到两个坑，都已在代码中处理：判官默认 90s 会超时（`--ragas-timeout`，现 300s）；RAGAS 的 `InstructorModelArgs.max_tokens` 默认 1024，推理模型的思考 token 会先吃光预算导致结构化输出被截断、`faithfulness` 每个 case 抛 `IncompleteOutputException`（`--ragas-max-tokens`，现 8192）。
+
+### 2.4 自动化门禁（`实测` 2026-09-03 基线）
 
 后端 `unittest` 115/115、静态黄金集 20/20、`node --check app.js` 通过、Wren 9 模型构建通过。
 
@@ -54,8 +71,8 @@ Wren 相对 native：p50 +5.39s、Token +71,656、Cost +$0.033、Repair +4，通
 | 项 | 状态 | 说明 |
 | --- | --- | --- |
 | `wiki-external-id` 排序退化 | 未处理 | MRR 在 hybrid 下从 1.00 降到 0.50，是本轮唯一排序退化，指向 RRF 权重或 reranker 在精确标识符类问题上稀释词法判断 |
-| 需 LLM 评审的 RAGAS 一层 | 未运行 | 报告中 `ragas` 为 `null`；Faithfulness 与 Answer Relevancy 无任何基线 |
-| 报告不可比 | 未处理 | `run_wiki_rag_eval.py` 只覆盖写 `wiki-rag-latest.json`，无 `summary.md`、无按日期归档、未进 Langfuse |
+| 需 LLM 评审的 RAGAS 一层 | **已建立基线**（`实测` 2026-09-07） | 见 §2.3 |
+| 报告不可比 | **已解决**（2026-09-07） | `run_wiki_rag_eval.py` 现在按 `evals/reports/<时间戳>-wiki-rag/` 归档 `report.json` + `summary.md`，同时仍刷新 `wiki-rag-latest.json`；`--push-langfuse` 把检索与 RAGAS 指标作为 Score 挂到一条 trace 上 |
 
 ### 3.2 词法打分的两处缺陷（`实测`，已修复 2026-09-06）
 
@@ -112,19 +129,21 @@ p95 仍在 32～47s，远高于 p50 门禁线；当前门禁只约束 p50（docs
 
 ### 3.5 前端（`静态核对`）
 
-现有 5 个静态页（工作台 / 智能助手 / 销售看板 / Odoo Wiki / 数据与模型），单个 2,019 行 IIFE `app.js` 在每页全量加载，靠元素缺失隐式分页。已具备：SSE 阶段进度、ECharts 白名单渲染、CSV 导出、每条消息的成本显示、Langfuse Trace 链接、点踩原因下拉、移动端菜单、`aria` 标注。
+现有 5 个静态页（工作台 / 智能助手 / 销售看板 / Odoo Wiki / 数据与模型），单个约 2,030 行 IIFE `app.js`（另有独立的 `markdown.js`） 在每页全量加载，靠元素缺失隐式分页。已具备：SSE 阶段进度、ECharts 白名单渲染、CSV 导出、每条消息的成本显示、Langfuse Trace 链接、点踩原因下拉、移动端菜单、`aria` 标注。
 
 未处理：
 
 | 项 | 影响 |
 | --- | --- |
-| 助手回答用 `paragraph.textContent` 直接写入单个 `<p>` | 模型输出的 Markdown（加粗、列表、表格）以原始字符显示，长回答基本无法阅读。这是当前最影响体验的一处 |
+| ~~助手回答用 `paragraph.textContent` 直接写入单个 `<p>`~~ | **已解决**（2026-09-07）：新增自托管渲染器 `markdown.js`，支持标题、加粗/斜体、行内代码、有序/无序列表（含混合嵌套）、表格、围栏代码块、引用、分隔线与安全链接 |
 | 侧边栏在 5 个页面各有一份副本 | 增加一个导航项需改 5 个文件 |
-| `styles.css?v=15` 手工版本号 | 漏改一次即产生“改了没生效”的假缺陷 |
+| `styles.css?v=16` 手工版本号 | 漏改一次即产生“改了没生效”的假缺陷；新增静态文件还需同步 `backend/app/main.py` 的 `_UI_FILES` 白名单 |
 | 无评测与质量页面 | 黄金集、结果签名、A/B 基准、Wiki RAG 指标、Langfuse Dataset 全部对用户不可见，UAT 缺少抓手 |
 | `/api/semantic_audit` 无界面 | 后端能力已存在但无法在 UI 使用 |
 
 架构建议：保持原生 JS 与自托管资源，不引入框架与构建链；按需拆为 `type="module"` 的每页入口即可。
+
+**Markdown 渲染的安全约定（`实测`）**：`markdown.js` 全程只用 `document.createElement` / `createTextNode` 构造 DOM，**不使用 `innerHTML`**，因此模型输出里的任何标签只会成为文本节点。链接只放行 `http(s)`，`javascript:` / `data:` / `vbscript:` 一律降级为纯文本。这两点由 `backend/tests/test_markdown_rendering.py`（静态断言渲染器不含 `innerHTML` 等 API）与 `tests/markdown_render_test.js`（15 项行为回归，含 4 类注入载荷）共同守住。仓库没有前端构建链，所以 JS 测试用最小 DOM 桩在 Node 里跑，并由 Python 测试接进统一的 `unittest` 门禁。
 
 ### 3.6 交付与验收
 

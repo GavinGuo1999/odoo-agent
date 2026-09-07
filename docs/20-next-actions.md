@@ -1,6 +1,6 @@
 # 下一步任务队列
 
-> 状态日期：2026-09-06
+> 状态日期：2026-09-07
 >
 > 分工：[19 当前状态与未关闭差异](19-current-status-and-open-gaps.md) 只记录**已验证的事实**；本文只记录**待办与验收标准**。两者不重复陈述同一内容，修改能力状态时改 19，修改工作计划时改本文。
 
@@ -81,18 +81,33 @@
 - 顺带修复：`backend/tests/test_observability.py` 缺少 `_langfuse_client` 的 lru_cache 清理，Mock 会泄漏到后续测试并导致 `test_query_plan` 失败。这是 P0-1"全量绿灯"此前无法达成的原因，现已加 `setUp`/`tearDown` 清缓存。
 - 未做（保持在待办）：p95 门禁（当前 p95 32～47s，远高于 p50 线，需要先确认业务可接受范围）、BI 侧 LLM Judge。
 
-### P1-2 Wiki RAG 报告可比性
+### P1-2 Wiki RAG 报告可比性——已完成，2026-09-07
 
-`evals/run_wiki_rag_eval.py` 目前只覆盖写 `evals/reports/wiki-rag-latest.json`，上一次结果即被丢弃。
+- `archive_report()` 每次运行归档到 `evals/reports/<时间戳>-wiki-rag/`，内含 `report.json` 与 `summary.md`；`wiki-rag-latest.json` 仍然刷新，作为“最近一次”的指针。
+- `render_markdown()` 输出两种模式的指标表、hybrid−lexical 的差值，以及 RAGAS 一节；RAGAS 没跑过时明确写“未运行”，**不写 0**。
+- `--push-langfuse` 把检索指标与 RAGAS 指标作为 NUMERIC Score 挂到一条 `wiki-rag-eval-<run_id>` trace 上。
+- 验收：任意两次运行可直接 diff 两个归档目录，不必翻 Git 历史。新增 `backend/tests/test_wiki_rag_eval.py::WikiRagReportTests` 5 项测试覆盖渲染、归档不覆盖、Score 载荷。
 
-- 交付：生成 `summary.md`（对齐 `run_semantic_benchmark.py` 的做法）、按日期归档到 `evals/reports/<date>-wiki-rag/`、把关键指标作为 Score 推送 Langfuse。
-- 验收：可以取任意两次运行做差异对比而不必翻 Git 历史。
+### P1-3 建立 Faithfulness 基线——已完成，2026-09-07
 
-### P1-3 建立 Faithfulness 基线
+基线数据见 [19 §2.3](19-current-status-and-open-gaps.md)：Faithfulness 0.9075、Answer Relevancy 0.8376、Context Precision 0.8820、Context Recall 1.0000，四项全部评分成功。
 
-- 命令：`.\.venv\Scripts\python.exe .\evals\run_wiki_rag_eval.py --mode hybrid --ragas --ragas-max-cases 5`
-- 前置：answer 模型与 embedding key 均已配置（消耗额度，量很小）。
-- 验收：报告顶层 `ragas` 不再为 `null`，Faithfulness 与 Answer Relevancy 有首个基线值。
+跑通过程暴露并修复了三个问题，都不是"配置一下就行"：
+
+1. **判官超时**：默认 90s 不够，NLI 判定比一次普通问答慢得多。新增 `--ragas-timeout`（现 300s）。
+2. **`IncompleteOutputException`**：RAGAS 的 `InstructorModelArgs.max_tokens` 默认 1024，而判官是带 thinking 的推理模型，思考 token 先吃光预算导致结构化输出被截断，`faithfulness` 每个 case 都失败。新增 `--ragas-max-tokens`（现 8192）。
+3. **`push_wiki_scores` 用错 API**：`start_as_current_span` 在 4.x 客户端上不存在（应为 `start_as_current_observation`），`span.update_trace` 也不存在（应为 `span.update` + `span.score_trace`）。已修并回读确认 8 个 `wiki-*` Score 全部落地。
+
+**这条基线的两个已知局限**（引用时必须一并说明）：样本只有 5 个 case；判官与被评作答用的是同一个模型，自评偏高的风险未消除。换判官模型与扩样本后需复验。
+
+复现命令（`--ragas-timeout 300` 与 `--ragas-max-tokens 8192` 已是代码默认值，此处显式写出只为说明这两个值是必要的，不是可有可无的调优）：
+
+```powershell
+.\.venv\Scripts\python.exe .\evals\run_wiki_rag_eval.py --mode hybrid --ragas `
+  --ragas-max-cases 5 --ragas-timeout 300 --ragas-max-tokens 8192 --push-langfuse
+```
+
+耗时约 30～40 分钟（5 case × 4 指标，判官是推理模型且每个指标要多轮调用）。RAGAS 这一层现在是容错的：单个指标失败会记录 `error_type` 并继续，检索指标与归档不受影响。
 
 ### P1-4 追查 hybrid 的排序退化
 
@@ -107,10 +122,18 @@
 
 | 优先级 | 项 | 验收 |
 | --- | --- | --- |
-| P0 | 助手回答的 Markdown 渲染 | 加粗、列表、表格正常显示；渲染器自托管；无 XSS 回归 |
+| ~~P0~~ **已完成 2026-09-07** | 助手回答的 Markdown 渲染 | 见下方说明 |
 | P1 | 新增“评测与质量”页 | 读 `evals/reports/*.json`，展示通过率、p50/p95、Token/Cost、Wiki RAG 指标与最近一次 A/B |
 | P2 | 侧边栏改 JS 注入；`app.js` 拆为每页 `type="module"` 入口；替换手工版本号 | 新增导航项只改一处；每页不再加载无关代码 |
 | P3 | `/api/semantic_audit` 增加界面 | 现有后端能力可在 UI 使用 |
+
+**Markdown 渲染（已完成）**：新增自托管的 `markdown.js`（约 250 行，无依赖），`app.js` 的 `appendChatMessage` 对助手消息调用它；渲染器缺失时回退到原来的纯文本 `<p>`。支持标题、加粗/斜体、行内代码、有序/无序列表（含**混合类型嵌套**）、表格、围栏代码块、引用、分隔线、安全链接。安全性见 [19 §3.5](19-current-status-and-open-gaps.md)。
+
+拆成独立文件而不是塞进 2000 行 IIFE，主要是为了**可测**：`tests/markdown_render_test.js` 用最小 DOM 桩在 Node 里跑 15 项回归（含 4 类注入载荷），由 `backend/tests/test_markdown_rendering.py` 接进 `unittest`，一条命令仍覆盖全部。真实浏览器复核也做了：表格/列表/代码块/链接均正确，注入的 `<script>`、`<img onerror>` 产生 0 个元素。
+
+一处只有真浏览器才暴露的问题：初版实现里“有序列表套无序列表”会断成两个并列列表，`<ul>` 直接挂在 `<ul>` 下（无效 HTML），视觉上却因为缩进看着正常。Node 测试当时写得太宽松放过了它。已改为按缩进维护栈、每层各自决定 `ol`/`ul`，并把测试收紧为精确断言。
+
+新增文件需同步两处，否则前端 404：`backend/app/main.py` 的 `_UI_FILES` 白名单、`chat.html` 的 `<script>`（必须在 `app.js` 之前）。静态资源版本号已从 `v=15` 升到 `v=16`。
 
 ### P2-2 待处理的噪音
 
@@ -156,3 +179,10 @@
 | `backend/tests/test_agent.py`、`test_evals.py` | 新增 P1-1 的 5 项 TDD 测试 |
 | `backend/tests/test_observability.py` | 修复 lru_cache Mock 泄漏（`setUp`/`tearDown` 清缓存），解除 P0-1 全量绿灯的阻塞 |
 | `docs/19` §3.3 | 改写为 P1-1 落地后的实测状态，含 Langfuse 上的可横比基线表与两条使用约束 |
+| `markdown.js`（新增） | 自托管 Markdown 渲染器，只构造 DOM 不用 `innerHTML` |
+| `tests/markdown_render_test.js`（新增） | 15 项渲染回归，含注入载荷；用最小 DOM 桩在 Node 里跑 |
+| `backend/tests/test_markdown_rendering.py`（新增） | 把上面的 Node 测试接进 `unittest`，并静态断言渲染器不含 `innerHTML` 等 API |
+| `app.js`、`chat.html`、`styles.css`、`backend/app/main.py` | 接入渲染器、白名单、样式，静态资源版本号 `v=15` → `v=16` |
+| `evals/run_wiki_rag_eval.py` | P1-2：`summary.md` + 按时间戳归档 + `--push-langfuse`；RAGAS 改为逐指标容错，单次判官超时不再丢弃整轮结果；新增 `--ragas-timeout` |
+| `backend/tests/test_wiki_rag_eval.py` | 新增 9 项测试（报告渲染/归档/Score 载荷、RAGAS 部分失败聚合） |
+| `docs/19` §2.3、§3.1、§3.5 | 记录 RAGAS 首个基线、报告可比性与 Markdown 渲染的落地状态 |
