@@ -1271,8 +1271,122 @@ button {
   margin: 0;
 }
 
-.assistant-answer {
+/* 渲染器不可用时的兜底：纯文本仍要保留换行。 */
+p.assistant-answer {
   white-space: pre-wrap;
+}
+
+.assistant-answer > *:first-child {
+  margin-top: 0;
+}
+
+.assistant-answer > *:last-child {
+  margin-bottom: 0;
+}
+
+.assistant-answer p {
+  margin: 0 0 0.7em;
+  line-height: 1.65;
+}
+
+.assistant-answer h4,
+.assistant-answer h5,
+.assistant-answer h6 {
+  margin: 1.1em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.assistant-answer h4 { font-size: 1.05rem; }
+.assistant-answer h5 { font-size: 0.98rem; }
+.assistant-answer h6 { font-size: 0.93rem; color: var(--text-secondary); }
+
+.assistant-answer ul,
+.assistant-answer ol {
+  margin: 0 0 0.7em;
+  padding-left: 1.4em;
+}
+
+.assistant-answer li {
+  margin: 0.25em 0;
+  line-height: 1.6;
+}
+
+.assistant-answer li > ul,
+.assistant-answer li > ol,
+.assistant-answer ul ul,
+.assistant-answer ol ol {
+  margin: 0.25em 0 0;
+}
+
+.assistant-answer code {
+  padding: 0.12em 0.35em;
+  border-radius: 4px;
+  background: var(--surface-soft);
+  border: 1px solid #ece8ef;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.88em;
+}
+
+.assistant-answer pre {
+  margin: 0 0 0.7em;
+  padding: 0.75em 0.9em;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid #ece8ef;
+  background: var(--surface-soft);
+}
+
+.assistant-answer pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 0.86em;
+  line-height: 1.55;
+}
+
+/* 宽表自己横向滚动，不把整个气泡撑宽。 */
+.assistant-answer .markdown-table {
+  margin: 0 0 0.7em;
+  overflow-x: auto;
+}
+
+.assistant-answer table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9em;
+}
+
+.assistant-answer th,
+.assistant-answer td {
+  padding: 0.4em 0.6em;
+  border: 1px solid #ece8ef;
+  text-align: left;
+  vertical-align: top;
+}
+
+.assistant-answer th {
+  background: var(--surface-soft);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.assistant-answer blockquote {
+  margin: 0 0 0.7em;
+  padding: 0.1em 0 0.1em 0.85em;
+  border-left: 3px solid var(--primary-soft);
+  color: var(--text-secondary);
+}
+
+.assistant-answer hr {
+  margin: 1em 0;
+  border: 0;
+  border-top: 1px solid #ece8ef;
+}
+
+.assistant-answer a {
+  color: var(--primary);
+  text-decoration: underline;
 }
 
 .message-bubble.error {

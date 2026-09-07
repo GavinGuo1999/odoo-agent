@@ -1526,10 +1526,18 @@
     const content = document.createElement("div");
     const bubble = document.createElement("div");
     bubble.className = "message-bubble";
-    const paragraph = document.createElement("p");
-    paragraph.className = role === "assistant" ? "assistant-answer" : "";
-    paragraph.textContent = text;
-    bubble.appendChild(paragraph);
+    if (role === "assistant" && window.OdooAgentMarkdown) {
+      // 模型输出是 Markdown；渲染器只构造 DOM 节点，不使用 innerHTML。
+      const answer = document.createElement("div");
+      answer.className = "assistant-answer";
+      window.OdooAgentMarkdown.render(text, answer);
+      bubble.appendChild(answer);
+    } else {
+      const paragraph = document.createElement("p");
+      paragraph.className = role === "assistant" ? "assistant-answer" : "";
+      paragraph.textContent = text;
+      bubble.appendChild(paragraph);
+    }
     content.appendChild(bubble);
 
     if (metadata && role === "assistant") {

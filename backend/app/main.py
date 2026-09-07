@@ -22,6 +22,7 @@ _UI_FILES = {
     "dashboard.html",
     "echarts.min.js",
     "index.html",
+    "markdown.js",
     "settings.html",
     "styles.css",
     "wiki.html",
