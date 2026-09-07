@@ -212,23 +212,48 @@ def ensure_customers(writer: OdooWriter, batch: str, wanted: int) -> list[int]:
     return ids
 
 
+CATALOGUE = [
+    ("工业传感器 S200", 480.0), ("变频控制器 C15", 1250.0), ("伺服电机 M8", 2380.0),
+    ("精密轴承套件", 320.0), ("工控触摸屏 10寸", 1680.0), ("安全继电器", 260.0),
+    ("光电开关 E3", 140.0), ("线缆组件 5m", 95.0),
+]
+
+# 复用现有产品前的最低定价门槛。库里遗留了一批 list_price = 1.00 的开发测试件，
+# 用它们下单会造出“整月销售额 3 元”这种数字，趋势和排名就全是噪声。
+MIN_REUSABLE_PRICE = 20.0
+
+
 def ensure_products(writer: OdooWriter, batch: str, wanted: int) -> list[int]:
+    """优先复用定价合理的现有产品，不够的部分按内置目录新建。
+
+    只看 `sale_ok` 是不够的：必须同时要求 `list_price` 达到门槛，否则会把
+    历史遗留的 1 元测试件当成商品。
+    """
+
     existing = writer.search_read(
-        "product.product", [("sale_ok", "=", True), ("active", "=", True)], ["id"], limit=wanted
+        "product.product",
+        [
+            ("sale_ok", "=", True),
+            ("active", "=", True),
+            ("list_price", ">=", MIN_REUSABLE_PRICE),
+        ],
+        ["id", "list_price"],
+        limit=wanted,
     )
     ids = [row["id"] for row in existing]
-    catalogue = [
-        ("工业传感器 S200", 480.0), ("变频控制器 C15", 1250.0), ("伺服电机 M8", 2380.0),
-        ("精密轴承套件", 320.0), ("工控触摸屏 10寸", 1680.0), ("安全继电器", 260.0),
-        ("光电开关 E3", 140.0), ("线缆组件 5m", 95.0),
-    ]
     while len(ids) < wanted:
-        name, price = catalogue[len(ids) % len(catalogue)]
+        name, price = CATALOGUE[len(ids) % len(CATALOGUE)]
         ids.append(
             writer.call(
                 "product.product",
                 "create",
-                {"name": f"{name}（{batch}）", "list_price": price, "sale_ok": True, "type": "consu"},
+                {
+                    "name": f"{name}（{batch}）",
+                    "list_price": price,
+                    "standard_price": round(price * 0.62, 2),
+                    "sale_ok": True,
+                    "type": "consu",
+                },
             )
         )
     return ids

@@ -60,24 +60,25 @@ Wren 相对 native：p50 +5.39s、Token +71,656、Cost +$0.033、Repair +4，通
 
 跑通前踩到两个坑，都已在代码中处理：判官默认 90s 会超时（`--ragas-timeout`，现 300s）；RAGAS 的 `InstructorModelArgs.max_tokens` 默认 1024，推理模型的思考 token 会先吃光预算导致结构化输出被截断、`faithfulness` 每个 case 抛 `IncompleteOutputException`（`--ragas-max-tokens`，现 8192）。
 
-### 2.4 延迟根因（`实测` 2026-09-07）
+### 2.4 延迟根因（`实测` 2026-09-07，真实数据下复测）
 
-p95 的 32～47s 不是数据库、不是网络，是**模型总在推理**。
+慢的原因有两层，**都不是数据库或网络**。
 
-`sql` role 配置为 `thinking_mode="disabled"`，但 `_siliconflow_supports_thinking_switch` 的模型列表里只有 `deepseek-v3.1` / `deepseek-v3.2`，**没有 v4**。当前用的是 `deepseek-ai/DeepSeek-V4-Pro`，于是走了给别家厂商准备的 `thinking: {"type": ...}` 参数格式，SiliconFlow 直接忽略——配置写了关闭，实际从未生效。
+**第一层：默认供应商被切到了 siliconflow。** 环境变量 `LLM_PROVIDER=siliconflow`（代码默认是 `deepseek`）。同样 3 道 KPI、同样数据的实测：
 
-直接对 SiliconFlow 发同一个提问，三轮实测：
-
-| 配置 | 均值耗时 | completion_tokens |
+| 配置 | KPI 平均耗时 | repair |
 | --- | ---: | --- |
-| 不发参数（此前的实际行为） | 14.6s | 733 / 202 / 577 |
-| `enable_thinking=False` | **4.4s** | **22 / 25 / 37** |
+| siliconflow + thinking=auto（修复前的实际行为） | ~151s | 0 |
+| siliconflow + thinking=disabled | 20.2s | **每次 1 次** |
+| **deepseek + thinking=disabled** | **5.8s** | **0** |
 
-一句 40 字的回答此前要烧掉 200～700 个推理 token。模型**完全支持**这个参数，只是从没发出去过。已把 `deepseek-v4` 加进列表。
+deepseek 不仅快，而且首次即生成可用 SQL，不需要 repair 往返。9-03 基线 p50 6.27s 正是在 deepseek 上测的——基线与当前默认配置并不是同一套路由。
 
-单条问答的耗时因此分成三档（见 9-03 基准）：`answer_mode: deterministic` 省掉第二次模型调用，5～6s；`answer_mode: llm` 要 SQL 生成 + 答案合成两次调用，15～20s；再叠加一次 repair 就是 45～56s（`comparison-invoice` 55.7s 即为此）。
+**第二层：`thinking` 开关此前从未生效。** `sql` role 配置为 `disabled`，但 `_siliconflow_supports_thinking_switch` 的列表只有 `deepseek-v3.1` / `v3.2`，没有 v4，于是发出的是别家厂商格式的 `thinking` 参数，SiliconFlow 直接忽略。直接对 API 三轮实测：不发参数均值 14.6s（completion_tokens 733/202/577），`enable_thinking=False` 均值 4.4s（22/25/37）。已把 `deepseek-v4` 加入列表。
 
-**尚未验证**：开启该开关后 SQL 生成准确率是否退化。需要跑一次全量 A/B 对照才能下结论，在那之前不要把"快 3 倍"当成已落地收益。
+单条问答的耗时因此分三档：`answer_mode: deterministic` 省掉第二次模型调用；`llm` 模式要 SQL 生成 + 答案合成两次；再叠加 repair 就是第三档。
+
+**准确率未因关闭推理而退化**：上述三种配置在同一批用例上均为 6/6 通过，结果签名全部匹配。但样本只有 6 题，全量 A/B 仍需重跑才能作为结论。
 
 ### 2.5 自动化门禁（`实测` 2026-09-03 基线）
 

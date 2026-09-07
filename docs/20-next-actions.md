@@ -200,6 +200,20 @@
 - 黄金集扩展到退款、税、空值、多币种等至少 60 题，需用户先确认业务口径。
 - UAT-01～09 全部待用户签字，UAT-01 销售口径对照是发布前置。
 
+### P1-5 切回 deepseek 并复测全量 A/B——**待用户确认**
+
+[19 §2.4](19-current-status-and-open-gaps.md) 实测：同样 3 道 KPI，deepseek 平均 5.8s 且无 repair，siliconflow 平均 20.2s 且每次都要 repair；未修 thinking 开关前的 siliconflow 更是达到 ~151s。
+
+- 建议：把 `LLM_PROVIDER` 从 `siliconflow` 改回 `deepseek`（两家 key 都已配置，改环境变量或在"数据与模型"页切换即可）。
+- 需用户确认的是**费用与合规**，不是技术：deepseek 与 siliconflow 的计费和数据出境策略不同，这属于业务决定。
+- 切换后必须重跑全量三轮 A/B，重新测 p50/p95 与通过率，并更新 [18](18-native-wren-ab-benchmark.md)；在那之前不要把"快 26 倍"当成已落地收益。
+
+### P1-6 给新增黄金集用例补参考结果签名
+
+`evals/datasets/sales_golden.jsonl` 里有 14 道数据类用例带 `pending_reference: true`，因为写它们时库里还没有可用数据。现在 275 张订单已覆盖 12 个月，可以为每题写参考 SQL 并生成签名，然后去掉该标记。
+
+- 验收：`test_live_result_references_cover_all_non_interrupt_data_cases` 在没有 pending 例外的情况下通过。
+
 ## 3. 已定结论（不必重新讨论）
 
 | 议题 | 结论 | 依据 |
