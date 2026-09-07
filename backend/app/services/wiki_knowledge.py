@@ -7,6 +7,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -441,8 +442,34 @@ class WikiKnowledgeService:
             self._vector_available = False
             self._vector_error_type = type(exc).__name__
 
+    # 构建只需要几秒；比这久得多的 .tmp 一定是上次被强杀留下的孤儿。
+    _STALE_TEMP_AGE_SECONDS = 3600.0
+
+    def _sweep_stale_temp_indexes(self) -> None:
+        """清掉此前被强杀留下的临时索引。
+
+        `_rebuild` 成功 `replace`、异常 `unlink`，但进程被强杀时两条路径都不会
+        执行，`.tmp` 会一直留着（实测有一个 3.7MB 的残留）。这里只删**足够旧**
+        的，避免误删另一个正在构建的进程的临时文件。
+        """
+
+        index_path = self._config.index_path
+        cutoff = time.time() - self._STALE_TEMP_AGE_SECONDS
+        try:
+            candidates = list(index_path.parent.glob(f"{index_path.name}.*.tmp"))
+        except OSError:
+            return
+        for candidate in candidates:
+            try:
+                if candidate.stat().st_mtime < cutoff:
+                    candidate.unlink(missing_ok=True)
+            except OSError:
+                # 清理是尽力而为，绝不能因此让索引构建失败。
+                continue
+
     def _rebuild(self, files: list[Path], fingerprint: str) -> WikiStatus:
         self._config.index_path.parent.mkdir(parents=True, exist_ok=True)
+        self._sweep_stale_temp_indexes()
         temp_path = self._config.index_path.with_name(
             f"{self._config.index_path.name}.{os.getpid()}.{uuid4().hex}.tmp"
         )

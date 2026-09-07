@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
@@ -266,6 +268,64 @@ qty_to_invoice 会结合开票策略、交付数量和已开票数量计算。
                 retrieved,
                 f"期望 {expected_relative_path} 进入纯词法 top-6，实际命中 {retrieved}",
             )
+
+
+class StaleTempIndexTests(unittest.TestCase):
+    """重建索引时清扫上次被硬杀留下的临时库。
+
+    `_rebuild` 成功走 `replace`、异常走 `unlink`，两条路径都对；但进程被强杀时
+    两条都不会执行，`.tmp` 就永久留在 `.wiki-index/` 里（实际观测到一个 8-20
+    留下的 3.7MB 残留）。清扫必须保守：**只删足够旧的**，否则会误删另一个正在
+    构建的进程的临时文件。
+    """
+
+    def _wiki(self, directory: str) -> tuple[Path, WikiConfig]:
+        root = Path(directory) / "learn_odoo"
+        source = root / "01_Odoo"
+        source.mkdir(parents=True)
+        (source / "note.md").write_text(
+            "---\ntype: concept_note\nstatus: reviewed\n---\n# 概念\n\n## 说明\n\n这是一篇用于测试的已审核笔记。\n",
+            encoding="utf-8",
+        )
+        index_path = Path(directory) / "agent-index" / "wiki.db"
+        return index_path, WikiConfig(
+            root_path=root,
+            index_path=index_path,
+            allowed_statuses=("reviewed",),
+            max_results=6,
+        )
+
+    def test_rebuild_removes_orphaned_temp_files_but_spares_recent_ones(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            index_path, config = self._wiki(directory)
+            index_path.parent.mkdir(parents=True, exist_ok=True)
+
+            stale = index_path.with_name(f"{index_path.name}.999.deadbeef.tmp")
+            stale.write_bytes(b"orphaned")
+            old = time.time() - 24 * 3600
+            os.utime(stale, (old, old))
+
+            fresh = index_path.with_name(f"{index_path.name}.1000.cafebabe.tmp")
+            fresh.write_bytes(b"another build in flight")
+
+            WikiKnowledgeService(config).status()
+
+            self.assertFalse(stale.exists(), "一天前的孤儿临时库应被清掉")
+            self.assertTrue(fresh.exists(), "刚创建的临时库可能属于正在构建的进程，不能删")
+
+    def test_rebuild_never_touches_the_real_index_or_unrelated_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            index_path, config = self._wiki(directory)
+            index_path.parent.mkdir(parents=True, exist_ok=True)
+            bystander = index_path.with_name("wiki.faiss")
+            bystander.write_bytes(b"vector index")
+            old = time.time() - 24 * 3600
+            os.utime(bystander, (old, old))
+
+            WikiKnowledgeService(config).status()
+
+            self.assertTrue(bystander.exists(), "只清 .tmp，别的文件一律不动")
+            self.assertTrue(index_path.exists())
 
 
 class RankFusionTests(unittest.TestCase):

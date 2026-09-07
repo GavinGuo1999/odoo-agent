@@ -159,7 +159,7 @@
 | --- | --- | --- |
 | ~~P0~~ **已完成 2026-09-07** | 助手回答的 Markdown 渲染 | 见下方说明 |
 | ~~P1~~ **已完成 2026-09-07** | 新增“评测与质量”页 | 见下方说明 |
-| P2 | 侧边栏改 JS 注入；`app.js` 拆为每页 `type="module"` 入口；替换手工版本号 | 新增导航项只改一处；每页不再加载无关代码 |
+| P2 **部分完成 2026-09-07** | 侧边栏改 JS 注入 ✅；替换手工版本号 ✅；`app.js` 拆为每页 `type="module"` 入口 ⏳ | 见下方说明 |
 | P3 | `/api/semantic_audit` 增加界面 | 现有后端能力可在 UI 使用 |
 
 **Markdown 渲染（已完成）**：新增自托管的 `markdown.js`（约 250 行，无依赖），`app.js` 的 `appendChatMessage` 对助手消息调用它；渲染器缺失时回退到原来的纯文本 `<p>`。支持标题、加粗/斜体、行内代码、有序/无序列表（含**混合类型嵌套**）、表格、围栏代码块、引用、分隔线、安全链接。安全性见 [19 §3.5](19-current-status-and-open-gaps.md)。
@@ -178,8 +178,18 @@
 
 实现时发现并修掉一个真 bug：最初按目录名字母序取"最近一次"，而真实归档里 `20260903-native-wren-ab-final`（09:58）在字母序上排在 `20260903-product-name-guard`（09:31）之后，页面会把更旧的一次当成最新。改为解析报告内的时间戳排序（缺失时回退到目录名前缀的日期时间），已补两项测试。
 
+**侧边栏与版本号（已完成）**：新增 `sidebar.js`，导航是其中唯一的定义处；6 个页面只保留 `<aside class="sidebar" data-sidebar></aside>` 挂载点。必须在 `app.js` 之前加载（两者都 defer，顺序即执行顺序），否则 `app.js` 找不到侧边栏里的 `[data-db-mini-status]`、`[data-conversation-list]`。会话历史区只在 `data-page="chat"` 时注入。
+
+手工版本号 `?v=N` 已全部删除，改由服务端保证：`/ui/{filename}` 返回 `Cache-Control: no-cache` 加基于 mtime+size 的 `ETag`，命中 `If-None-Match` 时返回 304。改了立刻生效，没改也不必重传，从此不存在"漏改版本号导致改了没生效"。
+
+新增 `backend/tests/test_ui_shell.py` 8 项测试：页面不得硬编码 `nav-link`、必须有挂载点且脚本顺序正确、`sidebar.js` 不得使用 `innerHTML`、页面不得残留 `?v=`、资源必须带 `no-cache` 与 `ETag`、相同 ETag 必须 304。
+
+**`app.js` 拆模块暂缓**：侧边栏抽取已经消掉了最大的一块重复（加导航项从改 6 个文件变成改 1 处）。剩下的拆分收益是"每页不加载无关代码"，但 `app.js` 仍有 2000 行且前端只有 `node --check` 与渲染器测试兜底，大改的回归风险高于收益。**建议先补前端测试再拆**，不要为了拆而拆。
+
 ### P2-2 待处理的噪音
 
+- ~~脚本退出时的 `ResourceTracker.__del__` 报错~~：**已确认无害**（2026-09-07 实测）。`run_wiki_rag_eval.py` 跑完退出码为 0，噪音出现在结果打印之后，不影响 CI 接入。
+- ~~`.wiki-index/` 的 `.tmp` 残留~~：**已根治**。残留来自进程被强杀（`_rebuild` 的 `replace`/`unlink` 两条路径都没跑到）。现在每次重建会清扫**超过 1 小时**的孤儿 `.tmp`——只删足够旧的，避免误删另一个正在构建的进程的临时文件。那个 8-20 留下的 3.7MB 文件也已删除。
 - `run_wiki_rag_eval.py` 的 RAGAS `DeprecationWarning`：**不要直接替换 import**。`ragas.metrics.collections` 的调用签名不同（`.ascore(**kwargs)` 返回带 `.value` 的对象，即该文件 `run_ragas` 中已使用的形式），而当前这段用的是 `single_turn_ascore(sample)`。改则需连调用一起改并补测试。
 - 脚本退出时的 `ResourceTracker.__del__` 报错为 multiprocess 在 Python 3.12 下的清理噪音，发生在结果打印之后。接入 CI 前需确认 `$LASTEXITCODE` 仍为 0。
 - `.wiki-index/` 下有一个 3.7MB 的 `.tmp` 残留文件可清理。

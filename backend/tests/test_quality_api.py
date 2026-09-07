@@ -53,10 +53,12 @@ class QualityPageWiringTests(unittest.TestCase):
         self.assertIn('"quality.html"', main_py)
         self.assertIn('"quality.js"', main_py)
 
-    def test_every_page_links_to_the_quality_page(self) -> None:
-        for page in ("index.html", "chat.html", "dashboard.html", "wiki.html", "settings.html", "quality.html"):
-            markup = (PROJECT_DIR / page).read_text(encoding="utf-8")
-            self.assertIn("quality.html", markup, f"{page} 缺少评测与质量页的导航入口")
+    def test_navigation_exposes_the_quality_page(self) -> None:
+        # 导航自 2026-09-07 起由 sidebar.js 单点生成，页面本身不再硬编码链接，
+        # 所以这里断言的是外壳里有这一项，而不是逐页去找。
+        shell = (PROJECT_DIR / "sidebar.js").read_text(encoding="utf-8")
+        self.assertIn("quality.html", shell, "sidebar.js 缺少评测与质量页的导航项")
+        self.assertIn('data-page="quality"', (PROJECT_DIR / "quality.html").read_text(encoding="utf-8"))
 
     def test_quality_script_loads_after_app(self) -> None:
         markup = (PROJECT_DIR / "quality.html").read_text(encoding="utf-8")

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response
 
@@ -25,6 +25,7 @@ _UI_FILES = {
     "markdown.js",
     "quality.html",
     "quality.js",
+    "sidebar.js",
     "settings.html",
     "styles.css",
     "wiki.html",
@@ -68,10 +69,21 @@ def create_app() -> FastAPI:
         return RedirectResponse(url="/ui/index.html")
 
     @application.get("/ui/{filename:path}", include_in_schema=False)
-    async def ui_file(filename: str) -> FileResponse:
+    async def ui_file(request: Request, filename: str) -> Response:
         if filename not in _UI_FILES:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-        return FileResponse(_PROJECT_DIRECTORY / filename)
+        path = _PROJECT_DIRECTORY / filename
+        # 手工的 `?v=N` 版本号漏改一次就会产生“改了没生效”的假缺陷，因此改由
+        # 服务端保证：每次都校验，内容没变则 304，改了立刻生效。
+        try:
+            stat = path.stat()
+        except OSError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+        etag = f'"{int(stat.st_mtime_ns):x}-{stat.st_size:x}"'
+        headers = {"Cache-Control": "no-cache", "ETag": etag}
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=headers)
+        return FileResponse(path, headers=headers)
 
     @application.get("/", include_in_schema=False)
     async def root() -> RedirectResponse:

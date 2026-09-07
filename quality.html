@@ -4,28 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Odoo Agent · 评测与质量</title>
-  <link rel="stylesheet" href="styles.css?v=16">
-  <script src="app.js?v=16" defer></script>
-  <script src="quality.js?v=16" defer></script>
+  <link rel="stylesheet" href="styles.css">
+  <script src="sidebar.js" defer></script>
+  <script src="app.js" defer></script>
+  <script src="quality.js" defer></script>
 </head>
 <body data-page="quality">
   <div class="app-shell">
-    <aside class="sidebar">
-      <a class="brand" href="index.html"><span class="brand-mark">O</span><span><span class="brand-name">Odoo Agent</span><br><span class="brand-subtitle">销售数据智能助手</span></span></a>
-      <div class="nav-label">工作空间</div>
-      <nav class="nav-list" aria-label="主导航">
-        <a class="nav-link" data-nav="home" href="index.html"><span class="nav-icon">⌂</span><span>工作台</span></a>
-        <a class="nav-link" data-nav="chat" href="chat.html"><span class="nav-icon">✦</span><span>智能助手</span></a>
-        <a class="nav-link" data-nav="dashboard" href="dashboard.html"><span class="nav-icon">▥</span><span>销售看板</span></a>
-        <a class="nav-link" data-nav="wiki" href="wiki.html"><span class="nav-icon">◇</span><span>Odoo Wiki</span></a>
-      </nav>
-      <div class="nav-label">系统</div>
-      <nav class="nav-list" aria-label="系统导航">
-        <a class="nav-link" data-nav="quality" href="quality.html"><span class="nav-icon">✓</span><span>评测与质量</span></a>
-        <a class="nav-link" data-nav="settings" href="settings.html"><span class="nav-icon">⚙</span><span>数据与模型</span></a>
-      </nav>
-      <div class="sidebar-footer"><div class="db-mini-status" data-db-mini-status><span class="status-dot"></span><span>Odoo 19 · 正在检查数据库</span></div></div>
-    </aside>
+    <aside class="sidebar" data-sidebar></aside>
 
     <main class="main-area">
       <header class="topbar">
