@@ -60,6 +60,9 @@ class GoldenExpected(BaseModel):
     data_accessed: bool
     interrupt: bool
     allow_empty: bool = False
+    # 新增的数据类用例在参考结果签名补齐前先标这个位。签名依赖真实业务数据，
+    # 没有数据时编一个签名比没有签名更糟——那会让回归测试对着假基线跑绿。
+    pending_reference: bool = False
 
 
 class GoldenItem(BaseModel):

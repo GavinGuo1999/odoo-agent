@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 _SILICONFLOW_THINKING_MODEL_MARKERS = (
     "deepseek-v3.1",
     "deepseek-v3.2",
+    "deepseek-v4",
     "qwen3-",
     "glm-4.6",
     "glm-4.7",

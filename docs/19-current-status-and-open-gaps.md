@@ -60,7 +60,26 @@ Wren 相对 native：p50 +5.39s、Token +71,656、Cost +$0.033、Repair +4，通
 
 跑通前踩到两个坑，都已在代码中处理：判官默认 90s 会超时（`--ragas-timeout`，现 300s）；RAGAS 的 `InstructorModelArgs.max_tokens` 默认 1024，推理模型的思考 token 会先吃光预算导致结构化输出被截断、`faithfulness` 每个 case 抛 `IncompleteOutputException`（`--ragas-max-tokens`，现 8192）。
 
-### 2.4 自动化门禁（`实测` 2026-09-03 基线）
+### 2.4 延迟根因（`实测` 2026-09-07）
+
+p95 的 32～47s 不是数据库、不是网络，是**模型总在推理**。
+
+`sql` role 配置为 `thinking_mode="disabled"`，但 `_siliconflow_supports_thinking_switch` 的模型列表里只有 `deepseek-v3.1` / `deepseek-v3.2`，**没有 v4**。当前用的是 `deepseek-ai/DeepSeek-V4-Pro`，于是走了给别家厂商准备的 `thinking: {"type": ...}` 参数格式，SiliconFlow 直接忽略——配置写了关闭，实际从未生效。
+
+直接对 SiliconFlow 发同一个提问，三轮实测：
+
+| 配置 | 均值耗时 | completion_tokens |
+| --- | ---: | --- |
+| 不发参数（此前的实际行为） | 14.6s | 733 / 202 / 577 |
+| `enable_thinking=False` | **4.4s** | **22 / 25 / 37** |
+
+一句 40 字的回答此前要烧掉 200～700 个推理 token。模型**完全支持**这个参数，只是从没发出去过。已把 `deepseek-v4` 加进列表。
+
+单条问答的耗时因此分成三档（见 9-03 基准）：`answer_mode: deterministic` 省掉第二次模型调用，5～6s；`answer_mode: llm` 要 SQL 生成 + 答案合成两次调用，15～20s；再叠加一次 repair 就是 45～56s（`comparison-invoice` 55.7s 即为此）。
+
+**尚未验证**：开启该开关后 SQL 生成准确率是否退化。需要跑一次全量 A/B 对照才能下结论，在那之前不要把"快 3 倍"当成已落地收益。
+
+### 2.5 自动化门禁（`实测` 2026-09-03 基线）
 
 后端 `unittest` 115/115、静态黄金集 20/20、`node --check app.js` 通过、Wren 9 模型构建通过。
 

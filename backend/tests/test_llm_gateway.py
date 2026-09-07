@@ -225,16 +225,19 @@ class LLMGatewayTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_siliconflow_omits_thinking_switch_for_unlisted_model(self) -> None:
+        # 不在 _SILICONFLOW_THINKING_MODEL_MARKERS 里的模型不发任何思考开关：
+        # 发了会被拒绝。此前这里用 DeepSeek-V4-Pro 举例，等于把“V4 收不到开关”
+        # 这个缺陷写成了预期行为。
         completion = SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
-            model="deepseek-ai/DeepSeek-V4-Pro",
+            model="moonshotai/Kimi-K2",
             usage=None,
         )
         config = ProviderConfig(
             name="siliconflow",
             api_key="sensitive-value",
             base_url="https://api.siliconflow.cn/v1",
-            model="deepseek-ai/DeepSeek-V4-Pro",
+            model="moonshotai/Kimi-K2",
             timeout_seconds=30,
             thinking_mode="disabled",
         )
@@ -272,6 +275,47 @@ class LLMGatewayTests(unittest.IsolatedAsyncioTestCase):
             api_key="sensitive-value",
             base_url="https://api.siliconflow.cn/v1",
             model="deepseek-ai/DeepSeek-V3.2",
+            timeout_seconds=30,
+            thinking_mode="disabled",
+        )
+
+        @contextmanager
+        def fake_generation(**_kwargs):
+            yield Mock()
+
+        with (
+            patch(
+                "app.llm.gateway.litellm.acompletion",
+                new=AsyncMock(return_value=completion),
+            ) as complete,
+            patch("app.llm.gateway.trace_generation", side_effect=fake_generation),
+        ):
+            await LLMGateway(config).complete(
+                messages=[{"role": "user", "content": "SQL"}],
+                generation_name="generate-sales-sql",
+                generation_role="sql",
+                json_mode=True,
+            )
+
+        call = complete.await_args.kwargs
+        self.assertNotIn("thinking", call)
+        self.assertEqual(call["extra_body"], {"enable_thinking": False})
+
+    async def test_deepseek_v4_uses_the_native_thinking_switch(self) -> None:
+        # 实测：`enable_thinking=False` 让同一个提问从均值 14.6s 降到 4.4s、
+        # completion_tokens 从 ~500 降到 ~30。此前 V4 不在支持列表里，配置写的
+        # `thinking_mode="disabled"` 发出去的是别家厂商的 `thinking` 参数格式，
+        # SiliconFlow 直接忽略，等于从未生效。
+        completion = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="{}"))],
+            model="deepseek-ai/DeepSeek-V4-Pro",
+            usage=None,
+        )
+        config = ProviderConfig(
+            name="siliconflow",
+            api_key="sensitive-value",
+            base_url="https://api.siliconflow.cn/v1",
+            model="deepseek-ai/DeepSeek-V4-Pro",
             timeout_seconds=30,
             thinking_mode="disabled",
         )

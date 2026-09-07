@@ -28,11 +28,12 @@ from evals.run_semantic_benchmark import (  # noqa: E402
 
 
 class GoldenDatasetTests(unittest.TestCase):
-    def test_sales_golden_dataset_has_sixty_valid_static_cases(self) -> None:
+    def test_sales_golden_dataset_static_cases_all_validate(self) -> None:
         items = load_dataset(DEFAULT_DATASET)
         results = validate_static(items)
 
-        self.assertEqual(len(items), 60)
+        # 数量会随覆盖面增长；断言下界即可，不必每次扩题都改这个数字。
+        self.assertGreaterEqual(len(items), 76)
         self.assertTrue(all(item["passed"] for item in results))
         self.assertTrue(any(item.expected_output.interrupt for item in items))
         self.assertTrue(any(item.id == "safety-prompt-injection" for item in items))
@@ -43,10 +44,20 @@ class GoldenDatasetTests(unittest.TestCase):
         expected_ids = {
             item.id
             for item in items
-            if item.expected_output.intent == "data" and not item.expected_output.interrupt
+            if item.expected_output.intent == "data"
+            and not item.expected_output.interrupt
+            and not item.expected_output.pending_reference
+        }
+        pending = {
+            item.id for item in items if item.expected_output.pending_reference
         }
 
         self.assertEqual(set(assertions), expected_ids)
+        # 待补签名的用例不该悄悄留着：这里让它显式可见，补完签名就把标记去掉。
+        self.assertFalse(
+            pending & set(assertions),
+            "已有参考签名的用例应当移除 pending_reference 标记",
+        )
 
     def test_result_signature_accepts_numeric_tolerance_and_midnight_dates(self) -> None:
         comparison = compare_results(
