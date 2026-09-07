@@ -123,7 +123,7 @@
 | 优先级 | 项 | 验收 |
 | --- | --- | --- |
 | ~~P0~~ **已完成 2026-09-07** | 助手回答的 Markdown 渲染 | 见下方说明 |
-| P1 | 新增“评测与质量”页 | 读 `evals/reports/*.json`，展示通过率、p50/p95、Token/Cost、Wiki RAG 指标与最近一次 A/B |
+| ~~P1~~ **已完成 2026-09-07** | 新增“评测与质量”页 | 见下方说明 |
 | P2 | 侧边栏改 JS 注入；`app.js` 拆为每页 `type="module"` 入口；替换手工版本号 | 新增导航项只改一处；每页不再加载无关代码 |
 | P3 | `/api/semantic_audit` 增加界面 | 现有后端能力可在 UI 使用 |
 
@@ -134,6 +134,14 @@
 一处只有真浏览器才暴露的问题：初版实现里“有序列表套无序列表”会断成两个并列列表，`<ul>` 直接挂在 `<ul>` 下（无效 HTML），视觉上却因为缩进看着正常。Node 测试当时写得太宽松放过了它。已改为按缩进维护栈、每层各自决定 `ol`/`ul`，并把测试收紧为精确断言。
 
 新增文件需同步两处，否则前端 404：`backend/app/main.py` 的 `_UI_FILES` 白名单、`chat.html` 的 `<script>`（必须在 `app.js` 之前）。静态资源版本号已从 `v=15` 升到 `v=16`。
+
+**评测与质量页（已完成）**：新增 `quality.html` + `quality.js`（独立文件，与 markdown.js 同样只构造 DOM 不用 `innerHTML`），后端 `GET /api/quality/summary` 由 `backend/app/services/eval_reports.py` 只读汇总 `evals/reports/` 下的归档。展示最近一次语义层 A/B（通过率/结果签名/p50/p95/Token/Cost/Repair + 与 native 的差值 + 延迟门禁结论）、按 `generation_role` 的成本归因、Wiki 检索两种模式对照与差值、RAGAS 指标含成功样本数，以及全部历史运行。
+
+页面**只读不触发评测**：跑评测要花模型额度、要连只读业务库，那是命令行里的显式动作，不该由打开一个页面触发。`evals/reports/` 是 gitignore 的，新克隆必然无数据，此时页面显示空状态并给出复现命令，而不是报错。
+
+两处刻意的取舍：RAGAS「未运行」与「跑了但分低」在接口和页面上严格区分，缺失指标绝不显示成 0；RAGAS 区块始终附带样本量与"判官与被评回答同模型"的解读提醒，避免 0.9075 被当成全量结论。
+
+实现时发现并修掉一个真 bug：最初按目录名字母序取"最近一次"，而真实归档里 `20260903-native-wren-ab-final`（09:58）在字母序上排在 `20260903-product-name-guard`（09:31）之后，页面会把更旧的一次当成最新。改为解析报告内的时间戳排序（缺失时回退到目录名前缀的日期时间），已补两项测试。
 
 ### P2-2 待处理的噪音
 
@@ -186,3 +194,7 @@
 | `evals/run_wiki_rag_eval.py` | P1-2：`summary.md` + 按时间戳归档 + `--push-langfuse`；RAGAS 改为逐指标容错，单次判官超时不再丢弃整轮结果；新增 `--ragas-timeout` |
 | `backend/tests/test_wiki_rag_eval.py` | 新增 9 项测试（报告渲染/归档/Score 载荷、RAGAS 部分失败聚合） |
 | `docs/19` §2.3、§3.1、§3.5 | 记录 RAGAS 首个基线、报告可比性与 Markdown 渲染的落地状态 |
+| `quality.html`、`quality.js`（新增） | 评测与质量页，只读展示归档 |
+| `backend/app/services/eval_reports.py`（新增） | 只读汇总 `evals/reports/`，容错且按报告时间戳定序 |
+| `backend/app/api/routes/quality.py`（新增）、`api/router.py` | `GET /api/quality/summary` |
+| `backend/tests/test_eval_reports.py`、`test_quality_api.py`（新增） | 12 项测试（空状态、定序、损坏归档、RAGAS 区分、接口与页面接线） |

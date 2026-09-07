@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Odoo Agent · 评测与质量</title>
+  <link rel="stylesheet" href="styles.css?v=16">
+  <script src="app.js?v=16" defer></script>
+  <script src="quality.js?v=16" defer></script>
+</head>
+<body data-page="quality">
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="index.html"><span class="brand-mark">O</span><span><span class="brand-name">Odoo Agent</span><br><span class="brand-subtitle">销售数据智能助手</span></span></a>
+      <div class="nav-label">工作空间</div>
+      <nav class="nav-list" aria-label="主导航">
+        <a class="nav-link" data-nav="home" href="index.html"><span class="nav-icon">⌂</span><span>工作台</span></a>
+        <a class="nav-link" data-nav="chat" href="chat.html"><span class="nav-icon">✦</span><span>智能助手</span></a>
+        <a class="nav-link" data-nav="dashboard" href="dashboard.html"><span class="nav-icon">▥</span><span>销售看板</span></a>
+        <a class="nav-link" data-nav="wiki" href="wiki.html"><span class="nav-icon">◇</span><span>Odoo Wiki</span></a>
+      </nav>
+      <div class="nav-label">系统</div>
+      <nav class="nav-list" aria-label="系统导航">
+        <a class="nav-link" data-nav="quality" href="quality.html"><span class="nav-icon">✓</span><span>评测与质量</span></a>
+        <a class="nav-link" data-nav="settings" href="settings.html"><span class="nav-icon">⚙</span><span>数据与模型</span></a>
+      </nav>
+      <div class="sidebar-footer"><div class="db-mini-status" data-db-mini-status><span class="status-dot"></span><span>Odoo 19 · 正在检查数据库</span></div></div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button class="btn btn-icon mobile-menu" type="button" data-menu-toggle aria-label="打开导航">☰</button>
+          <div><h1 class="page-title">评测与质量</h1><div class="page-subtitle">黄金集、语义层 A/B、Wiki 检索与 RAGAS 的最近一次实测结果</div></div>
+        </div>
+        <div class="topbar-right">
+          <span class="top-status" data-quality-top-status><span class="status-dot"></span><span>正在读取评测归档</span></span>
+          <span class="avatar">我</span>
+        </div>
+      </header>
+
+      <div class="content">
+        <section class="card" data-quality-empty hidden>
+          <h2>还没有评测归档</h2>
+          <p>评测报告写在 <code>evals/reports/</code>，该目录不进版本库，所以一次新克隆本来就没有数据。跑一次评测即可：</p>
+          <pre class="quality-commands"><code>.\.venv\Scripts\python.exe .\evals\run_semantic_benchmark.py --runs 3 --providers native,wren
+.\.venv\Scripts\python.exe .\evals\run_wiki_rag_eval.py --mode both --limit 6</code></pre>
+          <p class="quality-note">语义层 A/B 会消耗模型额度并访问只读业务库；Wiki 检索对照不调用生成模型。</p>
+        </section>
+
+        <section class="card" data-quality-semantic hidden>
+          <div class="card-head">
+            <div>
+              <h2>语义层 A/B 基准</h2>
+              <div class="page-subtitle" data-semantic-meta></div>
+            </div>
+            <span class="quality-verdict" data-latency-verdict></span>
+          </div>
+          <div class="table-scroll">
+            <table class="quality-table" data-semantic-table>
+              <thead><tr><th>语义层</th><th>通过率</th><th>结果签名</th><th>p50</th><th>p95</th><th>Token</th><th>Cost USD</th><th>Repair</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div data-semantic-comparison></div>
+        </section>
+
+        <section class="card" data-quality-roles hidden>
+          <h2>按 generation_role 的成本归因</h2>
+          <p class="quality-note">role 名与推送 Langfuse 的 <code>generation_role</code> 一致，因此这里的账目可与 Trace 对上。</p>
+          <div class="table-scroll">
+            <table class="quality-table" data-roles-table>
+              <thead><tr><th>语义层</th><th>role</th><th>调用数</th><th>Token</th><th>Token 占比</th><th>Cost USD</th><th>Cost 占比</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card" data-quality-wiki hidden>
+          <div class="card-head">
+            <div>
+              <h2>Wiki 检索</h2>
+              <div class="page-subtitle" data-wiki-meta></div>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table class="quality-table" data-wiki-table>
+              <thead><tr><th>检索模式</th><th>recall</th><th>hit@k</th><th>MRR</th><th>precision</th><th>降级原因</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div data-wiki-delta></div>
+        </section>
+
+        <section class="card" data-quality-ragas hidden>
+          <div class="card-head">
+            <div>
+              <h2>RAGAS（需 LLM 评审）</h2>
+              <div class="page-subtitle" data-ragas-meta></div>
+            </div>
+            <span class="quality-verdict" data-ragas-status></span>
+          </div>
+          <div data-ragas-body></div>
+        </section>
+
+        <section class="card" data-quality-history hidden>
+          <h2>历史运行</h2>
+          <p class="quality-note">按归档目录名倒序。两次运行的差异可直接对比 <code>evals/reports/</code> 下对应目录。</p>
+          <div class="table-scroll">
+            <table class="quality-table" data-history-table>
+              <thead><tr><th>运行</th><th>类型</th><th>关键指标</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card" data-quality-error hidden>
+          <h2>读取失败</h2>
+          <p data-quality-error-text></p>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

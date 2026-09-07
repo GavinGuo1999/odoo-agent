@@ -2270,3 +2270,104 @@ p.assistant-answer {
     grid-template-columns: 1fr;
   }
 }
+
+/* 评测与质量页 */
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.quality-verdict {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: var(--surface-soft);
+  color: var(--text-secondary);
+  border: 1px solid #ece8ef;
+}
+
+.quality-verdict.ok { background: var(--green-soft); color: var(--green); border-color: #cfe9de; }
+.quality-verdict.warn { background: var(--yellow-soft); color: var(--yellow); border-color: #f0e0b8; }
+.quality-verdict.bad { background: #fdecec; color: var(--danger); border-color: #f2d3d4; }
+.quality-verdict.muted { color: var(--text-tertiary); }
+
+.table-scroll {
+  overflow-x: auto;
+  margin-top: 12px;
+}
+
+.quality-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9rem;
+}
+
+.quality-table th,
+.quality-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #ece8ef;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.quality-table th {
+  color: var(--text-secondary);
+  font-weight: 600;
+  background: var(--surface-soft);
+}
+
+.quality-table td:first-child { font-weight: 600; }
+
+.quality-table tbody tr:last-child td { border-bottom: 0; }
+
+.quality-subhead {
+  margin: 18px 0 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.quality-deltas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quality-deltas li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 0.9rem;
+}
+
+.quality-delta-label { color: var(--text-secondary); }
+.quality-deltas strong.up { color: var(--danger); }
+.quality-deltas strong.down { color: var(--green); }
+
+.quality-note {
+  margin: 12px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.87rem;
+  line-height: 1.6;
+}
+
+.quality-commands {
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid #ece8ef;
+  background: var(--surface-soft);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.status-dot.ok { background: var(--green); }
+.status-dot.warn { background: var(--yellow); }
+.status-dot.bad { background: var(--danger); }

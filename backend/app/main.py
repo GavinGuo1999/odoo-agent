@@ -23,6 +23,8 @@ _UI_FILES = {
     "echarts.min.js",
     "index.html",
     "markdown.js",
+    "quality.html",
+    "quality.js",
     "settings.html",
     "styles.css",
     "wiki.html",
