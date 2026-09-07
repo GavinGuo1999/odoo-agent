@@ -109,12 +109,47 @@
 
 耗时约 30～40 分钟（5 case × 4 指标，判官是推理模型且每个指标要多轮调用）。RAGAS 这一层现在是容错的：单个指标失败会记录 `error_type` 并继续，检索指标与归档不受影响。
 
-### P1-4 追查 hybrid 的排序退化
+### P1-4 追查 hybrid 的排序退化——已完成，2026-09-07。结论：**不要调权重**
 
-`wiki-external-id` 的 MRR 在 hybrid 下从 1.00 降到 0.50，是本轮唯一排序退化。
+按验收要求先补测试用例再做实验，结果**推翻了这条任务原本的假设**。
 
-- 方向：RRF 权重 `0.45 / 0.55` 与 reranker 在精确标识符类问题上稀释了词法的正确判断。
-- 验收：定位到是融合权重还是 reranker 导致，并给出不牺牲其他 case 的处理方式；只有一个样本，先补测试用例再调参。
+**先补的用例**：黄金集 20 → 26 题，新增 6 道精确标识符题（`amount_to_invoice`、`amount_residual`、`bom_line_ids`、`date_approve`、`arch_db`、`ai.openai_key`）。每个符号都经程序核实只出现在唯一一篇 reviewed 笔记里，参考答案照抄原文而非臆造。
+
+**实验一：分阶段定位**（lexical / 只融合不重排 / 完整 hybrid，全量 26 题）
+
+| 指标 | lexical | fusion | hybrid |
+| --- | ---: | ---: | ---: |
+| mean MRR | 0.7045 | 0.7468 | 0.7724 |
+| mean recall | 0.9038 | 0.9615 | 0.9615 |
+
+- **6 道新标识符题在三种配置下全部满分 1.0000。** 原假设"RRF 权重与 reranker 在精确标识符类问题上稀释词法判断"**不成立**——真正的标识符查询完全没被稀释。
+- `wiki-external-id` 的特殊之处不在于它是标识符题，而在于 `ref('module.xml_id')` 里的 `module.xml_id` 是**占位符**，不是语料中真实存在的符号。词法排第 1 有偶然成分，而向量提上来的 `Base 元模型深挖.md` 同样在讲外部 ID，主题上并不离谱。
+- 退化也不止一例：`wiki-runtime`（1→2）由 **reranker** 造成，`wiki-stock-picking`（6→掉出）由**融合**造成。原记录"是本轮唯一排序退化"在 P0-2 修好词法后已不成立。
+
+**实验二：权重扫描**（全量 26 题，含 reranker）
+
+| lex/vec | MRR | recall | 相对当前的名次变化 |
+| --- | ---: | ---: | --- |
+| 0.45/0.55（当前） | 0.7724 | 0.9615 | 基准 |
+| 0.50/0.50 | 0.7724 | 0.9615 | 完全无变化 |
+| 0.55/0.45 | 0.7724 | 0.9615 | 完全无变化 |
+| 0.65/0.35 | 0.7724 | 0.9231 | `wiki-product-category` 3→2，但 `wiki-stock-rule` 6→掉出 |
+| 0.80/0.20 | 0.7308 | 0.8846 | 再坏两个 case |
+
+`0.45/0.55` 到 `0.55/0.45` 区间内权重**完全不影响结果**，说明当前取值既不敏感也不是问题所在。
+
+**实验三：这一个 case 到底能不能修好**
+
+| 权重 | 不重排 | 重排 |
+| --- | ---: | ---: |
+| 0.45/0.55 | 第 2 | 第 2 |
+| 0.80/0.20 | **第 1** | 第 2 |
+
+融合与 reranker **各自独立**地把它降到第 2：即便把权重推到极端、把融合掰回来，reranker 也会再压一次。要修好这一个 case，得同时接受掉 recall 的权重**加上**为该类查询绕开 reranker。
+
+**结论：保持 `0.45/0.55` 不变，不为这个 case 调参。** 两阶段都是净收益（MRR +0.0423 / +0.0256，recall +0.0577），代价却是确定的。该取舍已固化为离线测试 `backend/tests/test_wiki_knowledge.py::RankFusionTests`（含"RRF 丢弃分数置信度"的直接证据），避免以后被当成 bug 顺手改掉。
+
+**遗留（不再归入 P1-4）**：`wiki-runtime` 的 reranker 降级、`wiki-stock-picking` 在 hybrid 下仍未召回。这两条要动的是 reranker 策略而非融合权重，同样需要先补同类用例再谈调参。
 
 ### P2 前端
 
@@ -198,3 +233,5 @@
 | `backend/app/services/eval_reports.py`（新增） | 只读汇总 `evals/reports/`，容错且按报告时间戳定序 |
 | `backend/app/api/routes/quality.py`（新增）、`api/router.py` | `GET /api/quality/summary` |
 | `backend/tests/test_eval_reports.py`、`test_quality_api.py`（新增） | 12 项测试（空状态、定序、损坏归档、RAGAS 区分、接口与页面接线） |
+| `evals/datasets/wiki_rag_golden.jsonl` | P1-4：20 → 26 题，新增 6 道精确标识符题 |
+| `backend/tests/test_wiki_knowledge.py` | 新增 `RankFusionTests`，固化 RRF 丢弃分数置信度这一已测取舍 |

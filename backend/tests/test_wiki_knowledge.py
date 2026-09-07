@@ -268,5 +268,65 @@ qty_to_invoice 会结合开票策略、交付数量和已开票数量计算。
             )
 
 
+class RankFusionTests(unittest.TestCase):
+    """固化 RRF 融合的已知取舍（docs/20 P1-4 的实测结论）。
+
+    RRF 只看名次、不看分数：词法即使以巨大优势排第 1，在融合里也只是“第 1 名”，
+    压不过向量的第 1 名。这是 `wiki-external-id` 在 hybrid 下从第 1 落到第 2 的
+    机制。实测过全量权重扫描：0.45/0.55～0.55/0.45 区间对 26 个 case 的结果完全
+    相同，再偏向词法会掉 recall，且 reranker 仍会把该 case 压回第 2。因此**不要**
+    为这一个 case 调权重——本测试就是把这个取舍钉住，避免被当成 bug 顺手“修掉”。
+    """
+
+    @staticmethod
+    def _row(chunk_id: str, relative_path: str) -> dict[str, str]:
+        return {"chunk_id": chunk_id, "relative_path": relative_path}
+
+    def _fuse(self, lexical_order: list[str], vector_order: list[str]) -> list[str]:
+        rows = {
+            chunk_id: self._row(chunk_id, f"{chunk_id}.md")
+            for chunk_id in set(lexical_order) | set(vector_order)
+        }
+        fused = WikiKnowledgeService._fuse_rankings(
+            lexical_ranked=[(0.0, rows[chunk_id]) for chunk_id in lexical_order],
+            vector_ranked=[(chunk_id, 0.0) for chunk_id in vector_order],
+            rows_by_chunk=rows,
+        )
+        return [str(row["chunk_id"]) for _, row in fused]
+
+    def test_agreement_between_both_signals_wins(self) -> None:
+        order = self._fuse(["a", "b", "c"], ["a", "c", "b"])
+
+        self.assertEqual(order[0], "a")
+
+    def test_vector_top_hit_outranks_a_lexical_top_hit_it_does_not_retrieve(self) -> None:
+        # `wiki-external-id` 的形状：词法第 1 的 chunk 完全不在向量候选里，
+        # 于是只拿到词法那一份权重，输给两边都靠前的对手。
+        order = self._fuse(["lexical-only", "shared"], ["shared", "vector-only"])
+
+        self.assertEqual(order[0], "shared")
+        self.assertIn("lexical-only", order)
+
+    def test_fusion_ignores_lexical_score_margin(self) -> None:
+        # 两种情形的名次完全一样，只是分数差距不同；RRF 的结果必须相同，
+        # 因为它根本不读分数。这正是“置信度被丢弃”的直接证据。
+        rows = {cid: self._row(cid, f"{cid}.md") for cid in ("winner", "runner-up")}
+        narrow = WikiKnowledgeService._fuse_rankings(
+            lexical_ranked=[(9.9, rows["winner"]), (9.8, rows["runner-up"])],
+            vector_ranked=[("runner-up", 0.9)],
+            rows_by_chunk=rows,
+        )
+        wide = WikiKnowledgeService._fuse_rankings(
+            lexical_ranked=[(99.0, rows["winner"]), (0.1, rows["runner-up"])],
+            vector_ranked=[("runner-up", 0.9)],
+            rows_by_chunk=rows,
+        )
+
+        self.assertEqual(
+            [str(row["chunk_id"]) for _, row in narrow],
+            [str(row["chunk_id"]) for _, row in wide],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

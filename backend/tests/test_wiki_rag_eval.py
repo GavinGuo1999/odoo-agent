@@ -179,7 +179,7 @@ class RagasResilienceTests(unittest.TestCase):
 class WikiRagEvaluationTests(unittest.TestCase):
     def test_golden_dataset_has_reviewed_reference_paths(self) -> None:
         items = load_dataset(ROOT / "evals" / "datasets" / "wiki_rag_golden.jsonl")
-        self.assertEqual(len(items), 20)
+        self.assertEqual(len(items), 26)
         wiki_root = ROOT.parent / "learn_odoo"
         for item in items:
             self.assertTrue(item.reference_answer)

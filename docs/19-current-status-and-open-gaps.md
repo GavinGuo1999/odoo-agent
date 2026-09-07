@@ -70,7 +70,8 @@ Wren 相对 native：p50 +5.39s、Token +71,656、Cost +$0.033、Repair +4，通
 
 | 项 | 状态 | 说明 |
 | --- | --- | --- |
-| `wiki-external-id` 排序退化 | 未处理 | MRR 在 hybrid 下从 1.00 降到 0.50，是本轮唯一排序退化，指向 RRF 权重或 reranker 在精确标识符类问题上稀释词法判断 |
+| `wiki-external-id` 排序退化 | **已调查，判定不修**（2026-09-07） | 融合与 reranker 各自独立把它降到第 2；权重在 0.45/0.55～0.55/0.45 区间对 26 题结果完全相同，再偏词法会掉 recall。详见 [20 P1-4](20-next-actions.md) |
+| `wiki-runtime`、`wiki-stock-picking` 在 hybrid 下的名次 | 未处理 | 前者被 reranker 从第 1 压到第 2，后者被融合挤出 top-6。要动的是 reranker 策略，需先补同类用例 |
 | 需 LLM 评审的 RAGAS 一层 | **已建立基线**（`实测` 2026-09-07） | 见 §2.3 |
 | 报告不可比 | **已解决**（2026-09-07） | `run_wiki_rag_eval.py` 现在按 `evals/reports/<时间戳>-wiki-rag/` 归档 `report.json` + `summary.md`，同时仍刷新 `wiki-rag-latest.json`；`--push-langfuse` 把检索与 RAGAS 指标作为 Score 挂到一条 trace 上 |
 
@@ -92,7 +93,7 @@ Wren 相对 native：p50 +5.39s、Token +71,656、Cost +$0.033、Repair +4，通
 
 hybrid 的 recall 修复后仍为 0.9500，未升到 1.00：`wiki-stock-picking` 在 hybrid 模式下仍是唯一 miss（RRF 融合 + rerank 后未采纳词法层新排名）。此前记录的"待验证假设：hybrid 可能升至 1.00"已证伪。
 
-该实验样本仍仅 20 题，扩充数据集后需复验。
+该实验样本已从 20 题扩到 26 题（新增 6 道精确标识符题，见 [20 P1-4](20-next-actions.md)）。
 
 ### 3.3 可观测性（`实测` 2026-09-06 更新）
 
