@@ -692,3 +692,29 @@ class UsageAttributionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IntentRoutingTests(unittest.TestCase):
+    """领域概念问题必须走检索，不能落到"闲聊"由模型自由发挥。
+
+    实测缺陷：「成本怎么计算的」被判为 general，RAG 完全没跑，答案来自模型记忆
+    而非 learn_odoo 笔记——看起来权威、实则无依据也无法核实，且不会附引用链接。
+    根因是 `成本` 不在任何关键词表里。
+    """
+
+    def test_cost_concept_questions_route_to_knowledge(self) -> None:
+        from app.bi import classify_intent
+
+        for question in ("成本怎么计算的", "成本是怎么算的", "库存成本怎么核算"):
+            with self.subTest(question=question):
+                self.assertIn(
+                    classify_intent(question, []),
+                    {"knowledge", "source"},
+                    f"{question!r} 应走检索，落到 general 会给出无引用的答案",
+                )
+
+    def test_cost_data_questions_still_route_to_data(self) -> None:
+        from app.bi import classify_intent
+
+        # 加了关键词后不能把"查数"问题也拽去检索。
+        self.assertEqual(classify_intent("本月成本是多少？", []), "data")

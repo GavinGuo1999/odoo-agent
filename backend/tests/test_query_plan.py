@@ -301,6 +301,32 @@ class QueryPlanTests(unittest.TestCase):
         self.assertEqual(payload.plan.result_shape, "scalar")
         self.assertEqual(payload.plan.dimensions, [])
 
+    @staticmethod
+    def _pronoun_payload() -> str:
+        """代词指代场景下模型可能返回的、本身不带澄清标记的计划。"""
+
+        return """{
+          "plan": {
+            "query_type": "kpi",
+            "metric_ids": ["sales_amount"],
+            "dimensions": [],
+            "filters": [
+              {"field":"company_id","operator":"eq","value":1,"source":"system_required"},
+              {"field":"state","operator":"in","value":["sale","done"],"source":"metric_rule"}
+            ],
+            "time_range": {"label":"今年","start":"2026-01-01","end":"2026-12-31","grain":"year"},
+            "result_shape": "scalar",
+            "select_columns": ["sales_amount"],
+            "sort": [],
+            "row_limit": null,
+            "assumptions": [],
+            "ambiguities": [],
+            "requires_clarification": false,
+            "clarification_question": null
+          },
+          "sql": "SELECT SUM(amount_untaxed) AS sales_amount FROM sale_order WHERE company_id = 1 AND state IN ('sale','done')"
+        }"""
+
     def test_unresolved_customer_reference_forces_clarification_without_history(self) -> None:
         content = """{
           "plan": {
@@ -334,6 +360,39 @@ class QueryPlanTests(unittest.TestCase):
         self.assertTrue(payload.plan.requires_clarification)
         self.assertIn("客户", payload.plan.clarification_question or "")
         self.assertEqual(payload.sql, "")
+
+    def test_unrelated_history_does_not_resolve_a_customer_pronoun(self) -> None:
+        # 实测缺陷：此前只要对话里有任何历史就跳过澄清，哪怕前面聊的完全无关。
+        # 结果"那个客户今年的销售额"返回了全部 31 个客户的数据，冒充成某一个客户的答案。
+        payload = parse_sql_generation_payload(
+            self._pronoun_payload(),
+            allowed_metric_ids=["sales_amount"],
+            question="帮我查一下那个客户今年的销售额。",
+            history=[
+                {"role": "user", "content": "你好"},
+                {"role": "assistant", "content": "你好，有什么可以帮你？"},
+            ],
+        )
+
+        self.assertTrue(
+            payload.plan.requires_clarification,
+            "历史里没提过任何客户时，代词仍然无所指，必须澄清",
+        )
+        self.assertEqual(payload.sql, "")
+
+    def test_history_naming_a_customer_does_resolve_the_pronoun(self) -> None:
+        payload = parse_sql_generation_payload(
+            self._pronoun_payload(),
+            allowed_metric_ids=["sales_amount"],
+            question="那个客户今年的销售额是多少？",
+            history=[
+                {"role": "user", "content": "客户 莱茵重工 上个月买了多少？"},
+                {"role": "assistant", "content": "莱茵重工上月销售额为 12,000 USD。"},
+            ],
+        )
+
+        # 前面确实点过名，这时代词有所指，不该再打断用户。
+        self.assertFalse(payload.plan.requires_clarification)
 
     def test_full_ranking_without_explicit_top_n_accepts_null_row_limit(self) -> None:
         payload = parse_sql_generation_payload(

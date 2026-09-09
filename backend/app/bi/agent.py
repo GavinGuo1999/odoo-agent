@@ -156,18 +156,28 @@ class AgentOutcome:
 
 _DATA_WORDS = (
     "销售", "订单", "客户", "产品", "商品", "销量", "业绩", "收入", "交付",
-    "发货", "开票", "报价", "成交", "销售员", "业务员", "排行榜", "趋势", "同比",
+    "发货", "开票", "报价", "成交", "销售员",
+    "成本",
+    "毛利",
+    "费用",
+    "库存价值", "业务员", "排行榜", "趋势", "同比",
     "环比", "本月", "上月", "本年", "今年", "去年", "采购", "库存", "odoo", "sql",
 )
 _SEMANTIC_WORDS = (
-    "口径", "定义", "怎么算", "怎么计算", "什么意思", "包括什么", "是什么", "含义",
+    "口径", "定义", "怎么算", "怎么计算", "什么意思", "包括什么", "是什么", "含义",    "怎么核算",
+    "如何核算",
+    "核算方法",
 )
 _METRIC_WORDS = (
     "销售额", "含税销售额", "订单数", "平均订单额", "销量", "销售数量", "交付数量", "开票数量",
 )
 _TECHNICAL_WORDS = (
     "qty_to_invoice", "qty_delivered", "qty_invoiced", "sale.order", "sale.order.line",
-    "stock.move", "stock.picking", "account.move", "procurement", "invoice_status",
+    "stock.move", "stock.picking", "account.move", "procurement", "invoice_status",    "成本",
+    "毛利",
+    "费用",
+    "库存价值",
+    "计价",
 )
 _KNOWLEDGE_WORDS = (
     "为什么", "什么是", "是什么", "流程", "区别", "关系", "原理", "机制", "含义",
@@ -186,6 +196,12 @@ _DATA_REQUEST_WORDS = (
 )
 _FOLLOW_UP_WORDS = ("那", "再", "呢", "上个月", "去年", "同比", "环比", "换成")
 _UNRESOLVED_CUSTOMER_MARKERS = ("那个客户", "这个客户", "该客户", "那位客户")
+_PRONOUN_TOKENS = ("那个", "这个", "该", "那位", "这位", "所有", "每个", "各个")
+# 匹配"客户/公司 + 名字"或"名字 + 公司/集团"，用于判断历史里是否点过具体客户。
+_CUSTOMER_NAME_HINT = re.compile(
+    r"(?:客户|公司)\s*[:：]?\s*(?P<name>[\w一-鿿][\w一-鿿\s.-]{1,40}?)(?=[的\s，。,、?？]|$)"
+    r"|(?P<name2>[\w一-鿿]{2,20})(?:公司|集团|实业|重工|科技|工业)"
+)
 
 
 def classify_intent(question: str, history: list[dict[str, str]]) -> Intent:
@@ -227,6 +243,29 @@ def classify_intent(question: str, history: list[dict[str, str]]) -> Intent:
     return "general"
 
 
+def _history_names_a_customer(history: list[dict[str, str]] | None) -> bool:
+    """判断历史里是否真的点过某个具体客户。
+
+    曾经这里只判断"有没有历史"，导致只要不是第一轮提问，"那个客户"就永远不触发
+    澄清——哪怕前面聊的是完全无关的话题。实测中"帮我查一下那个客户今年的销售额"
+    因此返回了全部客户的合计，并被当成某一个客户的答案呈现。
+
+    历史里出现过客户名的典型形态：用户说了"客户 X"，或助手在回答里提到过
+    "X 的销售额"。这里只做保守判断：宁可多问一次，也不要凭空替用户选一个客户。
+    """
+
+    for message in history or []:
+        content = str(message.get("content") or "")
+        if not content:
+            continue
+        # 命中"客户/公司 + 具体名字"，且名字本身不是代词。
+        for match in _CUSTOMER_NAME_HINT.finditer(content):
+            name = match.group("name").strip()
+            if name and not any(marker in name for marker in _PRONOUN_TOKENS):
+                return True
+    return False
+
+
 def _has_unresolved_customer_reference(
     question: str,
     history: list[dict[str, str]] | None,
@@ -235,7 +274,7 @@ def _has_unresolved_customer_reference(
     return (
         "用户补充条件：" not in question
         and any(marker in normalized for marker in _UNRESOLVED_CUSTOMER_MARKERS)
-        and not history
+        and not _history_names_a_customer(history)
     )
 
 
