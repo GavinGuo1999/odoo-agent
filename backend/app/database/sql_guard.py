@@ -17,6 +17,12 @@ class SqlValidationResult:
     errors: list[str]
     tables: list[str]
 
+    @property
+    def error_codes(self) -> list[str]:
+        """拒绝理由的分类码，去重保序。用于可观测与聚合统计。"""
+
+        return list(dict.fromkeys(classify_sql_error(error) for error in self.errors))
+
 
 @dataclass(frozen=True, slots=True)
 class SqlComplexityLimits:
@@ -27,6 +33,50 @@ class SqlComplexityLimits:
     max_subqueries: int = 12
     max_subquery_depth: int = 3
     require_detail_time_range: bool = True
+
+
+# 拒绝理由的分类码。错误消息是给用户看的中文；要回答"哪类问题在失败、占多少"，
+# 需要的是可聚合的标签。
+#
+# **改动错误消息必须同步这张表**：test_sql_error_codes.py 会把每一类拒绝场景都跑
+# 一遍并断言分类码，漏改就会红，不会悄悄退化成 other。
+_ERROR_CODES: tuple[tuple[str, str], ...] = (
+    ("查询包含写操作", "write_statement"),
+    ("只允许一条 SQL", "multiple_statements"),
+    ("只允许 SELECT", "not_a_select"),
+    ("SQL 语法无法解析", "unparsable"),
+    ("不允许访问 schema", "forbidden_schema"),
+    ("不允许访问数据表", "unlisted_table"),
+    ("查询没有使用开放的 Odoo 数据表", "no_allowed_table"),
+    ("不允许 SELECT *", "select_star"),
+    ("字段未开放", "unlisted_column"),
+    ("不允许调用函数", "forbidden_function"),
+    ("笛卡尔积", "cartesian_join"),
+    ("必须包含 company_id", "missing_company_filter"),
+    ("明细查询需要用户补充", "detail_needs_time_range"),
+    ("明细 SQL 必须包含", "detail_missing_time_bounds"),
+    ("排名查询必须在 QueryPlan.row_limit", "ranking_needs_top_n"),
+    ("完整排名不得声明业务 LIMIT", "ranking_unexpected_limit"),
+    ("SQL LIMIT 必须与 QueryPlan.row_limit", "limit_mismatch"),
+    ("最终输出列与 QueryPlan.select_columns 不一致", "select_columns_mismatch"),
+    ("ORDER BY 与 QueryPlan.sort 不一致", "sort_mismatch"),
+    ("产品名称必须优先使用 zh_CN", "product_name_locale"),
+    ("不能标记为 system_required", "filter_source_system"),
+    ("不是已登记的指标口径规则", "filter_source_metric"),
+    ("用户问题没有授权过滤字段", "filter_unauthorized"),
+    ("未声明的过滤字段", "filter_undeclared"),
+    ("超过", "complexity_budget"),
+    ("嵌套", "complexity_budget"),
+)
+
+
+def classify_sql_error(message: str) -> str:
+    """把一条拒绝理由归到可聚合的分类码。认不出来的一律 other。"""
+
+    for marker, code in _ERROR_CODES:
+        if marker in message:
+            return code
+    return "other"
 
 
 class ReadOnlySqlGuard:

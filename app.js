@@ -1515,9 +1515,11 @@
       var label = document.createElement("span");
       label.textContent = step.label || "";
       item.append(name, label);
-      // 显示的是这一步自己花的时间，而不是累计——找瓶颈看的是前者。
-      var previous = index ? (steps[index - 1].at_ms || 0) : 0;
-      var spent = (step.at_ms || 0) - previous;
+      // 阶段事件是在**动手之前**发射的，所以某一步的耗时是它到下一步之间的间隔，
+      // 不是它到上一步之间的。用错方向会把时间记到后一个节点头上——比如把
+      // 答案合成的 66 秒记成"回答已完成"花了 66 秒，正好指错瓶颈。
+      var next = steps[index + 1];
+      var spent = next ? (next.at_ms || 0) - (step.at_ms || 0) : 0;
       if (spent >= 1) {
         var cost = document.createElement("small");
         cost.textContent = spent >= 1000

@@ -7,7 +7,7 @@ from .client import (
     QueryCostExceededError,
     QueryResult,
 )
-from .sql_guard import ReadOnlySqlGuard, SqlComplexityLimits, SqlValidationResult
+from .sql_guard import ReadOnlySqlGuard, classify_sql_error, SqlComplexityLimits, SqlValidationResult
 
 __all__ = [
     "DatabaseConnectionError",
@@ -16,6 +16,7 @@ __all__ = [
     "QueryCostExceededError",
     "QueryResult",
     "ReadOnlySqlGuard",
+    "classify_sql_error",
     "SqlComplexityLimits",
     "SqlValidationResult",
 ]

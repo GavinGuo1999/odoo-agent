@@ -50,7 +50,12 @@ from app.config import (
     SemanticConfig,
     WikiConfig,
 )
-from app.database import DatabaseConnectionError, OdooDatabase, ReadOnlySqlGuard
+from app.database import (
+    DatabaseConnectionError,
+    OdooDatabase,
+    ReadOnlySqlGuard,
+    classify_sql_error,
+)
 from app.llm import LLMGateway, LLMResult
 from app.observability import trace_agent, trace_retrieval, trace_tool, update_observation
 from app.schemas.analysis import DataProfile, SqlErrorAnalysis
@@ -320,6 +325,49 @@ def _unsupported_business_region(
         for column in columns
     }
     return None if exposed.intersection(_SUPPORTED_REGION_FIELDS) else requested
+
+
+def _turn_decisions(state: AgentState) -> dict[str, Any]:
+    """本轮确定性决策的汇总，挂在轮次根节点上。
+
+    Langfuse 里原本只看得到模型调用，所以"这类问题在哪一步失败、占多少"答不上来。
+    这些字段是可聚合的：按 `guard_error_codes` 分组就能回答"守卫拒绝里哪一类最多"，
+    按 `failed_stage` 分组就能回答"失败集中在规划、编译还是执行"。
+    """
+
+    errors = list(state.get("sql_errors", []) or [])
+    steps = _TURN_TRACE.get() or []
+    return {
+        "guard_error_codes": [
+            classify_sql_error(error) for error in errors
+        ],
+        "failed_stage": state.get("sql_error_stage") if errors else None,
+        "followup_count": len(state.get("auxiliary_results", []) or []),
+        "followup_declared": len(state.get("followup_queries", []) or []),
+        "warning_count": len(state.get("warnings", []) or []),
+        "node_path": [step["stage"] for step in steps],
+        "elapsed_ms": round(steps[-1]["at_ms"], 1) if steps else 0.0,
+    }
+
+
+def _classification_evidence(question: str) -> dict[str, list[str]]:
+    """列出问题命中了哪些词表。路由判错时，这是唯一能直接指向原因的东西。"""
+
+    normalized = question.lower().strip()
+    groups = {
+        "business": _DATA_WORDS,
+        "technical": _TECHNICAL_WORDS,
+        "data_request": _DATA_REQUEST_WORDS,
+        "knowledge": _KNOWLEDGE_WORDS,
+        "hybrid_explanation": _HYBRID_EXPLANATION_WORDS,
+        "semantic": _SEMANTIC_WORDS,
+        "source": _SOURCE_WORDS,
+    }
+    return {
+        name: [word for word in words if word in normalized]
+        for name, words in groups.items()
+        if any(word in normalized for word in words)
+    }
 
 
 def _history_names_a_customer(history: list[dict[str, str]] | None) -> bool:
@@ -1180,6 +1228,7 @@ class SalesAgent:
                     "answer_mode": state.get("answer_mode"),
                     "citation_count": len(state.get("knowledge_citations", [])),
                     "chart_type": (state.get("chart") or {}).get("type"),
+                    **_turn_decisions(state),
                 },
             )
         return self._outcome(state, interrupt_payload=interrupt_payload)
@@ -1295,7 +1344,22 @@ class SalesAgent:
 
     def _classify(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("classify", "正在判断问题类型")
-        return {"intent": classify_intent(state["question"], state.get("history", []))}
+        question = state["question"]
+        intent = classify_intent(question, state.get("history", []))
+        # 路由不调模型，所以它本来不会出现在任何 trace 里——可线上排查时
+        # "这题为什么没走取数"恰恰是最常问的。把判定和命中的词一起记下来。
+        with trace_tool(
+            name="classify-question-intent",
+            input_data={"question": question},
+        ) as observation:
+            update_observation(
+                observation,
+                output={
+                    "intent": intent,
+                    "matched": _classification_evidence(question),
+                },
+            )
+        return {"intent": intent}
 
     async def _answer_general(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("general", "正在组织普通回答")
@@ -1697,7 +1761,18 @@ class SalesAgent:
                 safe_sql = validation.sql or ""
                 tables = validation.tables
                 safe = validation.safe
-            update_observation(observation, output={"safe": safe, "errors": errors, "tables": tables})
+            update_observation(
+                observation,
+                # 分类码才是能聚合的那一列；中文消息是给用户看的。
+                output={
+                    "safe": safe,
+                    "errors": errors,
+                    "error_codes": (
+                        validation.error_codes if sql and not safe else []
+                    ),
+                    "tables": tables,
+                },
+            )
         return {
             "safe_sql": safe_sql,
             "sql_errors": errors,
