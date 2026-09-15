@@ -39,6 +39,7 @@ SalesAgent 使用 LangGraph 作为唯一编排层，目标是：
 | `repair_sales_sql` | Generation | 是，sql | 根据错误修复 QueryPlan + SQL |
 | `execute_sales_sql` | Tool | 否 | 在只读事务执行 SQL |
 | `profile_sales_result` | Analyzer | 否 | 生成字段类型、基数和数值范围画像 |
+| `run_followup_queries` | 确定性 | 否 | 执行模型声明的补充查询（最多 2 条），走同一套 SQL 守卫；失败降级为警告，不影响主答案 |
 | `plan_chart` | Generation/确定性回退 | 视结果而定，answer | 生成并校验 ChartPlan，不生成 ECharts 代码 |
 | `format_simple_answer` | 确定性 | 否 | KPI、排名、趋势、空结果快速回答 |
 | `synthesize_sales_answer` | Generation | 是，answer | 复杂结果解释 |
@@ -127,6 +128,37 @@ hybrid   -> retrieve_wiki_context -> detect_data_ambiguity -> retrieve_sales_con
 ```
 
 `detect_data_ambiguity` 命中无历史上下文的“那个客户/该客户”时，直接构造最小 QueryPlan 并进入 `clarify_query_plan -> interrupt()`；此时不检查数据库，也不调用 SQL 模型。恢复后把补充条件写入问题，再继续语义检索和 Text2SQL。这样普通问答、知识问答和明确指标解释不承担 Text2SQL 的延迟和成本。混合问题先获取知识证据，但知识正文不会进入 SQL Prompt，只在查询完成后的解释节点使用。分类错误会直接影响后续路径，因此黄金集应覆盖六类问题。
+
+## 4.1 补充查询（2026-09-15 起）
+
+主查询之外，模型可以在 `followups` 里声明最多 **2 条**补充查询，用途是给"为什么"类
+问题提供下钻证据——主查询给出各月销售额，补充查询给出跌得最狠那几个月的客户构成，
+否则模型只能凭空归因。
+
+三条硬规则：
+
+1. **同一套守卫。** 每条补充查询带自己的 QueryPlan，走同一个 `ReadOnlySqlGuard`。
+   唯一放宽的是**展示层**契约（`select_columns` 对齐、ORDER BY 对齐、Top-N 声明、
+   产品名 COALESCE）——那些规则保证的是"给用户看的表格不被悄悄截断或串列"，
+   而补充查询从不展示。表/字段白名单、`company_id`、禁写、`SELECT *`、行数上限、
+   以及"WHERE 里不得出现计划未声明的字段"，一条都不跳过。
+2. **失败不影响主答案。** 主查询已经成功了，补充数据只是证据；出错记一条 warning
+   继续走，绝不把整轮拖进修复循环。
+3. **不参与画图。** 图表只反映主查询，否则用户看不出图上画的是哪份数据。
+
+契约校验里的 Top-N 判据看的是补充查询**自己的 `purpose`**，不是主问题：主问题问
+"下降最大的三个月"，而补充查询要的是那几个月的*完整*客户构成，拿主问题去判会
+要求它声明 `row_limit`，直接把它挡在门外。
+
+## 4.2 执行链路记录
+
+每个节点的 `_emit_stage` 除了推送 SSE 进度，还会记进一个 ContextVar
+（不是 AgentState——`_emit_stage` 分散在二十多个节点里，让每个节点都往返回值里
+追加一条既啰嗦又容易漏）。这份链路随 `ChatResponse.trace_steps` 返回，
+并写进消息产物，所以翻回历史也看得到。
+
+实测一条典型的取数问题：11 步 11.4 秒，其中 `semantic-compile` 6.2 秒、
+`deterministic-answer` 4.9 秒，其余 9 步全在毫秒级。
 
 ## 5. QueryPlan 协议
 

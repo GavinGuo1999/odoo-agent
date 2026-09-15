@@ -33,11 +33,16 @@
 
 | 仓库 | 基线提交 | 工作树 | 当前证据 |
 | --- | --- | --- | --- |
-| `odoo-agent` | `ba266bd` | 提交后干净 | 后端 138/138；前端语法通过；静态黄金集 60/60；Native 全量 60/60，Wren 59/60 且唯一失败为上游 504，已执行结果签名均为 100% |
+| `odoo-agent` | `4e25751` | 提交后干净 | 后端 **253/253**；前端 5 个文件语法通过 + Markdown 渲染 15/15；黄金集 **76 题**（`pending_reference` 已清零）|
 | `custom_addons` | `7f8dda1` | 提交后干净 | SiliconFlow 模块 11 个 Python、2 个 XML 文件静态解析通过 |
 | `text2sql-benchmark-lab` | `3d7f01c` | 干净 | 7 项基准核心测试通过 |
 | `learn_odoo` | `a014c51` | 提交后干净 | Markdown 严格 UTF-8、Obsidian JSON 和 Canvas JSON 解析通过 |
 
+> 2026-09-15 更新：本轮新增演示门禁、补充查询、产物持久化、执行链路记录，
+> 并修掉 CTE 计算列误判、Top-N 识别过窄、具名客户查询被拒、测试不隔离、
+> 提示词注册表静默覆盖代码等缺陷。测试计数 138 → 253。落在 `4e25751`。
+> 详见 [19 §2.9/§2.10](19-current-status-and-open-gaps.md)。
+>
 > 2026-09-07 更新：`313bdd4` 之后累积的那批改动（Wiki 向量检索与词法打分修复、RAGAS 评测、Prompt Management、Langfuse 对比层与成本归因、查询成本护栏、settings 前端、黄金集扩充）已分 8 个提交落到 `ba266bd`，工作树干净，上表为提交后重跑的实测结果。测试计数从 115 升至 138。未关闭差异见 [当前状态与未关闭差异](19-current-status-and-open-gaps.md)。
 
 本轮已在 `odoo19_dev`、`codex_readonly`、DeepSeek 真实模型和 Langfuse development 环境完成三轮 Native/Wren A/B。Odoo 模块安装、一次性测试库 TransactionCase 和用户业务验收仍未执行。
@@ -48,9 +53,9 @@
 
 | ID | 范围 | 检查 | 当前 | 通过标准 |
 | --- | --- | --- | --- | --- |
-| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 138/138 | 全部通过，无测试进程残留 |
+| AUTO-01 | Agent 后端 | `unittest` 全量测试 | 🟢 253/253 | 全部通过，无测试进程残留。**必须在配置了 `AGENT_UI_PASSWORD_HASH` 的环境里也是绿的**——曾因测试进程继承该变量而 17 个用例 401 |
 | AUTO-02 | Agent 前端 | `node --check app.js` | 🟢 | 退出码为 0 |
-| AUTO-03 | 静态黄金集 | 60 条意图路由静态评测 | 🟢 60/60 | 通过率 100% |
+| AUTO-03 | 静态黄金集 | 76 条意图路由静态评测 | 🟢 | 通过率 100%；无 `pending_reference` 例外 |
 | AUTO-04 | SQL 安全 | 写操作、未知表/字段、公司过滤、输出契约、LIMIT、JOIN/CTE/子查询、笛卡尔积、明细时间边界 | 🟢 | 所有安全断言通过；正常 4 表 Wren SQL 不回归 |
 | AUTO-05 | Agent 工作流 | 路由、Interrupt/Resume、SSE、会话、快速回答 | 🟢 | 对应单元/API 测试全部通过 |
 | AUTO-06 | 语义能力 | Wren provider、语义审计、Wiki 检索与引用 | 🟢 | 对应测试全部通过 |

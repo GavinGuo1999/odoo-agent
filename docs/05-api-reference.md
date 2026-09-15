@@ -12,7 +12,9 @@
 - 流式聊天：`text/event-stream`；
 - 日期：ISO 8601；
 - 金额：JSON number，币种通过 `currency` 或销售看板 `currency` 返回；
-- 当前无认证；API 仅为本机单用户使用；
+- **认证**：配置 `AGENT_UI_PASSWORD_HASH` 后，除 `/auth/*` 外**所有**接口都需要
+  `Authorization: Bearer <token>`，否则返回 401。留空则不启用（本机开发默认如此）。
+  它是单口令演示门禁，不是多用户权限系统；
 - 密钥和数据库密码永远不会通过 GET 设置接口回显。
 
 ## 2. 接口总览
@@ -28,7 +30,10 @@
 | POST | `/chat/stream` | SSE 流式步骤和最终结果 |
 | POST | `/chat/resume` | 非流式恢复 Interrupt |
 | POST | `/chat/resume/stream` | SSE 恢复 Interrupt |
-| GET | `/chat/sessions/{session_id}` | 恢复会话和待处理 Interrupt |
+| GET | `/auth/session` | 探测是否需要登录、当前 token 是否有效（公开） |
+| POST | `/auth/login` | 用口令换取 token（公开） |
+| POST | `/auth/logout` | 作废当前 token |
+| GET | `/chat/sessions/{session_id}` | 恢复会话、待处理 Interrupt 和每条消息的渲染产物 |
 | GET | `/chat/conversations` | 按最近活动时间列出会话 |
 | DELETE | `/chat/conversations/{session_id}` | 删除会话目录和 Checkpoint |
 | POST | `/chat/conversations/{session_id}/detach` | 标记页面刷新导致的流断开 |
@@ -66,6 +71,33 @@ Invoke-RestMethod 'http://127.0.0.1:8090/api/health'
 | `services.odoo_database.read_only` | 当前事务是否只读 |
 
 `status=ok` 只表示 Web 服务可用，不保证模型和数据库都可用；调用方应继续检查 `services`。
+
+## 3.2 认证接口
+
+只有这三个是公开的；其余全部需要 token。
+
+### GET `/auth/session`
+
+前端启动时先问这里，决定要不要弹登录框。
+
+- 未配置口令：`200 {"required": false, "authenticated": true}`
+- 配置了且 token 有效：`200 {"required": true, "authenticated": true}`
+- 配置了但没带/带错 token：`401`
+
+### POST `/auth/login`
+
+```json
+{"password": "..."}
+```
+
+成功返回 `{"required": true, "token": "...", "expires_in": 43200}`。
+
+口令错误返回 `401`，**不区分"口令错"和"未配置口令"**——避免把服务端状态透露出去。
+同一来源连错 5 次锁 5 分钟，锁定期间返回 `429` 并带剩余秒数。
+
+### POST `/auth/logout`
+
+作废当前 token。总是返回 `{"ok": true}`。
 
 ## 4. 数据库接口
 
@@ -352,14 +384,41 @@ QueryPlan：
 {
   "session_id": "api-stream-demo",
   "history": [
-    {"role": "user", "content": "本月销售额是多少？"},
-    {"role": "assistant", "content": "查询结果：销售额为 ..."}
+    {"role": "user", "content": "本月销售额是多少？", "artifact": null},
+    {
+      "role": "assistant",
+      "content": "查询结果：销售额为 ...",
+      "artifact": {
+        "provider": "deepseek", "model": "deepseek-v4-pro",
+        "usage": {"total_tokens": 5304, "estimated_cost_usd": 0.0039},
+        "trace_id": "7b0253b...", "trace_url": "https://cloud.langfuse.com/...",
+        "trace_steps": [{"stage": "classify", "label": "正在判断问题类型", "at_ms": 0.0}],
+        "repair_count": 0,
+        "sql": "SELECT ...", "columns": ["month", "sales_amount"],
+        "rows": [{"month": "2026-01-01", "sales_amount": 450315.75}],
+        "row_count": 9, "chart": {"type": "line"},
+        "column_labels": {"month": "月份"}, "citations": []
+      }
+    }
   ],
   "pending_interrupt": null,
   "persistence_mode": "postgres",
   "run_status": "completed"
 }
 ```
+
+`artifact` 是这条消息重绘所需的一切：图表规格、明细行、SQL、Wiki 引用，以及
+出处信息（哪个模型、花了多少、Langfuse 在哪、走过哪些节点）。用户消息恒为 `null`。
+
+字段名刻意与 `ChatResponse` 保持一致，前端可以用同一段渲染代码处理"刚回答的"
+和"从历史恢复的"两种情况。
+
+产物存在独立表 `odoo_agent_message_artifacts`（按 `session_id` + 消息下标），
+不在 Checkpoint 里；单轮明细行上限 `500`，超出时 `rows_trimmed=true` 而
+`row_count` 仍是真实行数。
+
+`trace_steps` 里的 `at_ms` 是**距本轮开始**的累计毫秒；某一步自己花的时间要用
+相邻两项相减。
 
 `run_status` 可能为 `new/running/completed/interrupted/failed/cancelled`。生成开始前，用户问题会以 `pending_question` 形式写入独立状态库，并在该接口的 `history` 中恢复。
 

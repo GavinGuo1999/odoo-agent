@@ -278,6 +278,37 @@ Set-Location D:\odoo19e\odoo-agent
 | `LANGFUSE_SECRET_KEY` | Secret Key |
 | `LANGFUSE_BASE_URL` | EU 默认 `https://cloud.langfuse.com` |
 | `LANGFUSE_ENABLED` | 是否启用项目侧 Trace |
+| `LANGFUSE_PROMPTS_FETCH_ENABLED` | **默认 `false`（以代码为准）**。设为 `true` 后，Langfuse 注册表里的 production 版本会覆盖 `prompts.py`——那之后改代码里的提示词不再影响线上，除非你同步推新版本 |
+
+### 6.7.1 演示门禁
+
+给别人演示时挡住整个 API 面。留空即关闭，本机开发不受影响。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `AGENT_UI_PASSWORD_HASH` | 空 | PBKDF2 派生值，**不是明文**。用 `configure-ui-password.ps1` 生成 |
+| `AGENT_UI_SESSION_TTL_SECONDS` | `43200` | Token 有效期，每次访问顺延 |
+
+```powershell
+.\configure-ui-password.ps1            # 设置（明文只走 stdin）
+.\configure-ui-password.ps1 -VerifyOnly # 查看是否已启用
+.\configure-ui-password.ps1 -Clear      # 关闭门禁
+```
+
+> `start-backend.ps1` 只刷新匹配特定前缀的用户环境变量。`AGENT_UI_` 已在名单里；
+> 新增别的前缀时记得同步那条正则，否则改了变量重启也不生效。
+
+### 6.7.2 分时与缓存计价
+
+成本是本地按 token 估算的，不问供应商。默认**不打折**，行为与未配置时完全一致；
+供应商的档位会变，所以具体数值放环境变量而不是写进代码。
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DEEPSEEK_CACHED_INPUT_PRICE_PER_MILLION` | `0` | 命中提示缓存的输入单价。留 0 表示不区分，按全价算（会系统性高估） |
+| `DEEPSEEK_OFFPEAK_START` / `_END` | 空 | 谷时窗口，如 `00:30` / `08:30`。按 Asia/Shanghai 墙钟，允许跨零点 |
+| `DEEPSEEK_OFFPEAK_INPUT_MULTIPLIER` | `1.0` | 谷时输入折扣，如 `0.5` |
+| `DEEPSEEK_OFFPEAK_OUTPUT_MULTIPLIER` | `1.0` | 谷时输出折扣 |
 
 ### 6.8 learn_odoo Wiki
 
@@ -395,7 +426,8 @@ Set-Location D:\odoo19e
 
 - 不要创建 `.env` 保存真实密钥；`.env*` 已被 Git 忽略，但正式约定仍是 Windows 用户环境。
 - 不要把配置 API 的完整请求、环境变量列表或浏览器开发工具内容贴到公开位置。
-- 不要将应用监听地址改为 `0.0.0.0` 后直接暴露公网；当前没有登录和权限系统。
+- 不要在**未设置 `AGENT_UI_PASSWORD_HASH`** 的情况下把监听地址改为 `0.0.0.0` 暴露公网。
+  门禁留空即关闭，那时所有 API 都是匿名可调的。门禁只有一个口令，不是权限系统。
 - Odoo 分析必须使用只读账号。
 - Agent 状态库账号必须与 Odoo 只读账号分开。
 
