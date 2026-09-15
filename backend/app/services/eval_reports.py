@@ -27,9 +27,28 @@ class EvalReportService:
             "semantic_benchmark": semantic[0] if semantic else None,
             "semantic_history": [self._semantic_history_entry(run) for run in semantic],
             "wiki_rag": wiki[0] if wiki else None,
+            # RAGAS 用 LLM 当判官，又慢又费钱，本来就不会每次都跑。所以"最近一次
+            # 运行"未必是"最近一次有 RAGAS 的运行"——只看前者，页面会在一次不带
+            # --ragas 的检索评测之后显示"未运行"，把已经建立的 Faithfulness 基线
+            # 藏起来。这里单独取最近一条真正跑过的，并带上它来自哪一次。
+            "wiki_ragas_latest": self._latest_ragas(wiki),
             "wiki_history": [self._wiki_history_entry(run) for run in wiki],
             "skipped": sorted(skipped),
         }
+
+    @staticmethod
+    def _latest_ragas(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """最近一条真正执行过 RAGAS 的运行（runs 已按时间倒序）。"""
+
+        for run in runs:
+            ragas = run.get("ragas") or {}
+            if ragas.get("status") == "completed" and ragas.get("metrics"):
+                return {
+                    "run_id": run.get("run_id"),
+                    "generated_at": run.get("generated_at"),
+                    "ragas": ragas,
+                }
+        return None
 
     def _read_json(self, path: Path, skipped: list[str]) -> dict[str, Any] | None:
         try:

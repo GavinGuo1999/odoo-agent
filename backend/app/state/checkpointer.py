@@ -12,6 +12,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
+from psycopg.types.json import Json
 from psycopg_pool import AsyncConnectionPool
 
 from app.config import StateDatabaseConfig
@@ -42,6 +43,7 @@ class AgentStateStore:
         self._mode = "memory"
         self._error_type: str | None = None
         self._memory_conversations: dict[str, ConversationRecord] = {}
+        self._memory_artifacts: dict[str, dict[int, dict[str, Any]]] = {}
 
     @property
     def checkpointer(self) -> Any:
@@ -130,6 +132,22 @@ class AgentStateStore:
                         """
                         ALTER TABLE odoo_agent_conversations
                         ADD COLUMN IF NOT EXISTS pending_question TEXT
+                        """
+                    )
+                    # 消息的渲染产物（图表规格、明细行、SQL、引用）单独存。
+                    # 以前它跟在检查点的一个 channel 里，而检查点每轮整体重写，
+                    # 那份列表又是累积的——第 N 轮的 blob 装着前 N 轮的全部产物。
+                    # 为了压住写放大只好限制"最近 6 轮 / 单轮 200 行"，那两个上限
+                    # 是放错位置的症状。搬出来之后写一次读一次，存储是严格线性的。
+                    await cursor.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS odoo_agent_message_artifacts (
+                            session_id TEXT NOT NULL,
+                            message_index INTEGER NOT NULL,
+                            payload JSONB NOT NULL,
+                            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                            PRIMARY KEY (session_id, message_index)
+                        )
                         """
                     )
                     await cursor.execute(
@@ -357,6 +375,19 @@ class AgentStateStore:
         return current
 
     async def delete_conversation(self, session_id: str) -> bool:
+        # 会话删了，它的渲染产物就是孤儿行，一并清掉。
+        try:
+            if self._mode == "postgres":
+                async with self._conversation_cursor() as cursor:
+                    await cursor.execute(
+                        "DELETE FROM odoo_agent_message_artifacts WHERE session_id = %s",
+                        (session_id,),
+                    )
+            else:
+                self._memory_artifacts.pop(session_id, None)
+        except Exception:
+            # 清不掉不该阻止用户删除会话本身。
+            pass
         """Delete both LangGraph checkpoints and the conversation directory entry."""
 
         await self._checkpointer.adelete_thread(session_id)
@@ -373,6 +404,48 @@ class AgentStateStore:
                 row = await cursor.fetchone()
             return row is not None
         return self._memory_conversations.pop(session_id, None) is not None
+
+    async def save_message_artifact(
+        self,
+        session_id: str,
+        message_index: int,
+        payload: dict[str, Any],
+    ) -> None:
+        """存一条消息的渲染产物。
+
+        调用方必须把失败当作非致命：产物只影响"翻回去还能不能看到图"，
+        丢了也不该让这一轮的回答失败。
+        """
+
+        if self._mode != "postgres":
+            self._memory_artifacts.setdefault(session_id, {})[message_index] = payload
+            return
+        async with self._conversation_cursor() as cursor:
+            await cursor.execute(
+                """
+                INSERT INTO odoo_agent_message_artifacts
+                    (session_id, message_index, payload)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (session_id, message_index)
+                DO UPDATE SET payload = EXCLUDED.payload
+                """,
+                (session_id, message_index, Json(payload)),
+            )
+
+    async def load_message_artifacts(self, session_id: str) -> dict[int, dict[str, Any]]:
+        if self._mode != "postgres":
+            return dict(self._memory_artifacts.get(session_id, {}))
+        async with self._conversation_cursor() as cursor:
+            await cursor.execute(
+                """
+                SELECT message_index, payload
+                FROM odoo_agent_message_artifacts
+                WHERE session_id = %s
+                """,
+                (session_id,),
+            )
+            rows = await cursor.fetchall()
+        return {int(row["message_index"]): row["payload"] for row in rows}
 
     @staticmethod
     def _record_from_row(row: dict[str, Any]) -> ConversationRecord:

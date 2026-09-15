@@ -16,6 +16,24 @@ from httpx import ASGITransport, AsyncClient  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.main import create_app  # noqa: E402
 
+TESTS_DIR = Path(__file__).resolve().parent
+if str(TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(TESTS_DIR))
+
+from _isolation import isolate_ambient_environment  # noqa: E402
+
+# 开发者本机若配了演示门禁的口令，这里不剥掉的话整个模块都会 401。
+_ambient = isolate_ambient_environment()
+
+
+def setUpModule() -> None:
+    _ambient.start()
+
+
+def tearDownModule() -> None:
+    _ambient.stop()
+
+
 
 def _result() -> dict[str, object]:
     return {

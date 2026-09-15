@@ -44,11 +44,20 @@ def render_managed_prompt(
     rendered: str,
     variables: dict[str, str],
 ) -> ManagedPrompt:
-    """Use a cached production prompt when available, with a code fallback."""
+    """渲染提示词。**默认以代码为准**，显式开启后才从 Langfuse 注册表取。
+
+    为什么默认关：以前默认是开的，于是 Langfuse 里存着的 production 版本会悄悄
+    覆盖 `prompts.py`。实测后果是改了代码里的提示词完全不生效——新增的多步查询
+    指令连"followups"这个词都没进到发给模型的文本里，排查了很久才发现。
+
+    代码是版本化、可评审、和测试同步的；注册表是运行时的、无声的。默认值应当
+    指向前者。要用注册表就显式设 `LANGFUSE_PROMPTS_FETCH_ENABLED=true`，并且
+    要清楚：那之后 `prompts.py` 的任何修改都不再影响线上，除非你同步推新版本。
+    """
 
     fallback_template = _template_from_rendered(rendered, variables)
     fetch_enabled = (
-        os.getenv("LANGFUSE_PROMPTS_FETCH_ENABLED", "true").strip().casefold()
+        os.getenv("LANGFUSE_PROMPTS_FETCH_ENABLED", "false").strip().casefold()
         in _TRUE_VALUES
     )
     if not fetch_enabled or not langfuse_is_configured():

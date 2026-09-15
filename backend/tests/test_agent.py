@@ -746,74 +746,68 @@ class ConversationArtifactTests(unittest.TestCase):
             _turn_artifact({"answer": "你好", "intent": "general", "chart": {"type": "none"}})
         )
 
-    def test_artifacts_stay_aligned_with_conversation(self) -> None:
+    def test_conversation_keeps_only_role_and_content(self) -> None:
+        """发给模型的历史只能有两个键。产物另存一张表，不混进消息里。"""
+
+        import asyncio
+
         agent = SalesAgent.__new__(SalesAgent)
-        state = self._data_state()
+        agent._state_store = None
+        result = asyncio.run(SalesAgent._finalize_turn(agent, self._data_state()))
 
-        first = SalesAgent._finalize_turn(agent, state)
-        self.assertEqual(len(first["conversation"]), len(first["conversation_artifacts"]))
-        self.assertIsNone(first["conversation_artifacts"][0])          # 用户提问
-        self.assertIsNotNone(first["conversation_artifacts"][1])       # 助手回答带图
-
-        second_state = {
-            **self._data_state("第二轮"),
-            "question": "那上个月呢",
-            "display_question": "那上个月呢",
-            "conversation": first["conversation"],
-            "conversation_artifacts": first["conversation_artifacts"],
-        }
-        second = SalesAgent._finalize_turn(agent, second_state)
-
-        self.assertEqual(len(second["conversation"]), 4)
-        self.assertEqual(len(second["conversation_artifacts"]), 4)
-        roles = [message["role"] for message in second["conversation"]]
-        has_artifact = [item is not None for item in second["conversation_artifacts"]]
-        self.assertEqual(roles, ["user", "assistant", "user", "assistant"])
-        self.assertEqual(has_artifact, [False, True, False, True])
-
-    def test_old_session_without_artifacts_recovers_alignment(self) -> None:
-        agent = SalesAgent.__new__(SalesAgent)
-        # 改动之前存下的检查点里没有 conversation_artifacts 这一列。
-        legacy = [
-            {"role": "user", "content": "历史提问"},
-            {"role": "assistant", "content": "历史回答"},
-        ]
-        result = SalesAgent._finalize_turn(
-            agent, {**self._data_state(), "conversation": legacy}
-        )
-
-        self.assertEqual(len(result["conversation"]), len(result["conversation_artifacts"]))
-        self.assertEqual(result["conversation_artifacts"][:2], [None, None])
-        self.assertIsNotNone(result["conversation_artifacts"][-1])
-
-    def test_history_sent_to_model_has_no_artifact_key(self) -> None:
-        agent = SalesAgent.__new__(SalesAgent)
-        result = SalesAgent._finalize_turn(agent, self._data_state())
-
-        # history 会原样作为 messages 发给 provider，多一个键就是一次 400。
         for message in result["history"]:
             self.assertEqual(set(message), {"role", "content"})
+        self.assertEqual(result["conversation"], result["history"])
+        self.assertNotIn("conversation_artifacts", result)
 
-    def test_only_recent_turns_keep_detail_rows(self) -> None:
-        from app.bi.agent import _ARTIFACT_TURNS_WITH_ROWS, _trim_artifacts
+    def test_artifact_is_written_at_the_assistant_message_index(self) -> None:
+        """产物按"会话 + 消息下标"落库，下标必须指向刚追加的那条助手消息。
 
-        artifacts = [{"rows": [{"n": i}], "row_count": 1} for i in range(10)]
-        trimmed = _trim_artifacts(artifacts)
+        下标算错的话，翻回历史时图会挂到别人的消息上。
+        """
 
-        kept = [item for item in trimmed if item["rows"]]
-        self.assertEqual(len(kept), _ARTIFACT_TURNS_WITH_ROWS)
-        # 早期轮次的骨架仍在，只是明细被裁掉并标记出来。
-        self.assertTrue(trimmed[0]["rows_trimmed"])
-        self.assertEqual(trimmed[0]["row_count"], 1)
+        import asyncio
+        from unittest.mock import AsyncMock
 
+        agent = SalesAgent.__new__(SalesAgent)
+        agent._state_store = Mock(save_message_artifact=AsyncMock())
 
-class IntentRoutingTests(unittest.TestCase):
-    """领域概念问题必须走检索，不能落到"闲聊"由模型自由发挥。
+        state = {**self._data_state(), "session_id": "s-1"}
+        result = asyncio.run(SalesAgent._finalize_turn(agent, state))
 
-    实测缺陷：「成本怎么计算的」被判为 general，RAG 完全没跑，答案来自模型记忆
-    而非 learn_odoo 笔记——看起来权威、实则无依据也无法核实，且不会附引用链接。
-    根因是 `成本` 不在任何关键词表里。
-    """
+        session_id, index, payload = agent._state_store.save_message_artifact.await_args.args
+        self.assertEqual(session_id, "s-1")
+        self.assertEqual(index, len(result["conversation"]) - 1)
+        self.assertEqual(result["conversation"][index]["role"], "assistant")
+        self.assertEqual(payload["chart"]["type"], "line")
+
+    def test_a_failed_artifact_write_does_not_fail_the_turn(self) -> None:
+        """产物只影响"翻回去还看不看得到图"，写失败不能让这一轮的回答失败。"""
+
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        agent = SalesAgent.__new__(SalesAgent)
+        agent._state_store = Mock(
+            save_message_artifact=AsyncMock(side_effect=TimeoutError())
+        )
+
+        result = asyncio.run(
+            SalesAgent._finalize_turn(agent, {**self._data_state(), "session_id": "s-1"})
+        )
+        self.assertEqual(result["conversation"][-1]["content"], "结论")
+
+    def test_plain_answer_writes_nothing(self) -> None:
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        agent = SalesAgent.__new__(SalesAgent)
+        agent._state_store = Mock(save_message_artifact=AsyncMock())
+        asyncio.run(SalesAgent._finalize_turn(
+            agent, {"answer": "你好", "intent": "general", "session_id": "s-1"}
+        ))
+        agent._state_store.save_message_artifact.assert_not_awaited()
+
 
     def test_cost_concept_questions_route_to_knowledge(self) -> None:
         from app.bi import classify_intent

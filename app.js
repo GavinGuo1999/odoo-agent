@@ -1491,6 +1491,47 @@
     container.appendChild(card);
   }
 
+  // 执行链路：这一轮实际走了哪些节点、每步多久。阶段事件本来就在流里，
+  // 以前只当提示文字用完就丢——事后没法回答"慢在哪、修过几次 SQL"。
+  function appendExecutionTrace(container, metadata) {
+    var steps = metadata.trace_steps;
+    if (!Array.isArray(steps) || steps.length < 2) return;
+
+    var section = document.createElement("details");
+    section.className = "execution-trace";
+    var summary = document.createElement("summary");
+    var total = steps[steps.length - 1].at_ms || 0;
+    summary.textContent = "执行链路 " + steps.length + " 步"
+      + (total ? " · " + (total / 1000).toFixed(1) + "s" : "")
+      + (metadata.repair_count ? " · SQL 修复 " + metadata.repair_count + " 次" : "");
+    section.appendChild(summary);
+
+    var list = document.createElement("ol");
+    list.className = "execution-trace-list";
+    steps.forEach(function (step, index) {
+      var item = document.createElement("li");
+      var name = document.createElement("code");
+      name.textContent = step.stage;
+      var label = document.createElement("span");
+      label.textContent = step.label || "";
+      item.append(name, label);
+      // 显示的是这一步自己花的时间，而不是累计——找瓶颈看的是前者。
+      var previous = index ? (steps[index - 1].at_ms || 0) : 0;
+      var spent = (step.at_ms || 0) - previous;
+      if (spent >= 1) {
+        var cost = document.createElement("small");
+        cost.textContent = spent >= 1000
+          ? (spent / 1000).toFixed(1) + "s"
+          : Math.round(spent) + "ms";
+        if (spent >= 3000) cost.className = "slow";
+        item.appendChild(cost);
+      }
+      list.appendChild(item);
+    });
+    section.appendChild(list);
+    container.appendChild(section);
+  }
+
   function appendKnowledgeCitations(container, citations) {
     if (!Array.isArray(citations) || !citations.length) return;
     const section = document.createElement("details");
@@ -1582,6 +1623,8 @@
         meta.append(" · Langfuse Trace 已记录");
       }
       content.appendChild(meta);
+
+      appendExecutionTrace(content, metadata);
 
       if (metadata.trace_id) {
         const feedback = document.createElement("div");

@@ -232,9 +232,17 @@
     unknown: "状态未知",
   };
 
-  function renderRagas(wiki) {
+  function renderRagas(wiki, latest) {
     if (!wiki) return;
+    // RAGAS 不随每次检索评测一起跑，所以"最近一次运行"往往没有它。优先显示
+    // 最近一次**真正跑过**的那份，并标明它来自哪一次——否则一次不带 --ragas 的
+    // 评测就会把已经建立的 Faithfulness 基线从页面上抹掉。
+    var fromRun = null;
     var ragas = wiki.ragas || { status: "not_run", metrics: {} };
+    if ((!ragas.metrics || !Object.keys(ragas.metrics).length) && latest && latest.ragas) {
+      ragas = latest.ragas;
+      fromRun = latest.run_id;
+    }
     var section = show("[data-quality-ragas]");
     if (!section) return;
 
@@ -246,9 +254,14 @@
 
     var meta = section.querySelector("[data-ragas-meta]");
     if (meta) {
-      meta.textContent = ragas.case_count
-        ? "样本 " + ragas.case_count + " 个用例（判官为 LLM，逐条判定回答是否被检索内容支持）"
-        : "需要 answer 模型与 embedding 额度，默认不随检索评测一起运行";
+      var parts = [];
+      if (ragas.case_count) {
+        parts.push("样本 " + ragas.case_count + " 个用例（判官为 LLM，逐条判定回答是否被检索内容支持）");
+      } else {
+        parts.push("需要 answer 模型与 embedding 额度，默认不随检索评测一起运行");
+      }
+      if (fromRun) parts.push("数据来自较早的运行 " + fromRun + "，最近一次未执行 RAGAS");
+      meta.textContent = parts.join(" · ");
     }
 
     var body = section.querySelector("[data-ragas-body]");
@@ -354,7 +367,7 @@
     renderSemantic(payload.semantic_benchmark);
     renderRoles(payload.semantic_benchmark);
     renderWiki(payload.wiki_rag);
-    renderRagas(payload.wiki_rag);
+    renderRagas(payload.wiki_rag, payload.wiki_ragas_latest);
     renderHistory(payload);
 
     var counts = (payload.semantic_history || []).length + (payload.wiki_history || []).length;

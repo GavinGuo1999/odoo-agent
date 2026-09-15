@@ -2450,3 +2450,46 @@ body.auth-locked {
   font-size: 12.5px;
   color: #b0322f;
 }
+
+/* ---------- 执行链路 ---------- */
+.execution-trace {
+  margin-top: 8px;
+  font-size: 12.5px;
+  color: #6b6270;
+}
+
+.execution-trace > summary {
+  cursor: pointer;
+  color: #714b67;
+  user-select: none;
+}
+
+.execution-trace-list {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 3px;
+}
+
+.execution-trace-list li {
+  display: grid;
+  grid-template-columns: minmax(120px, auto) 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.execution-trace-list code {
+  color: #8a7f8d;
+  font-size: 11.5px;
+}
+
+.execution-trace-list small {
+  font-variant-numeric: tabular-nums;
+  color: #9a919c;
+}
+
+/* 超过 3 秒的一步是找瓶颈时最先要看的。 */
+.execution-trace-list small.slow {
+  color: #b0322f;
+  font-weight: 600;
+}

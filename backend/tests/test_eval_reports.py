@@ -228,3 +228,50 @@ class EvalReportServiceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LatestRagasTests(unittest.TestCase):
+    """RAGAS 不随每次评测运行，"最近一次"未必是"最近一次有 RAGAS 的"。
+
+    实测缺陷：跑过一次不带 --ragas 的检索评测后，页面显示"未运行"，
+    而更早那次已建立的 Faithfulness 基线（0.9075）就此不可见。
+    """
+
+    def _service(self, runs: list[tuple[str, dict | None]]):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from app.services.eval_reports import EvalReportService
+
+        root = Path(tempfile.mkdtemp())
+        for name, ragas in runs:
+            directory = root / name
+            directory.mkdir()
+            (directory / "report.json").write_text(
+                json.dumps({
+                    "generated_at": f"2026-09-{name[6:8]}T00:00:00+08:00",
+                    "retrieval": {"hybrid": {"metrics": {"recall": 1.0}}},
+                    "ragas": ragas,
+                }, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        return EvalReportService(root)
+
+    def test_falls_back_to_the_latest_run_that_actually_scored(self) -> None:
+        completed = {"status": "completed", "metrics": {"faithfulness": 0.9075},
+                     "case_count": 5, "scored_counts": {}, "errors": []}
+        summary = self._service([
+            ("20260907-wiki-rag", completed),
+            ("20260908-wiki-rag", None),      # 之后跑的不带 RAGAS
+        ]).summary()
+
+        self.assertEqual(summary["wiki_rag"]["ragas"]["status"], "not_run")
+        latest = summary["wiki_ragas_latest"]
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest["run_id"], "20260907-wiki-rag")
+        self.assertAlmostEqual(latest["ragas"]["metrics"]["faithfulness"], 0.9075)
+
+    def test_returns_none_when_ragas_never_ran(self) -> None:
+        summary = self._service([("20260908-wiki-rag", None)]).summary()
+        self.assertIsNone(summary["wiki_ragas_latest"])

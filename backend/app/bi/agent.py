@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import time
+from contextvars import ContextVar
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -65,17 +68,17 @@ Intent = Literal["general", "knowledge", "source", "semantic", "data", "hybrid"]
 AnswerMode = Literal["llm", "deterministic", "knowledge", "semantic", "failure"]
 
 
+logger = logging.getLogger(__name__)
+
 class AgentState(TypedDict, total=False):
+    # 产物要按会话+消息下标落库，节点必须能拿到它。
+    session_id: str
     question: str
     display_question: str
     query_corrections: list[dict[str, str]]
     clarification_answer: str
     history: list[dict[str, str]]
     conversation: list[dict[str, str]]
-    # 与 conversation 等长、按下标一一对应的渲染副产物（图表/表格/SQL/引用）。
-    # 用户消息和纯文字回答对应 None。**不能塞进 conversation 里**：那份列表会
-    # 原样作为 messages 发给模型，多带的键会被 provider 拒绝。
-    conversation_artifacts: list[dict[str, Any] | None]
     intent: Intent
     answer: str
     answer_mode: AnswerMode
@@ -151,6 +154,7 @@ class AgentOutcome:
     interrupt_payload: dict[str, Any] | None = None
     conversation: list[dict[str, str]] = field(default_factory=list)
     citations: list[dict[str, Any]] = field(default_factory=list)
+    trace_steps: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def phase(self) -> str:
@@ -703,7 +707,30 @@ def _usage_fields(state: AgentState, result: LLMResult, *, role: str) -> dict[st
     }
 
 
+# 本轮走过的节点。用 ContextVar 而不是塞进 AgentState：_emit_stage 分散在二十多个
+# 节点里，让每个节点都往返回值里追加一条既啰嗦又容易漏。
+_TURN_TRACE: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "odoo_agent_turn_trace", default=None
+)
+
+
+def _begin_turn_trace() -> None:
+    _TURN_TRACE.set([])
+
+
+def _collect_turn_trace() -> list[dict[str, Any]]:
+    steps = _TURN_TRACE.get() or []
+    return [dict(step) for step in steps]
+
+
 def _emit_stage(stage: str, label: str) -> None:
+    steps = _TURN_TRACE.get()
+    if steps is not None:
+        now = time.monotonic()
+        # 每一步记录它距上一步的耗时——看链路时真正有用的是"卡在哪一步"。
+        previous = steps[-1]["at_ms"] if steps else 0.0
+        at_ms = 0.0 if not steps else (now - steps[-1]["_t"]) * 1000 + previous
+        steps.append({"stage": stage, "label": label, "at_ms": round(at_ms, 1), "_t": now})
     try:
         writer = get_stream_writer()
         writer({"type": "progress", "stage": stage, "label": label})
@@ -718,8 +745,10 @@ def _emit_stage(stage: str, label: str) -> None:
 _MAX_FOLLOWUP_QUERIES = 2
 _MAX_FOLLOWUP_ROWS = 50
 
-_ARTIFACT_TURNS_WITH_ROWS = 6
-_ARTIFACT_MAX_ROWS = 200
+# 产物现在写在独立表里，一轮一行、互不包含，存储是线性的，不再需要
+# "只给最近 N 轮留明细"这种限制。保留单轮行数上限的理由变了：它决定
+# 一次 /chat/sessions 响应要传多少数据，跟检查点写放大无关。
+_ARTIFACT_MAX_ROWS = 500
 
 
 def _current_trace_id() -> str | None:
@@ -778,12 +807,22 @@ def _turn_artifact(state: AgentState) -> dict[str, Any] | None:
     has_provenance = bool(
         provenance["provider"] or provenance["trace_id"]
         or provenance["usage"]["total_tokens"]
+        or _TURN_TRACE.get()
     )
     if not (has_render_payload or has_provenance):
         return None
 
+    # 执行链路：走过哪些节点、每步多久。以前这些事件推给前端当提示文字用完就丢，
+    # 事后没法回答"这一轮到底怎么走的、修过几次 SQL、慢在哪"。
+    steps = [
+        {k: v for k, v in step.items() if k != "_t"}
+        for step in _collect_turn_trace()
+    ]
+
     artifact: dict[str, Any] = {
         **provenance,
+        "trace_steps": steps,
+        "repair_count": int(state.get("repair_count", 0) or 0),
         "intent": state.get("intent"),
         "answer_mode": state.get("answer_mode", "llm"),
         "data_accessed": bool(state.get("data_accessed", False)),
@@ -804,19 +843,6 @@ def _turn_artifact(state: AgentState) -> dict[str, Any] | None:
     return artifact
 
 
-def _trim_artifacts(
-    artifacts: list[dict[str, Any] | None],
-) -> list[dict[str, Any] | None]:
-    """保留全部 artifact 的骨架，但只让最近几个带明细行。"""
-
-    with_rows = [index for index, item in enumerate(artifacts) if item and item.get("rows")]
-    keep = set(with_rows[-_ARTIFACT_TURNS_WITH_ROWS:])
-    trimmed: list[dict[str, Any] | None] = []
-    for index, item in enumerate(artifacts):
-        if item and index not in keep and item.get("rows"):
-            item = {**item, "rows": [], "rows_trimmed": True}
-        trimmed.append(item)
-    return trimmed
 
 
 class SalesAgent:
@@ -829,6 +855,7 @@ class SalesAgent:
         *,
         routing: ModelRoutingConfig | None = None,
         checkpointer: Any | None = None,
+        state_store: Any | None = None,
         semantic_config: SemanticConfig | None = None,
         semantic_provider: SemanticContextProvider | None = None,
         wiki_config: WikiConfig | None = None,
@@ -841,6 +868,8 @@ class SalesAgent:
             general=provider,
         )
         self._database_config = database
+        # 渲染产物写在这里，而不是塞进检查点。传 None 表示不持久化（单测用）。
+        self._state_store = state_store
         self._gateway = LLMGateway(provider)
         self._database = OdooDatabase(database)
         self._semantics = semantic_provider or build_semantic_provider(semantic_config)
@@ -1000,6 +1029,7 @@ class SalesAgent:
         persisted_history = await self._persisted_history(session_id, history)
         normalized_question, corrections = normalize_query_text(question)
         return {
+            "session_id": session_id,
             "question": normalized_question,
             "display_question": question,
             "query_corrections": corrections,
@@ -1115,6 +1145,10 @@ class SalesAgent:
             interrupt_payload=interrupt_payload,
             conversation=state.get("conversation", []),
             citations=state.get("knowledge_citations", []),
+            trace_steps=[
+                {k: v for k, v in step.items() if k != "_t"}
+                for step in _collect_turn_trace()
+            ],
         )
 
     async def _invoke(
@@ -1124,6 +1158,7 @@ class SalesAgent:
         session_id: str,
     ) -> AgentOutcome:
         config = self._config(session_id)
+        _begin_turn_trace()
         with trace_agent(
             name="route-and-answer-odoo-question",
             input_data={"session_id": session_id},
@@ -1187,6 +1222,7 @@ class SalesAgent:
             )
 
         config = self._config(session_id)
+        _begin_turn_trace()
         with trace_agent(
             name="route-and-answer-odoo-question",
             input_data={"session_id": session_id, "streaming": True},
@@ -1232,9 +1268,22 @@ class SalesAgent:
         snapshot = await self._graph.aget_state(self._config(session_id))
         values = dict(snapshot.values or {})
         conversation = [dict(message) for message in values.get("conversation", [])]
-        artifacts = list(values.get("conversation_artifacts", []))
+
+        stored: dict[int, dict[str, Any]] = {}
+        if self._state_store is not None:
+            try:
+                stored = await self._state_store.load_message_artifacts(session_id)
+            except Exception as exc:  # pragma: no cover - 取决于数据库可用性
+                logger.warning(
+                    "Failed to load message artifacts: %s", type(exc).__name__
+                )
+        # 搬家之前的会话把产物存在检查点的一个 channel 里，按下标对齐。
+        # 这里做兼容回退，让老会话翻回去仍然看得到图。
+        legacy = list(values.get("conversation_artifacts", []))
         for index, message in enumerate(conversation):
-            artifact = artifacts[index] if index < len(artifacts) else None
+            artifact = stored.get(index)
+            if artifact is None and index < len(legacy):
+                artifact = legacy[index]
             if artifact:
                 message["artifact"] = artifact
         pending = self._interrupt_from_snapshot(snapshot)
@@ -2095,26 +2144,43 @@ class SalesAgent:
             "warnings": list(dict.fromkeys(warnings)),
         }
 
-    def _finalize_turn(self, state: AgentState) -> dict[str, Any]:
+    async def _finalize_turn(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("complete", "回答已完成")
         conversation = list(state.get("conversation", state.get("history", [])))
-        # 老会话的检查点里没有这一列；补 None 到等长后再追加，保证下标始终对齐。
-        artifacts: list[dict[str, Any] | None] = list(state.get("conversation_artifacts", []))
-        artifacts = (artifacts + [None] * len(conversation))[: len(conversation)]
 
         question = state.get("display_question", state.get("question", ""))
         if question and (not conversation or conversation[-1] != {"role": "user", "content": question}):
             conversation.append({"role": "user", "content": question})
-            artifacts.append(None)
         clarification = state.get("clarification_answer", "")
         if clarification:
             conversation.append({"role": "user", "content": clarification})
-            artifacts.append(None)
         conversation.append({"role": "assistant", "content": state.get("answer", "")})
-        artifacts.append(_turn_artifact(state))
 
-        return {
-            "conversation": conversation[-20:],
-            "history": conversation[-20:],
-            "conversation_artifacts": _trim_artifacts(artifacts[-20:]),
-        }
+        # 产物落独立表，按消息下标定位。写在裁剪**之前**取下标会对不上，
+        # 所以先裁剪再算：存下来的下标必须和 session_state 读回的 conversation 一致。
+        trimmed = conversation[-20:]
+        await self._persist_turn_artifact(state, len(trimmed) - 1)
+
+        return {"conversation": trimmed, "history": trimmed}
+
+    async def _persist_turn_artifact(self, state: AgentState, message_index: int) -> None:
+        """把这一轮的渲染产物写进独立表。
+
+        **失败不致命**：产物只决定"翻回历史时还能不能看到图和明细"，
+        丢一条不该让已经算好的回答失败。
+        """
+
+        artifact = _turn_artifact(state)
+        if not artifact or self._state_store is None:
+            return
+        session_id = state.get("session_id") or ""
+        if not session_id:
+            return
+        try:
+            await self._state_store.save_message_artifact(
+                session_id, message_index, artifact
+            )
+        except Exception as exc:  # pragma: no cover - 取决于数据库可用性
+            logger.warning(
+                "Failed to persist message artifact: %s", type(exc).__name__
+            )

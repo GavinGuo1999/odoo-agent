@@ -114,6 +114,7 @@ def _agent(settings: Settings, routing: ModelRoutingConfig) -> SalesAgent:
         settings.database(),
         routing=routing,
         checkpointer=get_state_store().checkpointer,
+        state_store=get_state_store(),
         semantic_config=settings.semantic(),
         wiki_config=settings.wiki(),
     )
@@ -168,6 +169,7 @@ def _response_from_outcome(
         answer_mode=outcome.answer_mode,
         model_roles=outcome.model_roles,
         citations=outcome.citations,
+        trace_steps=outcome.trace_steps,
     )
 
 

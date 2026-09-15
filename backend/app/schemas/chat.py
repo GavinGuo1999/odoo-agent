@@ -77,6 +77,8 @@ class ChatResponse(BaseModel):
     usage: TokenUsage
     trace_id: str | None = None
     trace_url: str | None = None
+    # 本轮走过的节点与各步耗时（实时回答用；历史消息从 artifact 读）。
+    trace_steps: list[dict[str, Any]] = Field(default_factory=list)
     status: Literal["completed", "interrupted"] = "completed"
     interrupt: InterruptInfo | None = None
     data_accessed: bool = False
@@ -119,6 +121,9 @@ class ChatMessageArtifact(BaseModel):
     role_usage: dict[str, dict[str, Any]] = Field(default_factory=dict)
     trace_id: str | None = None
     trace_url: str | None = None
+    # 本轮走过的节点与各步耗时，供“执行链路”折叠面板展示。
+    trace_steps: list[dict[str, Any]] = Field(default_factory=list)
+    repair_count: int = 0
     sql: str | None = None
     columns: list[str] = Field(default_factory=list)
     rows: list[dict[str, Any]] = Field(default_factory=list)

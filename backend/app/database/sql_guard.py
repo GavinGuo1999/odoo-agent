@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 from sqlglot import exp, parse
 from sqlglot.errors import ParseError
@@ -487,6 +488,7 @@ class ReadOnlySqlGuard:
                 authorize_user_filters
                 and query_filter.source == "user"
                 and field not in question_fields
+                and not self._question_mentions_value(question, query_filter.value)
             ):
                 errors.append(f"用户问题没有授权过滤字段 {field}。")
 
@@ -602,6 +604,33 @@ class ReadOnlySqlGuard:
         ):
             return True
         return lower_bound and upper_bound
+
+    @staticmethod
+    def _question_mentions_value(question: str, value: Any) -> bool:
+        """过滤值本身出现在问题里，就是最直接的授权证据。
+
+        实测缺陷：「莱茵重工的销售额是多少？」整轮失败，因为关键词表要求问题里
+        出现"客户"两个字才授权 name 字段——而直接报公司名是最自然的问法。
+
+        这条判据比关键词表**更严**而不是更松：它要求用户逐字说出了那个值，
+        而关键词只能证明"提到了这个维度"。太短的值（1 个字符、纯数字）不算，
+        避免 `id = 1` 这种碰巧出现在问题里的数字被当成授权。
+        """
+
+        normalized = question.casefold()
+        candidates = value if isinstance(value, (list, tuple, set)) else [value]
+        mentioned = False
+        for item in candidates:
+            if isinstance(item, bool) or item is None:
+                return False
+            text = str(item).strip().casefold()
+            # 纯数字太容易误命中（年份、金额、序号），必须靠关键词表授权。
+            if len(text) < 2 or text.replace(".", "").replace("-", "").isdigit():
+                return False
+            if text not in normalized:
+                return False
+            mentioned = True
+        return mentioned
 
     @staticmethod
     def _question_filter_fields(question: str) -> set[str]:

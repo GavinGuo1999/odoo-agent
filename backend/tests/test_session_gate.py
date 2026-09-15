@@ -177,5 +177,37 @@ class ProtectedSurfaceTests(unittest.TestCase):
             get_settings.cache_clear()
 
 
+class AmbientIsolationTests(unittest.TestCase):
+    """测试结果不能取决于开发者本机配了什么。
+
+    实测缺陷：口令哈希存在用户环境变量里，新开的终端跑测试会红 17 个，
+    而设置变量之前开的终端是绿的。
+    """
+
+    def test_gate_variables_are_stripped_from_the_test_environment(self) -> None:
+        import os
+        import sys
+        from pathlib import Path
+
+        tests_dir = str(Path(__file__).resolve().parent)
+        if tests_dir not in sys.path:
+            sys.path.insert(0, tests_dir)
+        from _isolation import AMBIENT_OVERRIDES, isolate_ambient_environment
+
+        self.assertIn("AGENT_UI_PASSWORD_HASH", AMBIENT_OVERRIDES)
+
+        with patch.dict(os.environ, {"AGENT_UI_PASSWORD_HASH": "whatever"}):
+            self.assertEqual(os.environ["AGENT_UI_PASSWORD_HASH"], "whatever")
+            patcher = isolate_ambient_environment()
+            patcher.start()
+            try:
+                for name in AMBIENT_OVERRIDES:
+                    self.assertNotIn(name, os.environ, name)
+            finally:
+                patcher.stop()
+            # 剥离只在作用域内生效，不能污染调用方。
+            self.assertEqual(os.environ["AGENT_UI_PASSWORD_HASH"], "whatever")
+
+
 if __name__ == "__main__":
     unittest.main()
