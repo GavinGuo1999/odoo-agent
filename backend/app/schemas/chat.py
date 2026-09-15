@@ -100,9 +100,50 @@ class ChatResponse(BaseModel):
     citations: list[WikiCitationResponse] = Field(default_factory=list)
 
 
+class ChatMessageArtifact(BaseModel):
+    """一条历史 assistant 消息重绘所需的数据。
+
+    字段名刻意与 ChatResponse 保持一致，前端可以用同一个渲染函数处理"刚回答的"
+    和"从历史恢复的"两种情况，不用维护两套渲染逻辑。
+    """
+
+    intent: str | None = None
+    answer_mode: str = "llm"
+    data_accessed: bool = False
+    # 出处：哪个模型、花了多少、Langfuse 在哪。字段名与 ChatResponse 一致，
+    # 前端同一段渲染代码即可复用。
+    provider: str | None = None
+    model: str | None = None
+    model_roles: dict[str, ModelExecution] = Field(default_factory=dict)
+    usage: TokenUsage | None = None
+    role_usage: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    trace_id: str | None = None
+    trace_url: str | None = None
+    sql: str | None = None
+    columns: list[str] = Field(default_factory=list)
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+    row_count: int = 0
+    rows_trimmed: bool = False
+    chart: ChartSpec | None = None
+    metrics: list[str] = Field(default_factory=list)
+    currency: str | None = None
+    column_labels: dict[str, str] = Field(default_factory=dict)
+    column_formats: dict[str, str] = Field(default_factory=dict)
+    metric_labels: dict[str, str] = Field(default_factory=dict)
+    query_ms: float | None = None
+    truncated: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    citations: list[WikiCitationResponse] = Field(default_factory=list)
+
+
+class ChatSessionMessage(ChatHistoryMessage):
+    # 只在读取会话时出现；发回后端的 history 仍用 ChatHistoryMessage。
+    artifact: ChatMessageArtifact | None = None
+
+
 class ChatSessionView(BaseModel):
     session_id: str
-    history: list[ChatHistoryMessage] = Field(default_factory=list)
+    history: list[ChatSessionMessage] = Field(default_factory=list)
     pending_interrupt: InterruptInfo | None = None
     persistence_mode: Literal["memory", "postgres"]
     run_status: Literal[

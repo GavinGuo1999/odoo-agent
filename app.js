@@ -1366,10 +1366,16 @@
     return section;
   }
 
+  const RENDERABLE_CHART_TYPES = ["kpi", "line", "bar", "pie", "scatter"];
+
   function appendResultCard(container, metadata) {
     const rows = metadata.rows || [];
     const columns = metadata.columns || [];
-    if (!metadata.sql && !rows.length && !(metadata.warnings || []).length) return;
+    // 更早的历史轮次只留骨架、不留明细行，这时 chart 或 row_count 仍然值得展示。
+    // 注意 chart 可能是 {type:"none"}——那是规划器说"不该画图"，不能当成有图。
+    const hasChart = RENDERABLE_CHART_TYPES.includes(metadata.chart?.type);
+    if (!metadata.sql && !rows.length && !hasChart && !metadata.rows_trimmed
+        && !(metadata.warnings || []).length) return;
 
     const card = document.createElement("section");
     card.className = "agent-result-card";
@@ -1387,7 +1393,11 @@
     });
     summary.append(summaryTitle, metricChips);
     const timing = document.createElement("small");
-    timing.textContent = `${rows.length} 行${metadata.query_ms !== null && metadata.query_ms !== undefined ? ` · ${metadata.query_ms} ms` : ""}${metadata.truncated ? " · 已截断" : ""}`;
+    const rowCount = metadata.row_count ?? rows.length;
+    timing.textContent = `${rowCount} 行`
+      + (metadata.query_ms !== null && metadata.query_ms !== undefined ? ` · ${metadata.query_ms} ms` : "")
+      + (metadata.truncated ? " · 已截断" : "")
+      + (metadata.rows_trimmed && !rows.length ? " · 历史明细未保留" : "");
     summary.appendChild(timing);
     card.appendChild(summary);
 
@@ -1545,10 +1555,16 @@
       appendKnowledgeCitations(content, metadata.citations);
       const meta = document.createElement("div");
       meta.className = "chat-response-meta";
+      // 历史消息没存 phase，只存了 intent；两者在后端是固定映射，这里补回来。
+      const phase = metadata.phase || {
+        general: "general-chat", knowledge: "knowledge-base", source: "knowledge-base",
+        semantic: "semantic-layer", data: "text2sql", hybrid: "text2sql"
+      }[metadata.intent];
       const phaseLabel = metadata.intent === "hybrid"
         ? "Odoo 实时数据 + Wiki"
-        : ({ "general-chat": "普通问答", "knowledge-base": "Odoo Wiki", "semantic-layer": "指标口径", "text2sql": "Odoo 只读查询" }[metadata.phase] || "智能回答");
-      meta.append(`${phaseLabel} · ${metadata.provider} · ${metadata.model}`);
+        : ({ "general-chat": "普通问答", "knowledge-base": "Odoo Wiki", "semantic-layer": "指标口径", "text2sql": "Odoo 只读查询" }[phase] || "智能回答");
+      // 恢复的历史消息没有 provider/model/用量，缺什么就不显示什么。
+      meta.append([phaseLabel, metadata.provider, metadata.model].filter(Boolean).join(" · "));
       if (metadata.answer_mode === "deterministic") meta.append(" · 确定性摘要（省略第二次模型调用）");
       if (metadata.answer_mode === "knowledge") meta.append(" · 已引用审核笔记");
       if (metadata.usage?.estimated_cost_usd > 0) {
@@ -1722,6 +1738,13 @@
     return normalized.length > 36 ? `${normalized.slice(0, 36)}…` : normalized;
   }
 
+  // 历史消息的 artifact 字段名与实时响应一致，补上 restored 标记后就能交给同一个
+  // 渲染函数；provider/model/usage 这些没有存，渲染时会自动省略。
+  function restoredMetadata(message) {
+    if (message.role !== "assistant" || !message.artifact) return null;
+    return { ...message.artifact, restored: true };
+  }
+
   function titleFromHistory(history) {
     const firstQuestion = history.find((message) => message.role === "user" && message.content);
     return shortConversationTitle(firstQuestion?.content);
@@ -1860,11 +1883,14 @@
       chatSessionId = sessionId;
       window.localStorage.setItem(chatSessionStorageKey, chatSessionId);
       chatThread.innerHTML = "";
-      chatHistory = session.history.map((message) => ({ ...message }));
+      chatHistory = session.history.map(({ role, content }) => ({ role, content }));
       pendingInterrupt = session.pending_interrupt;
       setCurrentConversationTitle(titleFromHistory(chatHistory));
       if (chatHistory.length) {
-        chatHistory.forEach((message) => appendChatMessage(message.role, message.content));
+        // 历史消息带 artifact 时要一起重绘，否则切走再回来图表和明细表就没了。
+        session.history.forEach((message) => {
+          appendChatMessage(message.role, message.content, restoredMetadata(message));
+        });
       } else {
         appendWelcomeMessage();
       }

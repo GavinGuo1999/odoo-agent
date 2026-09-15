@@ -18,6 +18,7 @@ from app.state import get_state_store
 _PROJECT_DIRECTORY = Path(__file__).resolve().parents[2]
 _UI_FILES = {
     "app.js",
+    "auth.js",
     "chat.html",
     "dashboard.html",
     "echarts.min.js",

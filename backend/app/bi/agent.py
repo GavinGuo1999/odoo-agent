@@ -52,6 +52,7 @@ from app.llm import LLMGateway, LLMResult
 from app.observability import trace_agent, trace_retrieval, trace_tool, update_observation
 from app.schemas.analysis import DataProfile, SqlErrorAnalysis
 from app.schemas.query_plan import (
+    FollowupQuery,
     QueryPlan,
     SqlGenerationPayload,
     ranking_requires_row_limit,
@@ -67,9 +68,14 @@ AnswerMode = Literal["llm", "deterministic", "knowledge", "semantic", "failure"]
 class AgentState(TypedDict, total=False):
     question: str
     display_question: str
+    query_corrections: list[dict[str, str]]
     clarification_answer: str
     history: list[dict[str, str]]
     conversation: list[dict[str, str]]
+    # 与 conversation 等长、按下标一一对应的渲染副产物（图表/表格/SQL/引用）。
+    # 用户消息和纯文字回答对应 None。**不能塞进 conversation 里**：那份列表会
+    # 原样作为 messages 发给模型，多带的键会被 provider 拒绝。
+    conversation_artifacts: list[dict[str, Any] | None]
     intent: Intent
     answer: str
     answer_mode: AnswerMode
@@ -101,6 +107,10 @@ class AgentState(TypedDict, total=False):
     truncated: bool
     data_accessed: bool
     chart: dict[str, Any]
+    # 补充查询的结果。只喂给答案合成，不参与画图——图表必须和主查询一一对应，
+    # 否则用户看不出图上画的是哪一份数据。
+    followup_queries: list[dict[str, Any]]
+    auxiliary_results: list[dict[str, Any]]
     data_profile: dict[str, Any]
     warnings: list[str]
     filled_time_buckets: int
@@ -196,6 +206,15 @@ _DATA_REQUEST_WORDS = (
 )
 _FOLLOW_UP_WORDS = ("那", "再", "呢", "上个月", "去年", "同比", "环比", "换成")
 _UNRESOLVED_CUSTOMER_MARKERS = ("那个客户", "这个客户", "该客户", "那位客户")
+_NAMED_BUSINESS_REGIONS = ("华东", "华南", "华北", "华中", "西南", "西北", "东北")
+_SUPPORTED_REGION_FIELDS = {
+    "region",
+    "region_id",
+    "sales_region",
+    "sales_region_id",
+    "business_region",
+    "business_region_id",
+}
 _PRONOUN_TOKENS = ("那个", "这个", "该", "那位", "这位", "所有", "每个", "各个")
 # 匹配"客户/公司 + 名字"或"名字 + 公司/集团"，用于判断历史里是否点过具体客户。
 _CUSTOMER_NAME_HINT = re.compile(
@@ -241,6 +260,62 @@ def classify_intent(question: str, history: list[dict[str, str]]) -> Intent:
             return "knowledge"
         return "data"
     return "general"
+
+
+_QUERY_TYPO_RULES = (
+    {
+        "original": "销售呃",
+        "corrected": "销售额",
+        "wrong_fragment": "呃",
+        "replacement": "额",
+    },
+)
+
+
+def normalize_query_text(question: str) -> tuple[str, list[dict[str, str]]]:
+    """Apply only high-confidence, domain-specific typo corrections.
+
+    Entity names, regions, dates and values must never be guessed here. Structured
+    corrections are persisted so the result can tell the user exactly what changed.
+    """
+
+    normalized = question
+    corrections: list[dict[str, str]] = []
+    for rule in _QUERY_TYPO_RULES:
+        original = rule["original"]
+        if original not in normalized:
+            continue
+        normalized = normalized.replace(original, rule["corrected"])
+        corrections.append(dict(rule))
+    return normalized, corrections
+
+
+def _query_correction_warnings(corrections: list[dict[str, str]]) -> list[str]:
+    return [
+        (
+            f"检测到可能的业务错字：‘{item['original']}’中的‘{item['wrong_fragment']}’"
+            f"可能误写，已将‘{item['wrong_fragment']}’纠正为‘{item['replacement']}’，"
+            f"本次按‘{item['corrected']}’理解。"
+        )
+        for item in corrections
+    ]
+
+
+def _unsupported_business_region(
+    question: str,
+    table_columns: dict[str, list[str]],
+) -> str | None:
+    """Return a requested macro-region when the semantic model has no region field."""
+
+    requested = next((item for item in _NAMED_BUSINESS_REGIONS if item in question), None)
+    if requested is None:
+        return None
+    exposed = {
+        column.casefold()
+        for columns in table_columns.values()
+        for column in columns
+    }
+    return None if exposed.intersection(_SUPPORTED_REGION_FIELDS) else requested
 
 
 def _history_names_a_customer(history: list[dict[str, str]] | None) -> bool:
@@ -541,22 +616,38 @@ def parse_sql_generation_payload(
             or payload.plan.select_columns != expected_columns
         ):
             raise ValueError("QueryPlanInvoiceDifferenceColumnsMissing")
-    expected_shape = {
-        "trend": "time_series",
-        "ranking": "ranking",
-        "detail": "table",
-        "comparison": "table",
+    # query_type 描述分析目标，result_shape 描述展示形态，两者不是严格一一对应。
+    # 环比/同比本质是 comparison，但最自然的结果仍然是 time_series；带 Top-N 的
+    # 比较又可能是 ranking。只对语义上确实单一的类型做严格限制。
+    expected_shapes = {
+        "trend": {"time_series"},
+        "ranking": {"ranking"},
+        "detail": {"table"},
+        "comparison": {"table", "time_series", "ranking"},
     }.get(payload.plan.query_type)
-    if expected_shape and payload.plan.result_shape != expected_shape:
+    if expected_shapes and payload.plan.result_shape not in expected_shapes:
         raise ValueError("QueryPlanResultShapeMismatch")
     if (
-        payload.plan.query_type == "ranking"
+        ("今年" in question or "本年" in question)
+        and "环比" in question
+        and payload.plan.time_range.grain == "month"
+    ):
+        # 今年 1 月的环比基准是上年 12 月。只从 1 月开始扫描会让 SQL 合法、
+        # 结果却静默漏掉 1 月——这是业务正确性错误，不能交给答案模型猜。
+        baseline_start = date(date.today().year - 1, 12, 1)
+        if (
+            payload.plan.time_range.start is None
+            or payload.plan.time_range.start > baseline_start
+        ):
+            raise ValueError("QueryPlanPreviousPeriodBaselineMissing")
+    if (
+        payload.plan.result_shape == "ranking"
         and payload.plan.row_limit is None
         and ranking_requires_row_limit(question)
     ):
         raise ValueError("QueryPlanRankingLimitMissing")
     if (
-        payload.plan.query_type == "ranking"
+        payload.plan.result_shape == "ranking"
         and payload.plan.row_limit is not None
         and not ranking_requires_row_limit(question)
     ):
@@ -619,6 +710,113 @@ def _emit_stage(stage: str, label: str) -> None:
     except Exception:
         # Nodes are also invoked by non-streaming API/tests, where no writer exists.
         return
+
+
+# 检查点是每轮整体写入的，历史越长写放大越明显。所以只给最近几轮保留明细行，
+# 更早的轮次降级成"图表和 SQL 还在、表格行数被裁掉"。
+# 补充查询的两个上限：条数决定额外的数据库往返，行数决定塞进答案 prompt 的体积。
+_MAX_FOLLOWUP_QUERIES = 2
+_MAX_FOLLOWUP_ROWS = 50
+
+_ARTIFACT_TURNS_WITH_ROWS = 6
+_ARTIFACT_MAX_ROWS = 200
+
+
+def _current_trace_id() -> str | None:
+    """取当前 Langfuse trace id；没配置或出错一律返回 None，绝不影响本轮回答。"""
+
+    try:
+        from app.observability import get_current_trace_id
+
+        return get_current_trace_id()
+    except Exception:
+        return None
+
+
+def _current_trace_url() -> str | None:
+    try:
+        from app.observability import get_current_trace_url
+
+        return get_current_trace_url()
+    except Exception:
+        return None
+
+
+def _turn_artifact(state: AgentState) -> dict[str, Any] | None:
+    """把这一轮的可视化产物摘出来，供切换会话后重绘。
+
+    只存原始数据；列标签、货币格式这类展示层的东西在读取时再算，避免同一份
+    信息在检查点里存两遍、而且改了展示规则老会话不跟着变。
+    """
+
+    rows = list(state.get("rows", []) or [])
+    chart = state.get("chart") or None
+    # 规划器对普通问答会返回 {"type": "none"}，那是"明确不画图"，不是产物。
+    if chart and chart.get("type") in (None, "none"):
+        chart = None
+    citations = list(state.get("knowledge_citations", []) or [])
+    sql = state.get("sql") or None
+    warnings = list(state.get("warnings", []) or [])
+
+    # 出处信息（哪个模型答的、花了多少、Langfuse 在哪）对**每一条**回答都要留，
+    # 包括没有图没有表的纯文字回答——否则刷新一次就再也追不回这次调用的成本。
+    provenance: dict[str, Any] = {
+        "provider": state.get("provider") or None,
+        "model": state.get("model") or None,
+        "model_roles": dict(state.get("model_roles", {}) or {}),
+        "usage": {
+            "input_tokens": int(state.get("input_tokens", 0) or 0),
+            "output_tokens": int(state.get("output_tokens", 0) or 0),
+            "total_tokens": int(state.get("total_tokens", 0) or 0),
+            "estimated_cost_usd": float(state.get("estimated_cost_usd", 0.0) or 0.0),
+        },
+        "role_usage": dict(state.get("role_usage", {}) or {}),
+        "trace_id": _current_trace_id(),
+        "trace_url": _current_trace_url(),
+    }
+    has_render_payload = bool(rows or chart or citations or sql or warnings)
+    has_provenance = bool(
+        provenance["provider"] or provenance["trace_id"]
+        or provenance["usage"]["total_tokens"]
+    )
+    if not (has_render_payload or has_provenance):
+        return None
+
+    artifact: dict[str, Any] = {
+        **provenance,
+        "intent": state.get("intent"),
+        "answer_mode": state.get("answer_mode", "llm"),
+        "data_accessed": bool(state.get("data_accessed", False)),
+        "sql": sql,
+        "columns": list(state.get("columns", []) or []),
+        "rows": rows[:_ARTIFACT_MAX_ROWS],
+        "row_count": len(rows),
+        "chart": chart,
+        "metrics": list(state.get("metric_ids", []) or []),
+        "currency": state.get("currency"),
+        "query_ms": state.get("query_ms"),
+        "truncated": bool(state.get("truncated", False)),
+        "warnings": warnings,
+        "citations": citations,
+    }
+    if len(rows) > _ARTIFACT_MAX_ROWS:
+        artifact["rows_trimmed"] = True
+    return artifact
+
+
+def _trim_artifacts(
+    artifacts: list[dict[str, Any] | None],
+) -> list[dict[str, Any] | None]:
+    """保留全部 artifact 的骨架，但只让最近几个带明细行。"""
+
+    with_rows = [index for index, item in enumerate(artifacts) if item and item.get("rows")]
+    keep = set(with_rows[-_ARTIFACT_TURNS_WITH_ROWS:])
+    trimmed: list[dict[str, Any] | None] = []
+    for index, item in enumerate(artifacts):
+        if item and index not in keep and item.get("rows"):
+            item = {**item, "rows": [], "rows_trimmed": True}
+        trimmed.append(item)
+    return trimmed
 
 
 class SalesAgent:
@@ -751,7 +949,9 @@ class SalesAgent:
                 "error": "analyze_sql_error",
             },
         )
-        builder.add_edge("profile_sales_result", "plan_chart")
+        builder.add_node("run_followup_queries", self._run_followup_queries)
+        builder.add_edge("profile_sales_result", "run_followup_queries")
+        builder.add_edge("run_followup_queries", "plan_chart")
         builder.add_conditional_edges(
             "plan_chart",
             self._route_after_chart_planning,
@@ -798,9 +998,11 @@ class SalesAgent:
         session_id: str,
     ) -> AgentState:
         persisted_history = await self._persisted_history(session_id, history)
+        normalized_question, corrections = normalize_query_text(question)
         return {
-            "question": question,
+            "question": normalized_question,
             "display_question": question,
+            "query_corrections": corrections,
             "clarification_answer": "",
             "history": persisted_history,
             "conversation": persisted_history,
@@ -835,8 +1037,10 @@ class SalesAgent:
             "truncated": False,
             "data_accessed": False,
             "chart": build_chart_spec("", [], []),
+            "followup_queries": [],
+            "auxiliary_results": [],
             "data_profile": {},
-            "warnings": [],
+            "warnings": _query_correction_warnings(corrections),
             "filled_time_buckets": 0,
             "repair_count": 0,
             "input_tokens": 0,
@@ -1018,10 +1222,21 @@ class SalesAgent:
     async def session_state(
         self,
         session_id: str,
-    ) -> tuple[list[dict[str, str]], dict[str, Any] | None]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """返回历史消息（assistant 消息可能带 artifact）与待回答的澄清问题。
+
+        artifact 就地挂在消息上，只用于前端重绘；发给模型的历史仍然只有
+        role/content 两个键。
+        """
+
         snapshot = await self._graph.aget_state(self._config(session_id))
         values = dict(snapshot.values or {})
-        conversation = list(values.get("conversation", []))
+        conversation = [dict(message) for message in values.get("conversation", [])]
+        artifacts = list(values.get("conversation_artifacts", []))
+        for index, message in enumerate(conversation):
+            artifact = artifacts[index] if index < len(artifacts) else None
+            if artifact:
+                message["artifact"] = artifact
         pending = self._interrupt_from_snapshot(snapshot)
         if pending and values.get("display_question"):
             question = str(values["display_question"])
@@ -1141,6 +1356,32 @@ class SalesAgent:
         return {"answer": explanation, "answer_mode": "semantic", "data_accessed": False}
 
     def _detect_data_ambiguity(self, state: AgentState) -> dict[str, Any]:
+        unsupported_region = _unsupported_business_region(
+            state["question"],
+            self._semantics.table_columns,
+        )
+        if unsupported_region:
+            _emit_stage("ambiguity-detection", "检测到未配置的业务区域口径")
+            plan = _deterministic_clarification_plan(state["question"]).model_copy(
+                update={
+                    "ambiguities": [f"语义模型未配置‘{unsupported_region}区’对应的区域字段"],
+                    "requires_clarification": True,
+                    "clarification_question": (
+                        f"当前数据模型没有可查询的‘{unsupported_region}区’字段。"
+                        f"请去掉‘{unsupported_region}区’条件，或先在数据与模型中配置客户区域字段。"
+                    ),
+                }
+            )
+            return {
+                "query_plan": plan.model_dump(mode="json"),
+                "metric_ids": plan.metric_ids,
+                "logical_sql": "",
+                "sql": "",
+                "safe_sql": "",
+                "sql_errors": [],
+                "sql_error_stage": "planning",
+                "sql_error_analysis": None,
+            }
         if not _has_unresolved_customer_reference(
             state["question"],
             state.get("history", []),
@@ -1258,17 +1499,20 @@ class SalesAgent:
             logical_sql = payload.sql
             plan = payload.plan.model_dump(mode="json")
             metric_ids = payload.plan.metric_ids or state.get("metric_ids", [])
+            followups = [item.model_dump(mode="json") for item in payload.followups]
             parse_errors: list[str] = []
         except (ValueError, TypeError, json.JSONDecodeError, ValidationError) as exc:
             logical_sql = ""
             plan = None
             metric_ids = state.get("metric_ids", [])
+            followups = []
             parse_errors = [f"查询计划格式无效：{format_plan_validation_error(exc)}。"]
         return {
             "logical_sql": logical_sql,
             "sql": "",
             "query_plan": plan,
             "metric_ids": metric_ids,
+            "followup_queries": followups,
             "sql_errors": parse_errors,
             "sql_error_stage": "planning",
             "sql_error_analysis": None,
@@ -1305,7 +1549,8 @@ class SalesAgent:
             }
         )
         return {
-            "question": f"{state['display_question']}\n用户补充条件：{answer}",
+            # 下游继续使用已规范化的问题；display_question 只负责向用户展示原文。
+            "question": f"{state['question']}\n用户补充条件：{answer}",
             "clarification_answer": answer,
             "query_plan": updated_plan.model_dump(mode="json"),
             "logical_sql": "",
@@ -1469,7 +1714,7 @@ class SalesAgent:
         )
         answer = str(response.get("answer", "")) if isinstance(response, dict) else str(response)
         return {
-            "question": f"{state['display_question']}\n用户补充条件：{answer}",
+            "question": f"{state['question']}\n用户补充条件：{answer}",
             "clarification_answer": answer,
             "query_plan": None,
             "logical_sql": "",
@@ -1516,10 +1761,12 @@ class SalesAgent:
             )
             logical_sql = payload.sql
             plan = payload.plan.model_dump(mode="json")
+            followups = [item.model_dump(mode="json") for item in payload.followups]
             errors: list[str] = []
         except (ValueError, TypeError, json.JSONDecodeError, ValidationError) as exc:
             logical_sql = ""
             plan = state.get("query_plan")
+            followups = []
             errors = [
                 "修复后的查询计划格式无效："
                 f"{format_plan_validation_error(exc)}。"
@@ -1535,6 +1782,7 @@ class SalesAgent:
             "logical_sql": logical_sql,
             "sql": "",
             "query_plan": plan,
+            "followup_queries": followups,
             "safe_sql": "",
             "sql_errors": errors,
             "sql_error_stage": "planning",
@@ -1614,6 +1862,87 @@ class SalesAgent:
         _emit_stage("data-profile", "正在分析结果字段和数据结构")
         profile = build_data_profile(state.get("columns", []), state.get("rows", []))
         return {"data_profile": profile.model_dump(mode="json")}
+
+    async def _run_followup_queries(self, state: AgentState) -> dict[str, Any]:
+        """执行模型声明的补充查询，给"为什么"类问题提供下钻证据。
+
+        三条硬规则：
+          1. **同一套守卫**。每条补充查询带自己的 QueryPlan，走 self._guard.validate，
+             和主查询一字不差。没有任何"补充查询所以放宽一点"的余地。
+          2. **失败不影响主答案**。主查询已经成功了，补充数据只是锦上添花；这里出错
+             记一条 warning 继续走，绝不把整轮拖进修复循环。
+          3. **不参与画图**。图表只反映主查询，否则用户看不出图上是哪份数据。
+        """
+
+        followups = list(state.get("followup_queries", []) or [])
+        if not followups:
+            return {}
+
+        _emit_stage("followup-queries", f"正在执行 {len(followups)} 条补充查询")
+        results: list[dict[str, Any]] = []
+        warnings = list(state.get("warnings", []) or [])
+
+        for raw in followups[:_MAX_FOLLOWUP_QUERIES]:
+            try:
+                followup = FollowupQuery.model_validate(raw)
+            except ValidationError:
+                warnings.append("一条补充查询的结构无效，已跳过。")
+                continue
+
+            # 契约校验里的 Top-N 判据要看"这条查询是干什么的"，不能看主问题：
+            # 主问题问"下降最大的三个月"，但补充查询要的是那几个月的**完整**客户构成，
+            # 拿主问题去判会要求它声明 row_limit，直接把它挡在门外。
+            # 表/字段白名单、company_id、禁写这些安全检查与主查询完全一致，不受影响。
+            validation = self._guard.validate(
+                followup.sql,
+                plan=followup.plan,
+                question=followup.purpose,
+                # 补充查询不展示给用户，展示层的契约（Top-N 声明、产品名 COALESCE、
+                # select_columns 对齐）对它没有意义。安全检查一条不少。
+                enforce_presentation_contract=False,
+            )
+            if not validation.safe or not validation.sql:
+                # 把守卫的理由带出来，评测时才知道模型在哪类补充查询上踩坑。
+                reason = validation.errors[0] if validation.errors else "未通过安全校验"
+                warnings.append(f"补充查询「{followup.name}」未执行：{reason}")
+                continue
+
+            with trace_tool(
+                name="execute-followup-sales-sql",
+                input_data={"name": followup.name, "sql": validation.sql},
+            ) as observation:
+                try:
+                    result = await self._database.execute_readonly(validation.sql)
+                except Exception as exc:
+                    update_observation(
+                        observation,
+                        level="ERROR",
+                        status_message=type(exc).__name__,
+                        output={"status": "error"},
+                    )
+                    warnings.append(
+                        f"补充查询「{followup.name}」执行失败：{type(exc).__name__}"
+                    )
+                    continue
+                rows = list(result.rows)
+                update_observation(
+                    observation,
+                    output={"status": "ok", "row_count": len(rows)},
+                )
+
+            results.append({
+                "name": followup.name,
+                "purpose": followup.purpose,
+                "sql": validation.sql,
+                "columns": list(result.columns),
+                "rows": rows[:_MAX_FOLLOWUP_ROWS],
+                "row_count": len(rows),
+            })
+
+        return {
+            "auxiliary_results": results,
+            "warnings": list(dict.fromkeys(warnings)),
+        }
 
     async def _plan_chart(self, state: AgentState) -> dict[str, Any]:
         profile = DataProfile.model_validate(state.get("data_profile", {}))
@@ -1714,6 +2043,7 @@ class SalesAgent:
                         truncated=state.get("truncated", False),
                         data_profile=state.get("data_profile"),
                         knowledge_context=state.get("knowledge_context", ""),
+                        auxiliary_results=state.get("auxiliary_results", []),
                         hybrid=state.get("intent") == "hybrid",
                     ),
                 }
@@ -1768,11 +2098,23 @@ class SalesAgent:
     def _finalize_turn(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("complete", "回答已完成")
         conversation = list(state.get("conversation", state.get("history", [])))
+        # 老会话的检查点里没有这一列；补 None 到等长后再追加，保证下标始终对齐。
+        artifacts: list[dict[str, Any] | None] = list(state.get("conversation_artifacts", []))
+        artifacts = (artifacts + [None] * len(conversation))[: len(conversation)]
+
         question = state.get("display_question", state.get("question", ""))
         if question and (not conversation or conversation[-1] != {"role": "user", "content": question}):
             conversation.append({"role": "user", "content": question})
+            artifacts.append(None)
         clarification = state.get("clarification_answer", "")
         if clarification:
             conversation.append({"role": "user", "content": clarification})
+            artifacts.append(None)
         conversation.append({"role": "assistant", "content": state.get("answer", "")})
-        return {"conversation": conversation[-20:], "history": conversation[-20:]}
+        artifacts.append(_turn_artifact(state))
+
+        return {
+            "conversation": conversation[-20:],
+            "history": conversation[-20:],
+            "conversation_artifacts": _trim_artifacts(artifacts[-20:]),
+        }

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
@@ -184,18 +186,25 @@ class QueryPlanTests(unittest.TestCase):
         self.assertNotIn(secret_marker, summary)
 
     def test_repair_prompt_repeats_complete_query_plan_contract(self) -> None:
-        prompt = sql_repair_prompt(
-            question="本月销售额",
-            semantic_context="semantic context",
-            previous_sql="SELECT 1",
-            previous_plan={},
-            errors=["plan.filters.1.operator:literal_error"],
-        )
+        with patch.dict(os.environ, {"LANGFUSE_PROMPTS_FETCH_ENABLED": "false"}):
+            prompt = sql_repair_prompt(
+                question="本月销售额",
+                semantic_context="semantic context",
+                previous_sql="SELECT 1",
+                previous_plan={},
+                errors=["plan.filters.1.operator:literal_error"],
+            )
 
         self.assertIn('"query_type": "kpi|trend|ranking|detail|comparison"', prompt)
         self.assertIn("eq|neq|gt|gte|lt|lte|in|not_in|contains", prompt)
         self.assertIn('"result_shape": "scalar|time_series|ranking|table"', prompt)
         self.assertIn('"requires_clarification": false', prompt)
+        self.assertIn('"followups": []', prompt)
+        self.assertIn("修复主查询时不能无声地丢弃原因分析", prompt)
+        self.assertIn("连接\nsale_order_line 后禁止 SUM", prompt)
+        self.assertIn("average_order_value、max_order_value", prompt)
+        self.assertIn("不要使用 product、\nsalesperson、res_users 或 sale_order_line", prompt)
+        self.assertIn("上年 12 月开始扫描", prompt)
 
     def test_plan_semantics_are_normalized_to_stable_dimension_ids(self) -> None:
         content = """{
@@ -416,6 +425,73 @@ class QueryPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "QueryPlanRankingLimitMissing"):
             parse_sql_generation_payload(
                 self._ranking_payload(row_limit=None, with_limit=False),
+                allowed_metric_ids=["sales_amount"],
+                question="今年销售额最高的十个销售员是谁？",
+            )
+
+    def test_comparison_may_return_a_time_series(self) -> None:
+        """环比既是比较目标也是时间序列，不能因标签组合正确而触发 SQL 修复。"""
+
+        import json
+
+        content = json.loads(self._ranking_payload(row_limit=None, with_limit=False))
+        content["plan"].update({
+            "query_type": "comparison",
+            "dimensions": ["month"],
+            "result_shape": "time_series",
+            "select_columns": ["month", "sales_amount"],
+            "sort": [{"field": "month", "direction": "asc"}],
+        })
+        content["plan"]["time_range"]["start"] = "2025-12-01"
+        content["plan"]["time_range"]["grain"] = "month"
+        content["sql"] = (
+            "SELECT date_trunc('month', so.date_order)::date AS month, "
+            "SUM(so.amount_untaxed) AS sales_amount FROM sale_order so "
+            "WHERE so.company_id = 1 AND so.state IN ('sale','done') "
+            "GROUP BY 1 ORDER BY 1"
+        )
+
+        payload = parse_sql_generation_payload(
+            json.dumps(content, ensure_ascii=False),
+            allowed_metric_ids=["sales_amount"],
+            question="今年各月销售额，环比降幅最大的三个月是哪几个，为什么",
+        )
+        self.assertEqual(payload.plan.query_type, "comparison")
+        self.assertEqual(payload.plan.result_shape, "time_series")
+
+    def test_current_year_month_over_month_requires_previous_december(self) -> None:
+        """合法 SQL 也不能静默漏算今年 1 月环比。"""
+
+        import json
+
+        content = json.loads(self._ranking_payload(row_limit=None, with_limit=False))
+        content["plan"].update({
+            "query_type": "comparison",
+            "dimensions": ["month"],
+            "result_shape": "time_series",
+            "select_columns": ["month", "sales_amount"],
+            "sort": [{"field": "month", "direction": "asc"}],
+        })
+        content["plan"]["time_range"]["grain"] = "month"
+        with self.assertRaisesRegex(
+            ValueError, "QueryPlanPreviousPeriodBaselineMissing"
+        ):
+            parse_sql_generation_payload(
+                json.dumps(content, ensure_ascii=False),
+                allowed_metric_ids=["sales_amount"],
+                question="今年各月销售额，环比降幅最大的三个月是哪几个",
+            )
+
+    def test_comparison_ranking_still_enforces_explicit_top_n(self) -> None:
+        """Top-N 契约看结果形态，而不是只看 query_type 的标签。"""
+
+        import json
+
+        content = json.loads(self._ranking_payload(row_limit=None, with_limit=False))
+        content["plan"]["query_type"] = "comparison"
+        with self.assertRaisesRegex(ValueError, "QueryPlanRankingLimitMissing"):
+            parse_sql_generation_payload(
+                json.dumps(content, ensure_ascii=False),
                 allowed_metric_ids=["sales_amount"],
                 question="今年销售额最高的十个销售员是谁？",
             )

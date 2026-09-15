@@ -19,12 +19,20 @@ from .chat import (
     ChatRequest,
     ChatResponse,
     ChatResumeRequest,
+    ChatMessageArtifact,
+    ChatSessionMessage,
     ChatSessionView,
     InterruptInfo,
     ModelExecution,
     TokenUsage,
 )
-from .query_plan import QueryFilter, QueryPlan, QueryTimeRange, SqlGenerationPayload
+from .query_plan import (
+    FollowupQuery,
+    QueryFilter,
+    QueryPlan,
+    QueryTimeRange,
+    SqlGenerationPayload,
+)
 from .settings import SettingsUpdateRequest, SettingsView
 from .sales import SalesDashboardResponse, SalesMetricsResponse
 
@@ -32,6 +40,8 @@ __all__ = [
     "ChatRequest",
     "ChatResponse",
     "ChatResumeRequest",
+    "ChatMessageArtifact",
+    "ChatSessionMessage",
     "ChatSessionView",
     "ChatConversationDeleteResponse",
     "ChatConversationList",
@@ -49,6 +59,7 @@ __all__ = [
     "QueryFilter",
     "QueryPlan",
     "QueryTimeRange",
+    "FollowupQuery",
     "SqlGenerationPayload",
     "InterruptInfo",
     "ModelExecution",

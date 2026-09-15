@@ -13,9 +13,11 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.bi import SalesAgent, classify_intent  # noqa: E402
+from app.bi.agent import normalize_query_text  # noqa: E402
 from app.config import DatabaseConfig, ProviderConfig  # noqa: E402
 from app.database import DatabaseConnectionError, DatabaseHealth, QueryResult  # noqa: E402
 from app.llm import LLMResult  # noqa: E402
+from app.schemas.query_plan import QueryPlan  # noqa: E402
 from app.services.wiki_knowledge import WikiHit, WikiSearchResult  # noqa: E402
 
 
@@ -694,6 +696,117 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class ConversationArtifactTests(unittest.TestCase):
+    """切到别的页面再回来，图表和明细表必须还在。
+
+    实测缺陷：会话历史只存了 role/content，重绘时图表、明细表、SQL 全部丢失。
+    产物必须与 conversation 等长对齐，且**不能**混进发给模型的消息里。
+    """
+
+    def _data_state(self, answer: str = "结论") -> dict:
+        return {
+            "answer": answer,
+            "question": "按月统计销售额",
+            "display_question": "按月统计销售额",
+            "intent": "data",
+            "answer_mode": "deterministic",
+            "data_accessed": True,
+            "sql": "SELECT 1",
+            "columns": ["month", "sales_amount"],
+            "rows": [{"month": "2026-01-01", "sales_amount": 1.0}],
+            "chart": {"type": "line", "title": "趋势"},
+            "metric_ids": ["sales_amount"],
+            "currency": "USD",
+            "query_ms": 12.5,
+        }
+
+    def test_data_turn_keeps_chart_and_rows(self) -> None:
+        from app.bi.agent import _turn_artifact
+
+        artifact = _turn_artifact(self._data_state())
+
+        self.assertIsNotNone(artifact)
+        self.assertEqual(artifact["chart"]["type"], "line")
+        self.assertEqual(artifact["columns"], ["month", "sales_amount"])
+        self.assertEqual(artifact["row_count"], 1)
+        self.assertEqual(artifact["sql"], "SELECT 1")
+
+    def test_plain_answer_stores_nothing(self) -> None:
+        from app.bi.agent import _turn_artifact
+
+        # 普通问答没有任何可视化产物，不该在检查点里留垃圾。
+        self.assertIsNone(_turn_artifact({"answer": "你好", "intent": "general"}))
+
+    def test_chart_type_none_is_not_an_artifact(self) -> None:
+        from app.bi.agent import _turn_artifact
+
+        # 规划器对闲聊返回 {"type": "none"}，那是"明确不画图"，不是产物；
+        # 当成产物会让每条闲聊后面都挂一张空的结果卡片。
+        self.assertIsNone(
+            _turn_artifact({"answer": "你好", "intent": "general", "chart": {"type": "none"}})
+        )
+
+    def test_artifacts_stay_aligned_with_conversation(self) -> None:
+        agent = SalesAgent.__new__(SalesAgent)
+        state = self._data_state()
+
+        first = SalesAgent._finalize_turn(agent, state)
+        self.assertEqual(len(first["conversation"]), len(first["conversation_artifacts"]))
+        self.assertIsNone(first["conversation_artifacts"][0])          # 用户提问
+        self.assertIsNotNone(first["conversation_artifacts"][1])       # 助手回答带图
+
+        second_state = {
+            **self._data_state("第二轮"),
+            "question": "那上个月呢",
+            "display_question": "那上个月呢",
+            "conversation": first["conversation"],
+            "conversation_artifacts": first["conversation_artifacts"],
+        }
+        second = SalesAgent._finalize_turn(agent, second_state)
+
+        self.assertEqual(len(second["conversation"]), 4)
+        self.assertEqual(len(second["conversation_artifacts"]), 4)
+        roles = [message["role"] for message in second["conversation"]]
+        has_artifact = [item is not None for item in second["conversation_artifacts"]]
+        self.assertEqual(roles, ["user", "assistant", "user", "assistant"])
+        self.assertEqual(has_artifact, [False, True, False, True])
+
+    def test_old_session_without_artifacts_recovers_alignment(self) -> None:
+        agent = SalesAgent.__new__(SalesAgent)
+        # 改动之前存下的检查点里没有 conversation_artifacts 这一列。
+        legacy = [
+            {"role": "user", "content": "历史提问"},
+            {"role": "assistant", "content": "历史回答"},
+        ]
+        result = SalesAgent._finalize_turn(
+            agent, {**self._data_state(), "conversation": legacy}
+        )
+
+        self.assertEqual(len(result["conversation"]), len(result["conversation_artifacts"]))
+        self.assertEqual(result["conversation_artifacts"][:2], [None, None])
+        self.assertIsNotNone(result["conversation_artifacts"][-1])
+
+    def test_history_sent_to_model_has_no_artifact_key(self) -> None:
+        agent = SalesAgent.__new__(SalesAgent)
+        result = SalesAgent._finalize_turn(agent, self._data_state())
+
+        # history 会原样作为 messages 发给 provider，多一个键就是一次 400。
+        for message in result["history"]:
+            self.assertEqual(set(message), {"role", "content"})
+
+    def test_only_recent_turns_keep_detail_rows(self) -> None:
+        from app.bi.agent import _ARTIFACT_TURNS_WITH_ROWS, _trim_artifacts
+
+        artifacts = [{"rows": [{"n": i}], "row_count": 1} for i in range(10)]
+        trimmed = _trim_artifacts(artifacts)
+
+        kept = [item for item in trimmed if item["rows"]]
+        self.assertEqual(len(kept), _ARTIFACT_TURNS_WITH_ROWS)
+        # 早期轮次的骨架仍在，只是明细被裁掉并标记出来。
+        self.assertTrue(trimmed[0]["rows_trimmed"])
+        self.assertEqual(trimmed[0]["row_count"], 1)
+
+
 class IntentRoutingTests(unittest.TestCase):
     """领域概念问题必须走检索，不能落到"闲聊"由模型自由发挥。
 
@@ -718,3 +831,57 @@ class IntentRoutingTests(unittest.TestCase):
 
         # 加了关键词后不能把"查数"问题也拽去检索。
         self.assertEqual(classify_intent("本月成本是多少？", []), "data")
+
+
+class QueryNormalizationTests(unittest.IsolatedAsyncioTestCase):
+    def test_sales_amount_typo_is_corrected_with_exact_character_details(self) -> None:
+        normalized, corrections = normalize_query_text("今年销售呃是多少？")
+
+        self.assertEqual(normalized, "今年销售额是多少？")
+        self.assertEqual(
+            corrections,
+            [{
+                "original": "销售呃",
+                "corrected": "销售额",
+                "wrong_fragment": "呃",
+                "replacement": "额",
+            }],
+        )
+
+    async def test_initial_state_preserves_original_and_warns_about_correction(self) -> None:
+        agent = SalesAgent.__new__(SalesAgent)
+        agent._persisted_history = AsyncMock(return_value=[])
+        agent._routing = Mock(
+            general=Mock(name="deepseek", model="deepseek-chat")
+        )
+        agent._semantics = Mock(name="native", version="test-v1")
+
+        state = await SalesAgent._initial_state(
+            agent,
+            question="今年销售呃是多少？",
+            history=[],
+            session_id="typo-test",
+        )
+
+        self.assertEqual(state["question"], "今年销售额是多少？")
+        self.assertEqual(state["display_question"], "今年销售呃是多少？")
+        self.assertIn("‘呃’纠正为‘额’", state["warnings"][0])
+
+    def test_known_macro_region_without_semantic_field_requires_clarification(self) -> None:
+        agent = SalesAgent.__new__(SalesAgent)
+        agent._semantics = Mock(
+            table_columns={"res_partner": ["id", "name"]}
+        )
+
+        result = SalesAgent._detect_data_ambiguity(
+            agent,
+            {
+                "question": "统计今年华东区每个月销售额",
+                "history": [],
+            },
+        )
+
+        plan = QueryPlan.model_validate(result["query_plan"])
+        self.assertTrue(plan.requires_clarification)
+        self.assertIn("华东区", plan.clarification_question)
+        self.assertEqual(result["logical_sql"], "")

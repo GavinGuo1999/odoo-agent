@@ -168,7 +168,8 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(restored.json()["run_status"], "failed")
         self.assertEqual(
             restored.json()["history"][-1],
-            {"role": "user", "content": "测试错误处理"},
+            # 用户消息永远不带渲染产物；artifact 只会挂在 assistant 消息上。
+            {"role": "user", "content": "测试错误处理", "artifact": None},
         )
 
     async def test_chat_supports_general_questions_and_conversation_history(

@@ -62,7 +62,18 @@ class ReadOnlySqlGuard:
         *,
         plan: QueryPlan | None = None,
         question: str = "",
+        enforce_presentation_contract: bool = True,
     ) -> SqlValidationResult:
+        """校验一条只读 SQL。
+
+        `enforce_presentation_contract=False` 只跳过**展示层**的契约检查
+        （select_columns 对齐、ORDER BY 对齐、Top-N 声明、产品名 COALESCE、
+        明细必须带时间范围）。这些规则保证的是"给用户看的表格和图不被悄悄截断
+        或串列"，对不展示的补充查询没有意义，卡着它反而让证据查不出来。
+
+        **安全检查一条都不跳过**：语句类型、表/字段白名单、禁用函数、SELECT *、
+        company_id 隔离、行数上限，以及"WHERE 里不得出现计划未声明的过滤字段"。
+        """
         errors: list[str] = []
         try:
             statements = parse(sql.strip(), read="postgres")
@@ -115,11 +126,22 @@ class ReadOnlySqlGuard:
                 and not (table.name.lower() in cte_names and not table.db and not table.catalog)
             }
             cte_origins[cte_name] = origins
+        # CTE 的输出列是它自己算出来的（SUM(...) AS sales_amount_2025 这种），
+        # 不是物理表字段。外层引用这些列时必须按 CTE 的投影校验，按物理表校验
+        # 会把所有带计算列的 CTE 全部误判成"字段未开放"。
+        cte_projections = {
+            name: self._cte_output_columns(cte)
+            for cte in statement.find_all(exp.CTE)
+            if (name := (cte.alias_or_name or "").lower())
+        }
+        # 外层给 CTE 起的别名（FROM sales_2025 s25 里的 s25）也要能查到它属于哪个 CTE。
+        cte_aliases: dict[str, str] = {}
         aliases: dict[str, str] = {}
         real_tables: set[str] = set()
         for table in statement.find_all(exp.Table):
             table_name = table.name.lower()
             if table_name in cte_names and not table.db and not table.catalog:
+                cte_aliases[(table.alias_or_name or table_name).lower()] = table_name
                 origins = cte_origins.get(table_name, set())
                 if len(origins) == 1:
                     aliases[(table.alias_or_name or table_name).lower()] = next(iter(origins))
@@ -153,7 +175,14 @@ class ReadOnlySqlGuard:
         for column in statement.find_all(exp.Column):
             column_name = column.name.lower()
             qualifier = column.table.lower() if column.table else ""
-            if qualifier in cte_names:
+            # 限定符指向 CTE（直接用 CTE 名，或用外层起的别名）时，按该 CTE 的输出列校验。
+            # CTE 内部读的物理表和字段在上面已经查过了，这里不需要也不能再查一遍。
+            cte_target = cte_aliases.get(qualifier) or (qualifier if qualifier in cte_names else None)
+            if cte_target is not None:
+                projection = cte_projections.get(cte_target)
+                # 投影拿不到（SELECT * 之类）时放行：SELECT * 本身另有一条规则拦。
+                if projection and column_name not in projection:
+                    errors.append(f"字段未开放：{qualifier}.{column_name}。")
                 continue
             if qualifier:
                 table_name = self._resolve_scoped_table(
@@ -181,7 +210,14 @@ class ReadOnlySqlGuard:
                 errors.append(f"不允许调用函数：{function_name}。")
 
         if plan is not None:
-            errors.extend(self._validate_query_contract(statement, plan, question))
+            errors.extend(
+                self._validate_query_contract(
+                    statement,
+                    plan,
+                    question,
+                    enforce_presentation=enforce_presentation_contract,
+                )
+            )
 
         if {"sale_order", "sale_order_line"} & real_tables:
             company_filter_found = False
@@ -325,8 +361,16 @@ class ReadOnlySqlGuard:
         statement: exp.Query,
         plan: QueryPlan,
         question: str,
+        *,
+        enforce_presentation: bool = True,
     ) -> list[str]:
         errors: list[str] = []
+        if not enforce_presentation:
+            # 只保留"不得偷偷加过滤条件"这一条——它防的是结果被无声地缩小范围，
+            # 对补充查询同样成立（被裁过的证据会把答案带偏）。
+            return self._validate_declared_filters(
+                statement, plan, question, authorize_user_filters=False
+            )
         if plan.query_type == "detail" and self._complexity.require_detail_time_range:
             if not (plan.time_range.start and plan.time_range.end):
                 errors.append("明细查询需要用户补充明确的开始和结束时间范围。")
@@ -402,6 +446,26 @@ class ReadOnlySqlGuard:
                     f"期望 {expected_sort}，实际 {actual_sort}。"
                 )
 
+        errors.extend(self._validate_declared_filters(statement, plan, question))
+        return errors
+
+    def _validate_declared_filters(
+        self,
+        statement: exp.Query,
+        plan: QueryPlan,
+        question: str,
+        *,
+        authorize_user_filters: bool = True,
+    ) -> list[str]:
+        """WHERE 里的每个字段都必须在计划里声明过，且 user 来源的要在问题里出现。
+
+        `authorize_user_filters=False` 只跳过"用户问题里出现过"这一条。补充查询的
+        "问题"是模型自己写的用途说明，不可能包含字段级细节，拿它当授权依据必然误判。
+        "每个过滤字段都必须在计划里声明"这条**不跳过**——它保证证据没有被无声地
+        缩小范围，而且声明会存进 artifact 和 Langfuse，事后可审计。
+        """
+
+        errors: list[str] = []
         system_fields = {"company_id"}
         metric_fields = {"state", "display_type"}
         question_fields = self._question_filter_fields(question)
@@ -419,18 +483,57 @@ class ReadOnlySqlGuard:
                 errors.append(f"过滤字段 {field} 不能标记为 system_required。")
             elif query_filter.source == "metric_rule" and field not in metric_fields:
                 errors.append(f"过滤字段 {field} 不是已登记的指标口径规则。")
-            elif query_filter.source == "user" and field not in question_fields:
+            elif (
+                authorize_user_filters
+                and query_filter.source == "user"
+                and field not in question_fields
+            ):
                 errors.append(f"用户问题没有授权过滤字段 {field}。")
 
         allowed_where_fields = system_fields | metric_fields | declared_fields
         if has_declared_time_range:
             allowed_where_fields.add("date_order")
+        # 对聚合结果的别名做筛选（HAVING sales_amount > 0）不是"隐藏的物理列过滤"，
+        # 它筛的是算出来的值；别名背后的真实列已经被字段白名单查过了。
+        allowed_where_fields |= {
+            str(projection.alias).casefold()
+            for select in statement.find_all(exp.Select)
+            for projection in select.expressions
+            if projection.alias
+        }
         for where in statement.find_all(exp.Where):
             for column in where.find_all(exp.Column):
                 field = column.name.casefold()
                 if field not in allowed_where_fields:
                     errors.append(f"SQL 包含 QueryPlan 未声明的过滤字段：{field}。")
         return errors
+
+    @staticmethod
+    def _cte_output_columns(cte: exp.CTE) -> set[str]:
+        """取一个 CTE 对外暴露的列名。
+
+        优先用 `WITH x(a, b) AS ...` 里显式声明的列名；没有就取内部 SELECT 的投影
+        别名。两者都拿不到（例如内部是 SELECT *）时返回空集合，调用方据此放行。
+        """
+
+        declared = cte.args.get("alias")
+        columns = getattr(declared, "columns", None) if declared is not None else None
+        if columns:
+            return {str(item.alias_or_name).casefold() for item in columns if item.alias_or_name}
+
+        inner = cte.this if isinstance(cte.this, exp.Select) else cte.this.find(exp.Select)
+        if inner is None:
+            return set()
+        names = {
+            str(projection.alias_or_name).casefold()
+            for projection in inner.expressions
+            if projection.alias_or_name
+        }
+        # 含 SELECT * 时列名不可枚举，返回空集合表示"无法校验"。
+        if any(isinstance(item, exp.Star) or getattr(item, "is_star", False)
+               for item in inner.expressions):
+            return set()
+        return names
 
     @staticmethod
     def _has_product_name_fallback(final_select: exp.Select) -> bool:

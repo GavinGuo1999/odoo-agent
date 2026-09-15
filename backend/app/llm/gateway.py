@@ -202,9 +202,24 @@ class LLMGateway:
             input_tokens = usage.prompt_tokens if usage else None
             output_tokens = usage.completion_tokens if usage else None
             total_tokens = usage.total_tokens if usage else None
+            # DeepSeek 在 usage 里回 prompt_cache_hit_tokens，命中缓存的输入便宜得多。
+            # 不区分就会系统性高估成本——同一段 system prompt 每轮都在命中。
+            # 字段名各家不同且可能缺失，取不到就当没有命中。
+            cached_input_tokens = None
+            for field in ("prompt_cache_hit_tokens", "cached_tokens"):
+                value = getattr(usage, field, None) if usage else None
+                if isinstance(value, int):
+                    cached_input_tokens = value
+                    break
+            if cached_input_tokens is None and usage is not None:
+                details = getattr(usage, "prompt_tokens_details", None)
+                value = getattr(details, "cached_tokens", None)
+                if isinstance(value, int):
+                    cached_input_tokens = value
             input_cost, output_cost = active_config.estimated_cost_usd(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
             )
             update_observation(
                 observation,
@@ -214,6 +229,7 @@ class LLMGateway:
                     "input": input_tokens or 0,
                     "output": output_tokens or 0,
                     "total": total_tokens or 0,
+                    "cache_read_input_tokens": cached_input_tokens or 0,
                 },
                 cost_details={
                     "input": input_cost,

@@ -27,8 +27,17 @@ class ProviderConfig:
     timeout_seconds: float
     input_price_per_million: float = 0.0
     output_price_per_million: float = 0.0
+    # 命中提示缓存的输入 token 单价。留 0 表示"不区分"，按 input 全价算。
+    cached_input_price_per_million: float = 0.0
     pricing_currency: Literal["USD", "CNY"] = "USD"
     cny_per_usd: float = 7.2
+    # 分时折扣（DeepSeek 的谷时优惠是这种形式）。窗口按 Asia/Shanghai 的墙钟时间，
+    # 允许跨零点（start > end 时表示"当天 start 到次日 end"）。
+    # 折扣留 1.0 = 不打折，也就是保持改动前的行为。
+    offpeak_start_hhmm: str = ""
+    offpeak_end_hhmm: str = ""
+    offpeak_input_multiplier: float = 1.0
+    offpeak_output_multiplier: float = 1.0
     thinking_mode: ThinkingMode = "auto"
     max_retries: int = 1
     retry_backoff_seconds: float = 0.5
@@ -37,14 +46,52 @@ class ProviderConfig:
     def configured(self) -> bool:
         return bool(self.api_key and self.base_url and self.model)
 
+    def in_offpeak_window(self, moment: datetime | None = None) -> bool:
+        """当前是否落在谷时窗口内。窗口未配置时恒为 False。"""
+
+        if not (self.offpeak_start_hhmm and self.offpeak_end_hhmm):
+            return False
+        try:
+            start = _parse_hhmm(self.offpeak_start_hhmm)
+            end = _parse_hhmm(self.offpeak_end_hhmm)
+        except ValueError:
+            return False
+        now = (moment or datetime.now(_PRICING_TZ)).astimezone(_PRICING_TZ)
+        minutes = now.hour * 60 + now.minute
+        if start <= end:
+            return start <= minutes < end
+        # 跨零点：例如 00:30~08:30 之外的写法 23:00~07:00。
+        return minutes >= start or minutes < end
+
     def estimated_cost_usd(
         self,
         *,
         input_tokens: int | None,
         output_tokens: int | None,
+        cached_input_tokens: int | None = None,
+        moment: datetime | None = None,
     ) -> tuple[float, float]:
-        input_cost = (input_tokens or 0) * self.input_price_per_million / 1_000_000
-        output_cost = (output_tokens or 0) * self.output_price_per_million / 1_000_000
+        """估算一次调用的成本。
+
+        三件事以前没做，会让账单和这里的数字对不上：
+          1. 谷时折扣——按墙钟时间打折，而不是全天一个价；
+          2. 提示缓存命中的输入 token 单价远低于未命中，混在一起会高估；
+          3. 折扣只作用于单价，不改变币种换算。
+        """
+
+        billed_input = max(0, (input_tokens or 0) - (cached_input_tokens or 0))
+        cached = max(0, cached_input_tokens or 0)
+        cached_rate = self.cached_input_price_per_million or self.input_price_per_million
+
+        input_rate = self.input_price_per_million
+        output_rate = self.output_price_per_million
+        if self.in_offpeak_window(moment):
+            input_rate *= self.offpeak_input_multiplier
+            output_rate *= self.offpeak_output_multiplier
+            cached_rate *= self.offpeak_input_multiplier
+
+        input_cost = (billed_input * input_rate + cached * cached_rate) / 1_000_000
+        output_cost = (output_tokens or 0) * output_rate / 1_000_000
         if self.pricing_currency == "CNY":
             input_cost /= self.cny_per_usd
             output_cost /= self.cny_per_usd
@@ -149,6 +196,19 @@ class Settings(BaseSettings):
     )
     api_prefix: str = "/api"
 
+    # 演示门禁：留空 = 不启用（本机开发保持零摩擦）。存的是 PBKDF2 派生值，
+    # 不是明文；用 `python -m app.security.session_gate` 生成。
+    ui_password_hash: str = Field(
+        default="",
+        validation_alias="AGENT_UI_PASSWORD_HASH",
+    )
+    ui_session_ttl_seconds: int = Field(
+        default=12 * 3600,
+        ge=60,
+        le=7 * 24 * 3600,
+        validation_alias="AGENT_UI_SESSION_TTL_SECONDS",
+    )
+
     llm_provider: ProviderName = Field(
         default="deepseek",
         validation_alias="LLM_PROVIDER",
@@ -193,6 +253,29 @@ class Settings(BaseSettings):
         default=0.87,
         ge=0,
         validation_alias="DEEPSEEK_OUTPUT_PRICE_PER_MILLION",
+    )
+    deepseek_cached_input_price_per_million: float = Field(
+        default=0.0,
+        ge=0,
+        validation_alias="DEEPSEEK_CACHED_INPUT_PRICE_PER_MILLION",
+    )
+    # 谷时窗口与折扣。**默认不打折**——供应商的档位会变，写死在代码里迟早对不上账，
+    # 这里只提供机制，具体数值按当时的官方价目表填进环境变量。
+    deepseek_offpeak_start: str = Field(
+        default="",
+        validation_alias="DEEPSEEK_OFFPEAK_START",
+    )
+    deepseek_offpeak_end: str = Field(
+        default="",
+        validation_alias="DEEPSEEK_OFFPEAK_END",
+    )
+    deepseek_offpeak_input_multiplier: float = Field(
+        default=1.0, ge=0, le=1,
+        validation_alias="DEEPSEEK_OFFPEAK_INPUT_MULTIPLIER",
+    )
+    deepseek_offpeak_output_multiplier: float = Field(
+        default=1.0, ge=0, le=1,
+        validation_alias="DEEPSEEK_OFFPEAK_OUTPUT_MULTIPLIER",
     )
 
     siliconflow_api_key: SecretStr | None = Field(
@@ -422,6 +505,11 @@ class Settings(BaseSettings):
                 timeout_seconds=self.llm_timeout_seconds,
                 input_price_per_million=self.deepseek_input_price_per_million,
                 output_price_per_million=self.deepseek_output_price_per_million,
+                cached_input_price_per_million=self.deepseek_cached_input_price_per_million,
+                offpeak_start_hhmm=self.deepseek_offpeak_start,
+                offpeak_end_hhmm=self.deepseek_offpeak_end,
+                offpeak_input_multiplier=self.deepseek_offpeak_input_multiplier,
+                offpeak_output_multiplier=self.deepseek_offpeak_output_multiplier,
                 pricing_currency="USD",
                 cny_per_usd=self.cny_per_usd,
                 thinking_mode=thinking_mode,

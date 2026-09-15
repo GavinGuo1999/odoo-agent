@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
+from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -28,9 +29,11 @@ from app.schemas import (
     ChatConversationSummary,
     ChatFeedbackRequest,
     ChatFeedbackResponse,
+    ChatMessageArtifact,
     ChatRequest,
     ChatResponse,
     ChatResumeRequest,
+    ChatSessionMessage,
     ChatSessionView,
     InterruptInfo,
     TokenUsage,
@@ -165,6 +168,32 @@ def _response_from_outcome(
         answer_mode=outcome.answer_mode,
         model_roles=outcome.model_roles,
         citations=outcome.citations,
+    )
+
+
+def _session_message(message: dict[str, Any]) -> ChatSessionMessage:
+    """把存下来的 artifact 补上展示层字段，还原成前端认识的形状。
+
+    列标签/格式/指标名不进检查点，每次读取按当前规则重算——改了展示规则，
+    老会话也会跟着变。
+    """
+
+    artifact = message.get("artifact")
+    if not artifact:
+        return ChatSessionMessage(role=message["role"], content=message["content"])
+    column_labels, column_formats, metric_labels = presentation_metadata(
+        artifact.get("columns", []),
+        artifact.get("metrics", []),
+    )
+    return ChatSessionMessage(
+        role=message["role"],
+        content=message["content"],
+        artifact=ChatMessageArtifact.model_validate({
+            **artifact,
+            "column_labels": column_labels,
+            "column_formats": column_formats,
+            "metric_labels": metric_labels,
+        }),
     )
 
 
@@ -472,7 +501,7 @@ async def read_chat_session(
         )
     return ChatSessionView(
         session_id=session_id,
-        history=history,
+        history=[_session_message(message) for message in history],
         pending_interrupt=InterruptInfo.model_validate(pending) if pending else None,
         persistence_mode=store.mode,
         run_status=(

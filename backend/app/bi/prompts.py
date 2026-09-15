@@ -95,10 +95,30 @@ def sql_generation_prompt(
       "requires_clarification": false,
       "clarification_question": null
     }},
-    "sql": "..."
+    "sql": "...",
+    "followups": []
   }}
 - sql 只能是一条 SELECT 或 WITH...SELECT。
+- **followups：当问题里有"为什么/原因/是哪些"时，你必须先问自己一句——主查询的输出列
+  足够回答它吗？不够就必须在 followups 里补上取得证据的查询，最多 2 条。**
+  形如 {{"name":"简短标识","purpose":"这份数据用来支撑答案的哪一句","plan":{{同上结构}},"sql":"..."}}。
+  判据很简单：如果你打算在答案里写"可能是""推测""暗示"，或者写"当前数据无法判断"，
+  那就说明该补一条 followup 而你没补。宁可多查一次，也不要给没有数据支撑的归因。
+  典型：主查询是各月销售额 → followup 查最低那个月的客户构成、或产品构成。
+  纯取数问题（"销售额是多少""按月列出"）留空数组。
+  补充查询与主查询受完全相同的约束：同样的表、字段、company_id 过滤和 plan 契约；
+  它们不参与画图，只作为答案的证据。
+  sale_order.amount_untaxed 是订单粒度金额。连接 sale_order_line 后禁止继续 SUM 这个字段，
+  否则一张订单会按明细行数重复累计。没有开放订单行金额指标时，不生成产品金额归因，
+  优先用客户、订单数、客单价等订单粒度证据。
+  对“月销售额为什么下降”，第一条原因查询优先只用 sale_order，按月返回
+  order_count、sales_amount、average_order_value、max_order_value；不要生成订单明细，
+  不要使用 product、salesperson、res_users 或 sale_order_line。需要第二条时再用
+  sale_order JOIN res_partner 做客户金额构成。
 - 只能使用 semantic_context 中列出的表、字段、关系和口径。
+- 用户明确提出的筛选条件如果在 semantic_context 中没有对应字段，必须设置
+  requires_clarification=true、说明缺少哪个业务字段并让 sql 为空；禁止自造字段，也禁止
+  为了让 SQL 通过而静默丢掉用户的筛选条件。
 - 禁止 SELECT *；必须给展示字段使用清晰的中文或英文别名。
 - 所有销售查询必须显式包含 required_company_id 对应的 company_id 等值过滤。
 - 销售额和订单数默认只统计 semantic_context 指标给出的订单状态。
@@ -111,6 +131,8 @@ def sql_generation_prompt(
 - 时间分组使用 semantic_context 的 timezone 和 date_field。
 - 当前日期是 {current_date}。time_range.start/end 只能是据此计算出的 YYYY-MM-DD 或 null；禁止在这两个元数据字段中写 CURRENT_DATE、date_trunc 或 interval 等 SQL 表达式。
 - 时间趋势字段统一使用 day、week、month、quarter 或 year 作为别名；“每月/月度”问题必须返回 month 列并按它升序排列。
+- “今年/本年”的月度环比必须从上年 12 月开始扫描，以它作为今年 1 月的环比基准；
+  最终展示或排名只保留今年月份。QueryPlan.time_range.start 必须写上年 12 月 1 日。
 - JSONB 多语言名称优先使用 ->>'zh_CN'，并回退到 ->>'en_US'。
 - 不要写解释，不要猜不存在的列。
 - 时间范围、客户、产品或比较基准确实缺失且无法按默认口径推断时，设置 requires_clarification=true，写一个简短具体的问题，并让 sql 为空字符串。
@@ -174,13 +196,26 @@ def sql_repair_prompt(
     "requires_clarification": false,
     "clarification_question": null
   }},
-  "sql": "修复后的单条 SELECT"
+  "sql": "修复后的单条 SELECT",
+  "followups": []
 }}
 保持原问题和指标口径不变，只修复下面列出的错误。仍须满足 company_id、字段白名单、禁止 SELECT * 和只读要求。
+用户明确提出的筛选条件如果在 semantic_context 中没有对应字段，必须改为
+requires_clarification=true 并让 sql 为空；禁止自造字段，也禁止静默删除该筛选条件。
 当前日期是 {current_date}；time_range.start/end 只能是 YYYY-MM-DD 或 null，不能写 SQL 表达式。
+“今年/本年”的月度环比必须从上年 12 月开始扫描，以它作为今年 1 月的环比基准；
+最终展示或排名只保留今年月份。QueryPlan.time_range.start 必须写上年 12 月 1 日。
 filters 必须完整声明 SQL WHERE 条件及 source；select_columns、sort、row_limit 必须与最终 SQL 一致。明确 Top N 的 result_shape 必须为 ranking 且 row_limit 必须等于 LIMIT；未指定 N 的完整排名使用 ranking、row_limit=null 且不写 SQL LIMIT。
 dimensions 使用 month、quarter、year、customer、product、salesperson 等稳定语义 ID，不使用中文展示名；query_type 必须按原问题的 KPI、趋势、排行、明细或比较目标保持不变。
 如果问题要求各产品销售数量与已开票数量的差额，必须完整保留 `product`、`sales_quantity`、`invoiced_quantity`、`uninvoiced_quantity` 四列及三个数量 metric_ids，不能只返回差额列。
+如果原问题包含“为什么”或“原因”，而主查询不能提供归因证据，followups 必须包含 1—2 条补充查询；
+每条结构为 {{"name":"标识","purpose":"支撑哪一句结论","plan":{{完整 QueryPlan}},"sql":"单条只读查询"}}。
+修复主查询时不能无声地丢弃原因分析。sale_order.amount_untaxed 是订单粒度金额；连接
+sale_order_line 后禁止 SUM 它。没有开放订单行金额指标时，改查客户、订单数或客单价。
+对“月销售额为什么下降”，第一条原因查询优先只用 sale_order，按月返回 order_count、
+sales_amount、average_order_value、max_order_value；不要生成订单明细，不要使用 product、
+salesperson、res_users 或 sale_order_line。需要第二条时再用 sale_order JOIN res_partner
+做客户金额构成。
 
 <question>{question}</question>
 <errors>{errors_json}</errors>
@@ -258,9 +293,12 @@ def answer_synthesis_prompt(
     data_profile: dict[str, object] | None = None,
     knowledge_context: str = "",
     hybrid: bool = False,
+    auxiliary_results: list[dict[str, object]] | None = None,
 ) -> str:
     payload = {
         "question": question,
+        # 补充查询的结果。回答"原因"时必须引用这里的数字，不能凭空归因。
+        "auxiliary_results": auxiliary_results or [],
         "currency": currency,
         "metric_ids": metric_ids,
         "sql": sql,

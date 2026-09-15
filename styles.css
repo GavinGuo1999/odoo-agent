@@ -2371,3 +2371,82 @@ p.assistant-answer {
 .status-dot.ok { background: var(--green); }
 .status-dot.warn { background: var(--yellow); }
 .status-dot.bad { background: var(--danger); }
+
+/* ---------- 演示门禁 ---------- */
+/* 未登录时盖住整页：背后的骨架不该被看到，也不该被误点。 */
+body.auth-locked {
+  overflow: hidden;
+}
+
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(160deg, #2b1f2b 0%, #4a3348 55%, #714b67 100%);
+}
+
+.auth-card {
+  width: min(360px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 28px 26px 24px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(20, 12, 20, .38);
+}
+
+.auth-title {
+  font-size: 20px;
+  letter-spacing: .2px;
+}
+
+.auth-hint {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #746b77;
+}
+
+.auth-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #574f59;
+}
+
+.auth-input {
+  padding: 10px 12px;
+  font-size: 14px;
+  border: 1px solid #ddd5de;
+  border-radius: 8px;
+  background: #fbf9fb;
+}
+
+.auth-input:focus {
+  outline: 2px solid #714b67;
+  outline-offset: 1px;
+  background: #fff;
+}
+
+.auth-submit {
+  margin-top: 4px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #fff;
+  background: #714b67;
+  border: none;
+}
+
+.auth-submit:disabled {
+  opacity: .6;
+  cursor: progress;
+}
+
+.auth-error {
+  margin: 2px 0 0;
+  min-height: 18px;
+  font-size: 12.5px;
+  color: #b0322f;
+}
