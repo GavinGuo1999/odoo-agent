@@ -1,0 +1,163 @@
+cubes:
+  - name: res_partner
+    sql_table: public.res_partner
+    description: 客户与联系人。
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+      - name: name
+        sql: name
+        type: string
+        title: 客户
+      - name: commercial_partner_id
+        sql: commercial_partner_id
+        type: number
+      - name: customer_rank
+        sql: customer_rank
+        type: number
+      - name: is_company
+        sql: is_company
+        type: boolean
+      - name: active
+        sql: active
+        type: boolean
+
+  - name: res_users
+    sql_table: public.res_users
+    description: Odoo 用户。销售员姓名要经 partner_id 连到 res_partner，本表不开放登录与口令字段。
+    joins:
+      - name: res_partner
+        sql: "{CUBE}.partner_id = {res_partner}.id"
+        relationship: many_to_one
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+      - name: partner_id
+        sql: partner_id
+        type: number
+      - name: company_id
+        sql: company_id
+        type: number
+      - name: active
+        sql: active
+        type: boolean
+      - name: share
+        sql: share
+        type: boolean
+
+  - name: res_company
+    sql_table: public.res_company
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+      - name: name
+        sql: name
+        type: string
+      - name: currency_id
+        sql: currency_id
+        type: number
+
+  - name: res_currency
+    sql_table: public.res_currency
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+      - name: name
+        sql: name
+        type: string
+      - name: symbol
+        sql: symbol
+        type: string
+      - name: position
+        sql: position
+        type: string
+      - name: rounding
+        sql: rounding
+        type: number
+
+  - name: product_product
+    sql_table: public.product_product
+    joins:
+      - name: product_template
+        sql: "{CUBE}.product_tmpl_id = {product_template}.id"
+        relationship: many_to_one
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+      - name: product_tmpl_id
+        sql: product_tmpl_id
+        type: number
+      - name: default_code
+        sql: default_code
+        type: string
+      - name: active
+        sql: active
+        type: boolean
+
+  - name: product_template
+    sql_table: public.product_template
+    description: 产品模板。name 是 JSONB 译名列。
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+      # 项目的守卫有一条产品名契约：产品维度的展示名必须写成
+      # COALESCE(name->>'zh_CN', name->>'en_US')，否则中文环境下拿到空值或英文名。
+      # 把这条口径直接编进维度定义，Cube 编译出来的 SQL 才可能过守卫。
+      - name: name
+        sql: "COALESCE({CUBE}.name->>'zh_CN', {CUBE}.name->>'en_US')"
+        type: string
+        title: 产品
+      - name: categ_id
+        sql: categ_id
+        type: number
+      - name: uom_id
+        sql: uom_id
+        type: number
+      - name: company_id
+        sql: company_id
+        type: number
+      - name: list_price
+        sql: list_price
+        type: number
+      - name: sale_ok
+        sql: sale_ok
+        type: boolean
+      - name: active
+        sql: active
+        type: boolean
+      - name: type
+        sql: type
+        type: string
+
+  - name: uom_uom
+    sql_table: public.uom_uom
+    description: 计量单位。name 是 JSONB 译名列，同样需要 zh_CN 优先、en_US 回退。
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+      - name: name
+        sql: "COALESCE({CUBE}.name->>'zh_CN', {CUBE}.name->>'en_US')"
+        type: string
+      - name: relative_factor
+        sql: relative_factor
+        type: number
+      - name: factor
+        sql: factor
+        type: number
+      - name: active
+        sql: active
+        type: boolean

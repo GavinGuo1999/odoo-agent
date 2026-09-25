@@ -14,6 +14,7 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.bi import SalesAgent, classify_intent  # noqa: E402
 from app.bi.agent import normalize_query_text  # noqa: E402
+from app.bi.domain import single_domain_registry  # noqa: E402
 from app.config import DatabaseConfig, ProviderConfig  # noqa: E402
 from app.database import DatabaseConnectionError, DatabaseHealth, QueryResult  # noqa: E402
 from app.llm import LLMResult  # noqa: E402
@@ -243,7 +244,7 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
             agent._database.discover_columns = AsyncMock(
                 return_value={
                     table: [{"name": column, "type": "text"} for column in columns]
-                    for table, columns in agent._semantics.table_columns.items()
+                    for table, columns in agent._domains.default.table_columns.items()
                 }
             )
             agent._database.execute_readonly = AsyncMock(
@@ -322,7 +323,7 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
             agent._database.discover_columns = AsyncMock(
                 return_value={
                     table: [{"name": column, "type": "text"} for column in columns]
-                    for table, columns in agent._semantics.table_columns.items()
+                    for table, columns in agent._domains.default.table_columns.items()
                 }
             )
             agent._database.execute_readonly = AsyncMock(
@@ -386,7 +387,7 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
             agent._database.discover_columns = AsyncMock(
                 return_value={
                     table: [{"name": column, "type": "text"} for column in columns]
-                    for table, columns in agent._semantics.table_columns.items()
+                    for table, columns in agent._domains.default.table_columns.items()
                 }
             )
             agent._database.execute_readonly = AsyncMock(
@@ -432,7 +433,7 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
             agent._database.discover_columns = AsyncMock(
                 return_value={
                     table: [{"name": column, "type": "text"} for column in columns]
-                    for table, columns in agent._semantics.table_columns.items()
+                    for table, columns in agent._domains.default.table_columns.items()
                 }
             )
             agent._database.execute_readonly = AsyncMock()
@@ -487,7 +488,7 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
             agent._database.discover_columns = AsyncMock(
                 return_value={
                     table: [{"name": column, "type": "text"} for column in columns]
-                    for table, columns in agent._semantics.table_columns.items()
+                    for table, columns in agent._domains.default.table_columns.items()
                 }
             )
             agent._database.execute_readonly = AsyncMock(
@@ -536,7 +537,7 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
             agent._database.discover_columns = AsyncMock(
                 return_value={
                     table: [{"name": column, "type": "text"} for column in columns]
-                    for table, columns in agent._semantics.table_columns.items()
+                    for table, columns in agent._domains.default.table_columns.items()
                 }
             )
             agent._database.execute_readonly = AsyncMock()
@@ -589,7 +590,7 @@ class SalesAgentTests(unittest.IsolatedAsyncioTestCase):
             agent._database.discover_columns = AsyncMock(
                 return_value={
                     table: [{"name": column, "type": "text"} for column in columns]
-                    for table, columns in agent._semantics.table_columns.items()
+                    for table, columns in agent._domains.default.table_columns.items()
                 }
             )
             agent._database.execute_readonly = AsyncMock(
@@ -848,7 +849,10 @@ class QueryNormalizationTests(unittest.IsolatedAsyncioTestCase):
         agent._routing = Mock(
             general=Mock(name="deepseek", model="deepseek-chat")
         )
-        agent._semantics = Mock(name="native", version="test-v1")
+        agent._domains = single_domain_registry(
+            semantics=Mock(name="native", version="test-v1"),
+            guard=Mock(),
+        )
 
         state = await SalesAgent._initial_state(
             agent,
@@ -863,8 +867,9 @@ class QueryNormalizationTests(unittest.IsolatedAsyncioTestCase):
 
     def test_known_macro_region_without_semantic_field_requires_clarification(self) -> None:
         agent = SalesAgent.__new__(SalesAgent)
-        agent._semantics = Mock(
-            table_columns={"res_partner": ["id", "name"]}
+        agent._domains = single_domain_registry(
+            semantics=Mock(table_columns={"res_partner": ["id", "name"]}),
+            guard=Mock(),
         )
 
         result = SalesAgent._detect_data_ambiguity(

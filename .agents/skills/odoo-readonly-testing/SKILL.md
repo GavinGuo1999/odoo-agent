@@ -32,3 +32,20 @@ Prior authorization applies only to the stated environment and operation. A read
 - Keep automated correctness separate from user UAT. A green test cannot approve business meaning or visual usefulness.
 - When a live batch is interrupted by the test host, distinguish infrastructure interruption from a failed case and resume only the unexecuted cases.
 - Update the TDD matrix when the gate, test count, or real before/after evidence changes.
+
+## USE FOR / DO NOT USE FOR
+
+**USE FOR:**
+
+- "跑一下后端全量测试" / run the backend unit suite
+- "跑黄金集" / run the sales or crm golden set
+- "这个改动要什么证据才算过" / what evidence does this change need
+- "做一次只读真实回归" / run a read-only live regression
+- "浏览器 smoke 检查" / browser smoke check
+- "整理 TDD 红绿灯证据" / assemble red/green/yellow acceptance evidence
+
+**DO NOT USE FOR:**
+
+- 自行授权付费模型调用或真实评测额度
+- 任何数据库写入
+- 代替用户在验收单上签字

@@ -12,7 +12,7 @@ config:
   parallel: false
   inject_skill_body: true
   skill_directories:
-    - .agents/skills/odoo-rag-evaluation
+    - ../../../.agents/skills/odoo-rag-evaluation
   required_skills:
     - odoo-rag-evaluation
 metrics:

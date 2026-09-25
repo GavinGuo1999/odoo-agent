@@ -35,3 +35,21 @@ Make scoped workflow changes without weakening the project's read-only and evide
 6. Update the workflow, security, evaluation, or TDD documentation when a contract or gate changes.
 
 Use the standard verification commands in [development and operations](../../../docs/10-development-and-operations.md). Report what changed, what passed, and which business decisions still require user UAT.
+
+## USE FOR / DO NOT USE FOR
+
+**USE FOR:**
+
+- "改 LangGraph 的节点 / 边 / 状态" / change a graph node, edge, or state field
+- "QueryPlan 协议或 SQL 修复循环出问题了" / fix the QueryPlan contract or the SQL repair loop
+- "Text2SQL 生成的语句不对" / the generated SQL is wrong
+- "图表规划 / ChartPlan 回退" / chart planning and its deterministic fallback
+- "Wren 语义编译节点" / the Wren semantic-compilation node
+- "Interrupt 后恢复不了" / resume after an interrupt
+
+**DO NOT USE FOR:**
+
+- CRM 指标口径（归 `$odoo-crm-semantics`）
+- 域包、域路由、跨域编排（归 `$odoo-multiagent-orchestration`）
+- Wiki 检索与 RAG 评测（归 `$odoo-rag-evaluation`）
+- 与本工作流无关的 Odoo addon 开发

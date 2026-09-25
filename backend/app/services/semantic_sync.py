@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from app.bi.semantic import SalesSemanticLayer
+from app.bi.semantic import KNOWN_DOMAINS, SalesSemanticLayer, SemanticLayer
 from app.config import DatabaseConfig, SemanticSyncConfig
 from app.database import OdooDatabase
 
@@ -28,7 +28,26 @@ ODOO_MODEL_BY_TABLE = {
     "res_company": "res.company",
     "res_currency": "res.currency",
     "uom_uom": "uom.uom",
+    # CRM 域（docs/23 §2.3）
+    "crm_lead": "crm.lead",
+    "crm_stage": "crm.stage",
+    "crm_team": "crm.team",
+    "crm_lost_reason": "crm.lost.reason",
+    "crm_tag": "crm.tag",
+    "utm_source": "utm.source",
+    "utm_medium": "utm.medium",
+    "utm_campaign": "utm.campaign",
 }
+
+# 纯多对多关系表：它们**没有对应的 Odoo 模型**，是 ORM 由 Many2many 字段自动建的。
+#
+# 四源审计的其中两源（ORM 与源码扫描）都以模型类为单位，对这类表无从下手；
+# 硬给它们编一个模型名会让审计报告出现一条永远对不上的差异，
+# 把真正的问题淹掉。所以显式排除，并在报告里说明原因，而不是假装审过了。
+RELATION_TABLES_WITHOUT_MODEL = frozenset({
+    "crm_tag_rel",
+    "crm_stage_crm_team_rel",
+})
 
 _POSTGRES_TO_WREN = {
     "bigint": "BIGINT",
@@ -70,8 +89,25 @@ class SourceScanResult:
 
 
 def _scope() -> dict[str, dict[str, Any]]:
-    semantics = SalesSemanticLayer.load()
-    missing_models = set(semantics.table_columns) - set(ODOO_MODEL_BY_TABLE)
+    """审计范围 = 所有已注册业务域开放的表（去掉无模型的关系表）。
+
+    共享表（res_partner 等）在两个域各自声明，这里按表名合并；
+    `test_crm_semantics` 已经断言过共享表在两域的字段集合一致，
+    所以合并不会掩盖差异。
+    """
+    tables: dict[str, list[str]] = {}
+    descriptions: dict[str, str] = {}
+    for domain in KNOWN_DOMAINS:
+        layer = SemanticLayer.load(domain)
+        for table, columns in layer.table_columns.items():
+            if table in RELATION_TABLES_WITHOUT_MODEL:
+                continue
+            merged = dict.fromkeys(tables.get(table, []))
+            merged.update(dict.fromkeys(columns))
+            tables[table] = list(merged)
+            descriptions.setdefault(table, layer.table_description(table))
+
+    missing_models = set(tables) - set(ODOO_MODEL_BY_TABLE)
     if missing_models:
         raise SemanticSyncError(
             "Odoo model mapping is missing for: " + ", ".join(sorted(missing_models))
@@ -80,9 +116,9 @@ def _scope() -> dict[str, dict[str, Any]]:
         table: {
             "odoo_model": ODOO_MODEL_BY_TABLE[table],
             "columns": columns,
-            "description": semantics.table_description(table),
+            "description": descriptions[table],
         }
-        for table, columns in semantics.table_columns.items()
+        for table, columns in tables.items()
     }
 
 

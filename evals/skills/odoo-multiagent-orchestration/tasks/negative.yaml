@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/task.schema.json
+id: multiagent-negative
+name: Single-domain SQL repair should not trigger
+description: QueryPlan repair inside one domain belongs to the workflow development skill.
+inputs:
+  prompt: Fix the QueryPlan repair loop so a duplicated SQL fingerprint stops the retry inside the sales Text2SQL chain.
+expected:
+  should_trigger: false
+graders:
+  - type: trigger
+    name: multiagent_negative_trigger
+    config:
+      skill_path: .agents/skills/odoo-multiagent-orchestration/SKILL.md
+      mode: negative
+      threshold: 0.55

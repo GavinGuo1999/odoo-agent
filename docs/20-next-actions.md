@@ -11,7 +11,13 @@
 - 所有命令必须在 **Windows PowerShell** 中执行，解释器为 `D:\odoo19e\odoo-agent\.venv\Scripts\python.exe`。
 - 评测依赖已全部安装，**不需要再 `pip install`**：`ragas 0.4.3`、`langchain-community 0.3.31`、`faiss-cpu 1.15.0`、`llama-index-core 0.14.24`、`llama-index-vector-stores-faiss 0.7.0`。
 - Wiki 向量索引由 `_ensure_vector_index` 在首次 hybrid 检索时按需构建。**索引文件不存在只说明未执行过，不说明不可执行。**
-- Waza CLI 未安装。官方 Windows 安装脚本走 GitHub API，共享出口 IP 易触发未认证限流；换代理节点或等配额重置即可。当前判断为低优先，见第 4 节。
+- ~~Waza CLI 未安装~~ **已解决（2026-09-17）**：装的是 `v0.38.7`，校验和已核对，位置
+  `%LOCALAPPDATA%\Microsoft\Waza\waza.exe`。当初的障碍判断只对了一半——官方
+  `install.ps1` 确实走未认证 GitHub API 并在本机出口地址 403（已复现），
+  但**不需要换代理节点或等配额**：本机 `gh` 已认证，认证请求不受该限制，
+  用 `gh release download` 直取资产即可。复现命令与实测结果见
+  [17 §5](17-project-skills-and-waza.md)。首次运行即找出 3 个自研测试发现不了的问题，
+  其中一个让 5 份评测**从写下来那天起就跑不了**。
 - 生产栈相关改动本轮暂缓（用户明确 devops 先不管），但第 3.7 条记录了必须改的配置错误。
 
 ## 2. 优先队列
@@ -260,7 +266,7 @@
 | 议题 | 结论 | 依据 |
 | --- | --- | --- |
 | 是否引入 RAGFlow | 不引入 | 语料 41 篇 / 605 chunk / 33.4 万字符，向量库不是瓶颈；RAGFlow 会丢掉 frontmatter 过滤、标题加权、双链扩展 |
-| 是否安装 Waza | 低优先，可不装 | mock 只验触发边界，已被 `test_project_skills.py` 覆盖；真实评测需 Copilot 订阅且验的是 Copilot 行为 |
+| ~~是否安装 Waza~~ | **这条结论错了，已推翻（2026-09-17）** | 原判断是"mock 只验触发边界，已被 `test_project_skills.py` 覆盖"。实际装上后首次运行就找出 3 个自研测试**按原理发现不了**的问题：5 份评测的路径基准全错（一直跑不了）、1 份 Skill 正例触发失败、本地 token 计数系统性偏高。教训：**"已被自研测试覆盖"这个判断本身需要用真工具验证一次**，否则只是假设。详见 [17 §5.1](17-project-skills-and-waza.md) |
 | 是否做 MCP | 排在最后 | 只读 MCP server 有价值，但属分发收益，不提升准确率 |
 | Wren 是否转正 | 保持非默认 | 慢 86%、贵 31%、通过率低 1.67 个点；价值在于作为对抗性 SQL 生成器暴露 Guard 缺陷 |
 | Wiki 是否进 SQL 生成 | 不进 | 与确定性 Guard 冲突且增加延迟；正确做法是把业务口径蒸馏进语义层 |

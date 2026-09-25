@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock
 
 from app.bi.agent import SalesAgent, _MAX_FOLLOWUP_QUERIES
+from app.bi.domain import single_domain_registry
 from app.database.sql_guard import ReadOnlySqlGuard
 from app.schemas.query_plan import FollowupQuery, QueryPlan, SqlGenerationPayload
 
@@ -206,7 +207,10 @@ class FollowupExecutionTests(unittest.IsolatedAsyncioTestCase):
             errors=[] if guard_safe else ["不允许访问数据表：res_users。"],
             tables=["sale_order"],
         )
-        agent._guard = Mock(validate=Mock(return_value=validation))
+        agent._domains = single_domain_registry(
+            semantics=Mock(),
+            guard=Mock(validate=Mock(return_value=validation)),
+        )
         agent._database = Mock(execute_readonly=execute or AsyncMock(
             return_value=Mock(columns=["customer"], rows=[{"customer": "A"}])
         ))
@@ -265,7 +269,7 @@ class FollowupExecutionTests(unittest.IsolatedAsyncioTestCase):
 
         await agent._run_followup_queries(state)
 
-        _, kwargs = agent._guard.validate.call_args
+        _, kwargs = agent._domains.default.guard.validate.call_args
         self.assertEqual(kwargs["question"], "列出这几个月的全部客户销售额构成")
         self.assertNotIn("三个月", kwargs["question"])
 

@@ -1,0 +1,185 @@
+cubes:
+  # ---------------------------------------------------------------- sale_order
+  #
+  # 用 sql_table 直接指物理表，**不要**用 `sql:` 写一段带 WHERE 的预过滤子查询。
+  # 理由：预过滤子查询会让 Cube 生成 `FROM (SELECT * FROM sale_order WHERE ...)`，
+  # 而项目的 ReadOnlySqlGuard 拒绝任何 `SELECT *`——那样编译出来的 SQL 一条都过不了。
+  # 口径里的 state 限定改成逐指标的 filters，见每个 measure。
+  - name: sale_order
+    sql_table: public.sale_order
+    description: 销售订单主表。每一行代表一张报价单或销售订单。
+
+    joins:
+      - name: res_partner
+        sql: "{CUBE}.partner_id = {res_partner}.id"
+        relationship: many_to_one
+      - name: res_users
+        sql: "{CUBE}.user_id = {res_users}.id"
+        relationship: many_to_one
+      - name: res_company
+        sql: "{CUBE}.company_id = {res_company}.id"
+        relationship: many_to_one
+      - name: res_currency
+        sql: "{CUBE}.currency_id = {res_currency}.id"
+        relationship: many_to_one
+
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+      - name: name
+        sql: name
+        type: string
+        description: 订单号
+      - name: state
+        sql: state
+        type: string
+        description: 订单状态。已确认口径只含 sale 与 done
+      - name: company_id
+        sql: company_id
+        type: number
+        description: 公司。项目要求所有销售查询必须限定 company_id
+      - name: partner_id
+        sql: partner_id
+        type: number
+      - name: user_id
+        sql: user_id
+        type: number
+      - name: currency_id
+        sql: currency_id
+        type: number
+      - name: delivery_status
+        sql: delivery_status
+        type: string
+      - name: invoice_status
+        sql: invoice_status
+        type: string
+      # 时间维度必须显式声明为 UTC，否则分桶和时间过滤都会错 8 小时。
+      #
+      # Odoo 把这些列存成 `timestamp without time zone`，装的是 UTC 裸值。
+      # Cube 生成的 SQL 会包一层 `CAST(<列> AS TIMESTAMPTZ) AT TIME ZONE 'UTC'`，
+      # 而 CAST 按**执行连接的会话时区**解释裸值——本机是 Asia/Shanghai，于是整整
+      # 减去 8 小时：月初 00:00–08:00 的订单被算进上个月，时间过滤的边界也跟着偏。
+      #
+      # 写成 `timezone('UTC', <列>)` 后，裸值被显式当作 UTC 转成 timestamptz，
+      # （用函数形式而不是 `AT TIME ZONE`：后者会被 Cube 的 SQL 生成器改写成
+      #   `AT TIME ZONE CAST('UTC' AS TIMESTAMPTZ)`，那是非法语法。）
+      # Cube 外面那层转换正好把它转回同一个裸值，一来一回抵消，与会话时区无关。
+      # 注意：改 Cube 自己的连接时区没有用——本项目只用 Cube 编译，
+      # 生成的 SQL 是项目自己的只读连接执行的。
+      - name: date_order
+        sql: "timezone('UTC', {CUBE}.date_order)"
+        type: time
+        description: 下单时间。全部 8 个指标的时间字段都是它
+      - name: commitment_date
+        sql: "timezone('UTC', {CUBE}.commitment_date)"
+        type: time
+      - name: effective_date
+        sql: "timezone('UTC', {CUBE}.effective_date)"
+        type: time
+
+    measures:
+      # 口径与 sales_semantics.json 逐字对应。states 用 filters 表达，
+      # 生成的是 SUM(CASE WHEN state IN (...) THEN ... END)，语义等价于
+      # 自研层的 WHERE state IN (...)，但不引入子查询。
+      - name: sales_amount
+        title: 销售额
+        description: 已确认销售额（不含税）
+        sql: amount_untaxed
+        type: sum
+        filters:
+          - sql: "{CUBE}.state IN ('sale', 'done')"
+
+      - name: tax_included_sales
+        title: 含税销售额
+        sql: amount_total
+        type: sum
+        filters:
+          - sql: "{CUBE}.state IN ('sale', 'done')"
+
+      - name: order_count
+        title: 订单数
+        sql: id
+        type: count_distinct
+        filters:
+          - sql: "{CUBE}.state IN ('sale', 'done')"
+
+      - name: average_order_value
+        title: 平均订单额
+        description: 销售额 ÷ 订单数，分母为 0 时返回空
+        sql: >
+          SUM(CASE WHEN {CUBE}.state IN ('sale', 'done')
+                   THEN {CUBE}.amount_untaxed END)
+          / NULLIF(COUNT(DISTINCT CASE WHEN {CUBE}.state IN ('sale', 'done')
+                                       THEN {CUBE}.id END), 0)
+        type: number
+
+  # ----------------------------------------------------------- sale_order_line
+  - name: sale_order_line
+    sql_table: public.sale_order_line
+    description: 销售订单行。数量类指标都在这一层，状态口径沿用所属订单的 state。
+
+    joins:
+      - name: sale_order
+        sql: "{CUBE}.order_id = {sale_order}.id"
+        relationship: many_to_one
+      - name: product_product
+        sql: "{CUBE}.product_id = {product_product}.id"
+        relationship: many_to_one
+      - name: uom_uom
+        sql: "{CUBE}.product_uom_id = {uom_uom}.id"
+        relationship: many_to_one
+
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+      - name: order_id
+        sql: order_id
+        type: number
+      - name: company_id
+        sql: company_id
+        type: number
+      - name: product_id
+        sql: product_id
+        type: number
+      - name: display_type
+        sql: display_type
+        type: string
+        description: 非空表示这是分节标题行，不是真实商品行
+      - name: state
+        sql: state
+        type: string
+
+    measures:
+      # 数量类指标的状态口径落在订单上（sale_order.state），与自研层一致。
+      - name: sales_quantity
+        title: 销售数量
+        sql: product_uom_qty
+        type: sum
+        filters:
+          - sql: "{sale_order}.state IN ('sale', 'done')"
+
+      - name: delivered_quantity
+        title: 交付数量
+        sql: qty_delivered
+        type: sum
+        filters:
+          - sql: "{sale_order}.state IN ('sale', 'done')"
+
+      - name: invoiced_quantity
+        title: 开票数量
+        sql: qty_invoiced
+        type: sum
+        filters:
+          - sql: "{sale_order}.state IN ('sale', 'done')"
+
+      - name: uninvoiced_quantity
+        title: 未开票数量
+        description: 销售数量减开票数量
+        sql: "{CUBE}.product_uom_qty - {CUBE}.qty_invoiced"
+        type: sum
+        filters:
+          - sql: "{sale_order}.state IN ('sale', 'done')"

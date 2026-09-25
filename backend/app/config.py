@@ -13,7 +13,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ProviderName = Literal["deepseek", "siliconflow"]
 ModelRole = Literal["sql", "answer", "general"]
-SemanticProviderName = Literal["native", "wren"]
+SemanticProviderName = Literal["native", "wren", "cube"]
 WikiRetrievalMode = Literal["lexical", "hybrid"]
 ThinkingMode = Literal["auto", "enabled", "disabled"]
 
@@ -151,6 +151,10 @@ class SemanticConfig:
     wren_project_path: Path
     wren_executable: str | None
     timeout_seconds: float
+    # Cube 是常驻服务而非 CLI，所以这里只需要一个地址；模型定义与数据库连接
+    # 都由 Cube 自己那份配置负责（见 app/bi/cube_project/cube.js）。
+    cube_base_url: str = "http://127.0.0.1:4000/cubejs-api/v1"
+    cube_api_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -352,6 +356,14 @@ class Settings(BaseSettings):
         ge=1.0,
         le=120.0,
         validation_alias="WREN_TIMEOUT_SECONDS",
+    )
+    cube_base_url: str = Field(
+        default="http://127.0.0.1:4000/cubejs-api/v1",
+        validation_alias="CUBE_BASE_URL",
+    )
+    cube_api_token: str | None = Field(
+        default=None,
+        validation_alias="CUBE_API_TOKEN",
     )
     odoo_source_path: str | None = Field(
         default=None,
@@ -605,11 +617,14 @@ class Settings(BaseSettings):
             else bundled_project
         )
         executable = self.wren_executable.strip() if self.wren_executable else None
+        token = self.cube_api_token.strip() if self.cube_api_token else None
         return SemanticConfig(
             provider=self.semantic_provider,
             wren_project_path=project_path,
             wren_executable=executable or None,
             timeout_seconds=self.wren_timeout_seconds,
+            cube_base_url=self.cube_base_url.strip().rstrip("/"),
+            cube_api_token=token or None,
         )
 
     def semantic_sync(self) -> SemanticSyncConfig:

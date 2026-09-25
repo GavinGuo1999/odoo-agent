@@ -1,0 +1,551 @@
+{
+  "version": "crm-2026-09-15",
+  "timezone": "Asia/Shanghai",
+  "domain": "crm",
+  "routing_keywords": [
+    "线索",
+    "商机",
+    "赢单",
+    "输单",
+    "失单",
+    "丢单",
+    "赢率",
+    "胜率",
+    "转化率",
+    "漏斗",
+    "管道",
+    "阶段",
+    "预期收入",
+    "加权收入",
+    "成交周期",
+    "输单原因",
+    "销售机会",
+    "潜在客户",
+    "跟进"
+  ],
+  "base_tables": [
+    "crm_lead",
+    "res_company",
+    "res_currency"
+  ],
+  "table_selection": [
+    {
+      "keywords": [
+        "阶段",
+        "漏斗",
+        "管道"
+      ],
+      "tables": [
+        "crm_stage"
+      ]
+    },
+    {
+      "keywords": [
+        "团队",
+        "小组"
+      ],
+      "tables": [
+        "crm_team",
+        "crm_stage_crm_team_rel",
+        "crm_stage"
+      ]
+    },
+    {
+      "keywords": [
+        "输单",
+        "失单",
+        "丢单",
+        "原因"
+      ],
+      "tables": [
+        "crm_lost_reason"
+      ]
+    },
+    {
+      "keywords": [
+        "客户",
+        "伙伴"
+      ],
+      "tables": [
+        "res_partner"
+      ]
+    },
+    {
+      "keywords": [
+        "销售员",
+        "业务员",
+        "负责人",
+        "跟进人"
+      ],
+      "tables": [
+        "res_users",
+        "res_partner"
+      ]
+    },
+    {
+      "keywords": [
+        "来源",
+        "渠道",
+        "活动",
+        "媒介"
+      ],
+      "tables": [
+        "utm_source",
+        "utm_medium",
+        "utm_campaign"
+      ]
+    },
+    {
+      "keywords": [
+        "标签",
+        "分类"
+      ],
+      "tables": [
+        "crm_tag",
+        "crm_tag_rel"
+      ]
+    }
+  ],
+  "default_metrics": [
+    "crm_lead_count",
+    "crm_opportunity_count"
+  ],
+  "metric_explanation": {
+    "scope_label": "记录范围限定为",
+    "scope_field": "scope"
+  },
+  "sql_profile": {
+    "metric_rule_fields": [
+      "type",
+      "won_status"
+    ],
+    "time_fields": [
+      "create_date",
+      "date_closed",
+      "date_deadline"
+    ],
+    "forbidden_filter_fields": [
+      "active"
+    ],
+    "translated_name_dimensions": [
+      "stage",
+      "lost_reason",
+      "team",
+      "tag"
+    ],
+    "scope_required_metrics": {
+      "crm_lead_count": [
+        "type"
+      ],
+      "crm_opportunity_count": [
+        "type"
+      ],
+      "crm_open_revenue": [
+        "type",
+        "won_status"
+      ],
+      "crm_weighted_revenue": [
+        "type",
+        "won_status"
+      ],
+      "crm_won_count": [
+        "won_status"
+      ],
+      "crm_won_revenue": [
+        "won_status"
+      ],
+      "crm_lost_count": [
+        "won_status"
+      ],
+      "crm_win_rate": [
+        "won_status"
+      ],
+      "crm_avg_days_to_close": [
+        "won_status"
+      ]
+    },
+    "company_scoped_tables": [
+      "crm_lead"
+    ],
+    "metric_expression_fields": {
+      "crm_lead_count": [
+        "id"
+      ],
+      "crm_opportunity_count": [
+        "id"
+      ],
+      "crm_open_revenue": [
+        "expected_revenue"
+      ],
+      "crm_weighted_revenue": [
+        "prorated_revenue"
+      ],
+      "crm_won_count": [
+        "id"
+      ],
+      "crm_won_revenue": [
+        "expected_revenue"
+      ],
+      "crm_lost_count": [
+        "id"
+      ],
+      "crm_win_rate": [
+        "won_status"
+      ],
+      "crm_avg_days_to_close": [
+        "day_close"
+      ],
+      "crm_conversion_rate": [
+        "date_conversion"
+      ]
+    }
+  },
+  "business_notes": [
+    "输单记录在 Odoo 里是 active = false（Lost semantic: probability = 0 AND active = False）。不要用 active 过滤来排除无效数据——那会把全部输单抹掉，赢率会变成 100%。赢/输/在途一律用 won_status。",
+    "won_status 是存储列，取值只有 won、lost、pending。不要自己拼 probability = 100 或 stage_id.is_won 来判断赢输。",
+    "crm_lead 没有 currency_id 列。expected_revenue 与 prorated_revenue 已经是公司币种；币种符号必须经 res_company.currency_id 连接 res_currency 取得。",
+    "时间字段按指标声明使用：线索数与商机数看 create_date，赢单与输单看 date_closed，在途预期收入看 date_deadline。不要混用。",
+    "crm_stage.name、crm_lost_reason.name、crm_team.name、crm_tag.name 是 JSONB 译名列，必须写成 COALESCE(x.name->>'zh_CN', x.name->>'en_US')。",
+    "crm_stage.is_won 对非赢阶段是 NULL 而不是 false。要选非赢阶段必须写 is_won IS NOT TRUE；写 is_won = false 会漏掉全部 NULL 行。",
+    "crm_stage 与 crm_team 是多对多（crm_stage_crm_team_rel）。阶段的 team 关联为空表示该阶段对所有团队可用，不表示它不属于任何团队。",
+    "部分赢单商机的 date_closed 为空。按时间分桶统计赢单时必须显式处理这些行，不要让它们静默消失。"
+  ],
+  "tables": {
+    "crm_lead": {
+      "description": "CRM 线索与商机主表。同一张表存两种实体，靠 type 区分：lead 是线索，opportunity 是商机。线索转商机是同一条记录改 type，不产生新记录、不保留原线索副本。",
+      "columns": [
+        "id",
+        "name",
+        "type",
+        "active",
+        "won_status",
+        "probability",
+        "stage_id",
+        "team_id",
+        "user_id",
+        "partner_id",
+        "company_id",
+        "lost_reason_id",
+        "source_id",
+        "medium_id",
+        "campaign_id",
+        "priority",
+        "expected_revenue",
+        "prorated_revenue",
+        "recurring_revenue",
+        "create_date",
+        "date_open",
+        "date_conversion",
+        "date_closed",
+        "date_deadline",
+        "day_open",
+        "day_close"
+      ]
+    },
+    "crm_stage": {
+      "description": "商机阶段。sequence 是漏斗顺序（越小越靠前），is_won 标记赢单阶段（非赢阶段该列为 NULL 而非 false）。name 是 JSONB 译名列。",
+      "columns": [
+        "id",
+        "name",
+        "sequence",
+        "is_won",
+        "fold"
+      ]
+    },
+    "crm_team": {
+      "description": "销售团队。name 是 JSONB 译名列。演示库中 company_id 为空表示团队不限公司。",
+      "columns": [
+        "id",
+        "name",
+        "active",
+        "sequence",
+        "company_id",
+        "user_id"
+      ]
+    },
+    "crm_lost_reason": {
+      "description": "输单原因。name 是 JSONB 译名列。只有 won_status = lost 的记录才会填 lost_reason_id。",
+      "columns": [
+        "id",
+        "name",
+        "active"
+      ]
+    },
+    "crm_tag": {
+      "description": "线索/商机标签。name 是 JSONB 译名列。",
+      "columns": [
+        "id",
+        "name"
+      ]
+    },
+    "crm_tag_rel": {
+      "description": "线索与标签的多对多关系表。",
+      "columns": [
+        "lead_id",
+        "tag_id"
+      ]
+    },
+    "crm_stage_crm_team_rel": {
+      "description": "阶段与销售团队的多对多关系表。某阶段在此表中没有任何行，表示它对所有团队可用。",
+      "columns": [
+        "crm_stage_id",
+        "crm_team_id"
+      ]
+    },
+    "utm_source": {
+      "description": "线索来源。name 是普通文本列，不是 JSONB。",
+      "columns": [
+        "id",
+        "name"
+      ]
+    },
+    "utm_medium": {
+      "description": "线索媒介。name 是普通文本列，不是 JSONB。",
+      "columns": [
+        "id",
+        "name"
+      ]
+    },
+    "utm_campaign": {
+      "description": "市场活动。name 是普通文本列，不是 JSONB。",
+      "columns": [
+        "id",
+        "name"
+      ]
+    },
+    "res_partner": {
+      "description": "客户/联系人。部分线索没有 partner_id（尚未建立客户档案），按客户维度统计时这些行的客户名为空。",
+      "columns": [
+        "id",
+        "name",
+        "commercial_partner_id",
+        "customer_rank",
+        "active",
+        "is_company"
+      ]
+    },
+    "res_users": {
+      "description": "Odoo 用户；负责人名称需通过 partner_id 连接 res_partner，不开放登录和密码字段。",
+      "columns": [
+        "id",
+        "partner_id",
+        "company_id",
+        "active",
+        "share"
+      ]
+    },
+    "res_company": {
+      "description": "公司，用于取公司币种。",
+      "columns": [
+        "id",
+        "name",
+        "currency_id"
+      ]
+    },
+    "res_currency": {
+      "description": "币种。",
+      "columns": [
+        "id",
+        "name",
+        "symbol",
+        "position",
+        "rounding"
+      ]
+    }
+  },
+  "relations": [
+    "crm_lead.stage_id = crm_stage.id",
+    "crm_lead.team_id = crm_team.id",
+    "crm_lead.user_id = res_users.id",
+    "crm_lead.partner_id = res_partner.id",
+    "crm_lead.lost_reason_id = crm_lost_reason.id",
+    "crm_lead.source_id = utm_source.id",
+    "crm_lead.medium_id = utm_medium.id",
+    "crm_lead.campaign_id = utm_campaign.id",
+    "crm_lead.company_id = res_company.id",
+    "crm_tag_rel.lead_id = crm_lead.id",
+    "crm_tag_rel.tag_id = crm_tag.id",
+    "crm_stage_crm_team_rel.crm_stage_id = crm_stage.id",
+    "crm_stage_crm_team_rel.crm_team_id = crm_team.id",
+    "res_users.partner_id = res_partner.id",
+    "res_company.currency_id = res_currency.id"
+  ],
+  "metrics": {
+    "crm_lead_count": {
+      "name": "线索数",
+      "description": "按创建时间统计的线索条数，含已归档线索。",
+      "expression": "COUNT(crm_lead.id)",
+      "scope": [
+        "type = 'lead'",
+        "不按 active 过滤（含已归档）"
+      ],
+      "date_field": "crm_lead.create_date",
+      "keywords": [
+        "线索数",
+        "线索量",
+        "多少线索",
+        "潜在客户数"
+      ]
+    },
+    "crm_opportunity_count": {
+      "name": "商机数",
+      "description": "按创建时间统计的商机条数，含已输单的商机。",
+      "expression": "COUNT(crm_lead.id)",
+      "scope": [
+        "type = 'opportunity'",
+        "不按 active 过滤（含已输单）"
+      ],
+      "date_field": "crm_lead.create_date",
+      "keywords": [
+        "商机数",
+        "商机量",
+        "多少商机",
+        "销售机会数"
+      ]
+    },
+    "crm_open_revenue": {
+      "name": "在途预期收入",
+      "description": "尚未赢下也未输掉的商机的预期收入合计，按预计成交日切分。金额已是公司币种。",
+      "expression": "SUM(crm_lead.expected_revenue)",
+      "scope": [
+        "type = 'opportunity'",
+        "won_status = 'pending'"
+      ],
+      "date_field": "crm_lead.date_deadline",
+      "keywords": [
+        "在途预期收入",
+        "预期收入",
+        "管道金额",
+        "漏斗金额",
+        "在途金额"
+      ]
+    },
+    "crm_weighted_revenue": {
+      "name": "加权预期收入",
+      "description": "在途商机按成交概率加权后的预期收入合计（Odoo 的 prorated_revenue = expected_revenue × probability / 100）。",
+      "expression": "SUM(crm_lead.prorated_revenue)",
+      "scope": [
+        "type = 'opportunity'",
+        "won_status = 'pending'"
+      ],
+      "date_field": "crm_lead.date_deadline",
+      "keywords": [
+        "加权预期收入",
+        "加权收入",
+        "加权金额",
+        "概率加权"
+      ]
+    },
+    "crm_won_count": {
+      "name": "赢单数",
+      "description": "按关闭时间统计的赢单商机数。赢单判据是 won_status = 'won'。",
+      "expression": "COUNT(crm_lead.id)",
+      "scope": [
+        "won_status = 'won'"
+      ],
+      "date_field": "crm_lead.date_closed",
+      "keywords": [
+        "赢单数",
+        "赢单量",
+        "成单数",
+        "赢了多少",
+        "胜单数"
+      ]
+    },
+    "crm_won_revenue": {
+      "name": "赢单金额",
+      "description": "赢单商机的预期收入合计，按关闭时间切分。这是商机侧的金额口径；落地订单金额属于跨域指标，不在本域。",
+      "expression": "SUM(crm_lead.expected_revenue)",
+      "scope": [
+        "won_status = 'won'"
+      ],
+      "date_field": "crm_lead.date_closed",
+      "keywords": [
+        "赢单金额",
+        "赢单收入",
+        "成单金额",
+        "赢下多少钱"
+      ]
+    },
+    "crm_lost_count": {
+      "name": "输单数",
+      "description": "按关闭时间统计的输单商机数。输单判据是 won_status = 'lost'（其 active 为 false，不要用 active 过滤）。",
+      "expression": "COUNT(crm_lead.id)",
+      "scope": [
+        "won_status = 'lost'"
+      ],
+      "date_field": "crm_lead.date_closed",
+      "keywords": [
+        "输单数",
+        "失单数",
+        "丢单数",
+        "输了多少",
+        "输单量"
+      ]
+    },
+    "crm_win_rate": {
+      "name": "赢率",
+      "description": "已关闭口径的赢率：赢单数 ÷ (赢单数 + 输单数)。分母不含在途商机，所以它回答的是「已经关掉的单子里赢了几成」，不是「所有商机里赢了几成」。",
+      "expression": "COUNT(*) FILTER (WHERE crm_lead.won_status = 'won')::numeric / NULLIF(COUNT(*) FILTER (WHERE crm_lead.won_status IN ('won','lost')), 0)",
+      "scope": [
+        "won_status IN ('won','lost')",
+        "分母不含 pending"
+      ],
+      "date_field": "crm_lead.date_closed",
+      "keywords": [
+        "赢率",
+        "胜率",
+        "赢单率",
+        "成功率"
+      ]
+    },
+    "crm_avg_days_to_close": {
+      "name": "平均成交周期",
+      "description": "赢单商机从创建到关闭的平均天数，取 Odoo 的存储计算字段 day_close。date_closed 为空的赢单不参与计算。",
+      "expression": "AVG(crm_lead.day_close)",
+      "scope": [
+        "won_status = 'won'",
+        "date_closed IS NOT NULL"
+      ],
+      "date_field": "crm_lead.date_closed",
+      "keywords": [
+        "成交周期",
+        "平均成交周期",
+        "多久成交",
+        "成交天数",
+        "销售周期"
+      ]
+    },
+    "crm_conversion_rate": {
+      "name": "线索转化率",
+      "description": "有转化时间戳的记录数 ÷ 全部线索与商机数，按创建时间切分。",
+      "expression": "COUNT(*) FILTER (WHERE crm_lead.date_conversion IS NOT NULL)::numeric / NULLIF(COUNT(*), 0)",
+      "scope": [
+        "不限 type",
+        "不按 active 过滤"
+      ],
+      "date_field": "crm_lead.create_date",
+      "keywords": [
+        "转化率",
+        "线索转化率",
+        "转化比例",
+        "转商机比例"
+      ],
+      "caveat": "这是近似值。Odoo 里线索转商机是同一条记录把 type 从 lead 改成 opportunity，不产生新记录也不保留原线索副本，所以「曾经是线索的总数」在库里已经不存在了；这里的分母是现存记录数，唯一痕迹是 date_conversion 是否为空。真实转化率只能从 mail_message 跟踪记录复原，代价过高，当前不做。"
+    }
+  },
+  "examples": [
+    {
+      "question": "本月新增了多少商机？",
+      "sql": "SELECT COUNT(l.id) AS crm_opportunity_count FROM crm_lead l WHERE l.company_id = {company_id} AND l.type = 'opportunity' AND l.create_date >= date_trunc('month', CURRENT_DATE) AND l.create_date < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'"
+    },
+    {
+      "question": "各阶段的在途商机数和预期收入是多少？",
+      "sql": "SELECT COALESCE(s.name->>'zh_CN', s.name->>'en_US') AS stage, COUNT(l.id) AS crm_opportunity_count, SUM(l.expected_revenue) AS crm_open_revenue FROM crm_lead l JOIN crm_stage s ON s.id = l.stage_id WHERE l.company_id = {company_id} AND l.type = 'opportunity' AND l.won_status = 'pending' GROUP BY s.sequence, s.id, s.name ORDER BY s.sequence"
+    },
+    {
+      "question": "今年的赢率是多少？",
+      "sql": "SELECT COUNT(*) FILTER (WHERE l.won_status = 'won')::numeric / NULLIF(COUNT(*) FILTER (WHERE l.won_status IN ('won','lost')), 0) AS crm_win_rate FROM crm_lead l WHERE l.company_id = {company_id} AND l.won_status IN ('won','lost') AND l.date_closed >= date_trunc('year', CURRENT_DATE) AND l.date_closed < date_trunc('year', CURRENT_DATE) + INTERVAL '1 year'"
+    }
+  ]
+}

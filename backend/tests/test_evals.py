@@ -227,6 +227,41 @@ class BenchmarkCostAttributionTests(unittest.TestCase):
         self.assertAlmostEqual(by_role["sql"]["cost_share"], 0.7, places=4)
         self.assertAlmostEqual(by_role["answer"]["cost_share"], 0.3, places=4)
 
+    def test_summary_compares_every_candidate_against_native(self) -> None:
+        """三方对照：comparisons 要给出每个候选相对 native 的差值。
+
+        原先这段差值计算硬编码成 native-vs-wren，加第三种语义层时会静默丢掉它。
+        """
+        summary = summarize_benchmark(
+            {
+                "native": [self._report("native", latency=1000) for _ in range(3)],
+                "wren": [self._report("wren", latency=2000) for _ in range(3)],
+                "cube": [
+                    self._report("cube", latency=1500, passed=False) for _ in range(3)
+                ],
+            }
+        )
+
+        self.assertEqual(set(summary["comparisons"]), {"wren", "cube"})
+        for candidate, block in summary["comparisons"].items():
+            self.assertEqual(block["baseline"], "native")
+            self.assertEqual(block["candidate"], candidate)
+
+        self.assertAlmostEqual(summary["comparisons"]["wren"]["p50_latency_delta_ms"], 1000.0)
+        self.assertAlmostEqual(summary["comparisons"]["cube"]["p50_latency_delta_ms"], 500.0)
+        # cube 全挂，通过率差值必须是负的，不能因为新增语义层而被吞掉。
+        self.assertLess(summary["comparisons"]["cube"]["pass_rate_delta"], 0)
+
+        # 单数形式的 comparison 保持向后兼容：仍指向 wren。
+        self.assertEqual(summary["comparison"]["candidate"], "wren")
+
+    def test_summary_without_candidates_has_empty_comparisons(self) -> None:
+        summary = summarize_benchmark(
+            {"native": [self._report("native", latency=1000) for _ in range(3)]}
+        )
+        self.assertEqual(summary["comparisons"], {})
+        self.assertEqual(summary["comparison"], {})
+
     def test_latency_budget_fails_when_p50_exceeds_eighteen_seconds(self) -> None:
         within = summarize_benchmark(
             {"native": [self._report("native", latency=17_000) for _ in range(3)]}

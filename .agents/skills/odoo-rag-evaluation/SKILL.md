@@ -52,3 +52,19 @@ Preserve these boundaries:
 - Report per-slice results and actual before/after values. Do not present a single aggregate score as sufficient evidence.
 
 RAGAS and LLM judges supplement deterministic retrieval checks; they do not replace source review, citation validation, SQL Guard, or user acceptance. Use Langfuse for trace/cost diagnostics, the existing HTTP golden runner for application behavior, and Waza only for this Skill's trigger and workflow conformance.
+
+## USE FOR / DO NOT USE FOR
+
+**USE FOR:**
+
+- "Wiki 检索漏了笔记" / wiki retrieval misses the right note
+- "换 embedding 或 reranker" / swap the embedding model or reranker
+- "跑一次 RAGAS 评测" / run a RAGAS evaluation
+- "词法 vs 混合检索对比" / compare lexical and hybrid retrieval
+- "知识回答有没有编造" / check answer faithfulness
+
+**DO NOT USE FOR:**
+
+- 用 Wiki 猜测实时 Odoo 业务数据（必须走 SQL）
+- 绕过 SQL 守卫回答取数问题
+- 销售或 CRM 的指标口径

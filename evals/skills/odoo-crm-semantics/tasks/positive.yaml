@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/task.schema.json
+id: crm-semantics-positive
+name: CRM metric definition work should trigger
+description: A CRM win-rate and lost-reason semantic change belongs to odoo-crm-semantics.
+inputs:
+  prompt: Add a CRM win rate metric over crm.lead won_status and update the CRM SQL guard scope rules.
+expected:
+  should_trigger: true
+graders:
+  - type: trigger
+    name: crm_semantics_positive_trigger
+    config:
+      skill_path: .agents/skills/odoo-crm-semantics/SKILL.md
+      mode: positive
+      threshold: 0.55

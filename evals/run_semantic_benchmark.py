@@ -9,7 +9,7 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -18,7 +18,7 @@ for import_path in (PROJECT_DIR, BACKEND_DIR):
     if str(import_path) not in sys.path:
         sys.path.insert(0, str(import_path))
 
-from app.config import get_settings
+from app.config import SemanticProviderName, get_settings
 from app.observability import (
     configure_langfuse_environment,
     langfuse_is_configured,
@@ -199,6 +199,51 @@ def _provider_summary(reports: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+BASELINE_PROVIDER = "native"
+# 从类型定义推导，避免每加一种语义层就要改一处白名单。
+SUPPORTED_PROVIDERS = frozenset(get_args(SemanticProviderName))
+
+
+def _delta(candidate: float | None, baseline: float | None, digits: int) -> float | None:
+    if candidate is None or baseline is None:
+        return None
+    return round(candidate - baseline, digits)
+
+
+def _compare_providers(
+    baseline: dict[str, Any],
+    candidate: dict[str, Any],
+    candidate_name: str,
+) -> dict[str, Any]:
+    """候选语义层相对基线的各项差值。
+
+    拆成函数是为了支持三方及以上对照：`reports_by_provider` 本来就是按 provider
+    的字典，只有这段差值计算原先硬编码成 native-vs-wren 两方。
+    """
+    return {
+        "baseline": BASELINE_PROVIDER,
+        "candidate": candidate_name,
+        "pass_rate_delta": _delta(candidate["pass_rate"], baseline["pass_rate"], 4),
+        "structural_pass_rate_delta": _delta(
+            candidate["structural_pass_rate"], baseline["structural_pass_rate"], 4
+        ),
+        "result_match_rate_delta": _delta(
+            candidate["result_match_rate"], baseline["result_match_rate"], 4
+        ),
+        "p50_latency_delta_ms": _delta(
+            candidate["latency_ms"]["p50"], baseline["latency_ms"]["p50"], 2
+        ),
+        "p95_latency_delta_ms": _delta(
+            candidate["latency_ms"]["p95"], baseline["latency_ms"]["p95"], 2
+        ),
+        "token_delta": candidate["total_tokens"] - baseline["total_tokens"],
+        "cost_delta_usd": round(
+            candidate["estimated_cost_usd"] - baseline["estimated_cost_usd"], 8
+        ),
+        "repair_delta": candidate["repair_count"] - baseline["repair_count"],
+    }
+
+
 def summarize_benchmark(
     reports_by_provider: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
@@ -206,38 +251,16 @@ def summarize_benchmark(
         provider: _provider_summary(reports)
         for provider, reports in reports_by_provider.items()
     }
-    comparison: dict[str, Any] = {}
-    if "native" in providers and "wren" in providers:
-        native = providers["native"]
-        wren = providers["wren"]
-        comparison = {
-            "baseline": "native",
-            "candidate": "wren",
-            "pass_rate_delta": round(wren["pass_rate"] - native["pass_rate"], 4),
-            "structural_pass_rate_delta": round(
-                wren["structural_pass_rate"] - native["structural_pass_rate"], 4
-            ),
-            "result_match_rate_delta": round(
-                wren["result_match_rate"] - native["result_match_rate"], 4
-            ),
-            "p50_latency_delta_ms": (
-                round(wren["latency_ms"]["p50"] - native["latency_ms"]["p50"], 2)
-                if wren["latency_ms"]["p50"] is not None
-                and native["latency_ms"]["p50"] is not None
-                else None
-            ),
-            "p95_latency_delta_ms": (
-                round(wren["latency_ms"]["p95"] - native["latency_ms"]["p95"], 2)
-                if wren["latency_ms"]["p95"] is not None
-                and native["latency_ms"]["p95"] is not None
-                else None
-            ),
-            "token_delta": wren["total_tokens"] - native["total_tokens"],
-            "cost_delta_usd": round(
-                wren["estimated_cost_usd"] - native["estimated_cost_usd"], 8
-            ),
-            "repair_delta": wren["repair_count"] - native["repair_count"],
-        }
+    comparisons = {
+        candidate: _compare_providers(
+            providers[BASELINE_PROVIDER], providers[candidate], candidate
+        )
+        for candidate in sorted(providers)
+        if candidate != BASELINE_PROVIDER and BASELINE_PROVIDER in providers
+    }
+    # 保留单数形式的 comparison：已归档的报告与文档 18 按这个形状读取。
+    comparison: dict[str, Any] = dict(comparisons.get("wren", {}))
+
     run_counts = {len(reports) for reports in reports_by_provider.values()}
     breaches = sorted(
         provider
@@ -252,6 +275,7 @@ def summarize_benchmark(
         "runs_per_provider": next(iter(run_counts)) if len(run_counts) == 1 else None,
         "providers": providers,
         "comparison": comparison,
+        "comparisons": comparisons,
         "latency_budget": {
             "p50_budget_ms": P50_LATENCY_BUDGET_MS,
             "within_budget": not breaches,
@@ -494,7 +518,7 @@ def push_benchmark_runs(
 
 def render_markdown(summary: dict[str, Any]) -> str:
     lines = [
-        "# Native / Wren 三轮 A/B 基准",
+        "# 语义层对照基准：" + " / ".join(summary["providers"]),
         "",
         f"- 报告版本：`{summary['report_version']}`",
         f"- 数据集：`{summary['dataset']}`",
@@ -569,17 +593,27 @@ def render_markdown(summary: dict[str, Any]) -> str:
                     + " |"
                 )
 
-    if summary.get("comparison"):
-        comparison = summary["comparison"]
+    # 逐个候选渲染。原先这里只渲染 Wren，三方对照时会静默漏掉第三方。
+    for candidate, comparison in (summary.get("comparisons") or {}).items():
+
+        def _pct(key: str, block: dict = comparison) -> str:
+            value = block.get(key)
+            return f"{value:+.2%}" if value is not None else "n/a"
+
+        def _ms(key: str, block: dict = comparison) -> str:
+            value = block.get(key)
+            return f"{value:+.2f} ms" if value is not None else "n/a"
+
         lines.extend(
             [
                 "",
-                "## Wren 相对 Native",
+                f"## {candidate} 相对 {comparison.get('baseline', BASELINE_PROVIDER)}",
                 "",
-                f"- 总通过率变化：{comparison['pass_rate_delta']:+.2%}",
-                f"- 结果签名变化：{comparison['result_match_rate_delta']:+.2%}",
-                f"- p50 变化：{comparison['p50_latency_delta_ms']:+.2f} ms",
-                f"- p95 变化：{comparison['p95_latency_delta_ms']:+.2f} ms",
+                f"- 总通过率变化：{_pct('pass_rate_delta')}",
+                f"- 结构通过率变化：{_pct('structural_pass_rate_delta')}",
+                f"- 结果签名变化：{_pct('result_match_rate_delta')}",
+                f"- p50 变化：{_ms('p50_latency_delta_ms')}",
+                f"- p95 变化：{_ms('p95_latency_delta_ms')}",
                 f"- Token 变化：{comparison['token_delta']:+d}",
                 f"- Cost 变化：${comparison['cost_delta_usd']:+.6f}",
                 f"- Repair 变化：{comparison['repair_delta']:+d}",
@@ -678,8 +712,11 @@ def main() -> int:
         return 0
 
     providers = [item.strip() for item in args.providers.split(",") if item.strip()]
-    if not providers or any(item not in {"native", "wren"} for item in providers):
-        raise ValueError("--providers must contain native and/or wren")
+    unknown = [item for item in providers if item not in SUPPORTED_PROVIDERS]
+    if not providers or unknown:
+        raise ValueError(
+            f"--providers 只接受 {sorted(SUPPORTED_PROVIDERS)}；无法识别：{unknown}"
+        )
 
     timestamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
     output_dir = (args.output_dir or PROJECT_DIR / "evals" / "reports" / timestamp).resolve()

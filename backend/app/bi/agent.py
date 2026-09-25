@@ -34,6 +34,7 @@ from app.bi.error_analysis import (
     sql_fingerprint,
 )
 from app.bi.prompts import (
+    metric_explanation_prompt,
     answer_synthesis_prompt,
     chart_planning_prompt,
     general_system_prompt,
@@ -41,7 +42,14 @@ from app.bi.prompts import (
     sql_generation_prompt,
     sql_repair_prompt,
 )
-from app.bi.semantic_provider import SemanticContextProvider, build_semantic_provider
+from app.bi.domain import (
+    DomainPack,
+    DomainRegistry,
+    build_domain_registry,
+    classify_domain,
+)
+from app.bi.semantic import KNOWN_DOMAINS, SemanticLayer
+from app.bi.semantic_provider import SemanticContextProvider
 from app.bi.time_series import complete_year_months
 from app.config import (
     DatabaseConfig,
@@ -91,6 +99,8 @@ class AgentState(TypedDict, total=False):
     model: str
     model_roles: dict[str, dict[str, str]]
     role_usage: dict[str, dict[str, Any]]
+    # 本轮使用的业务域。决定语义层和 SQL 守卫白名单用哪一套（见 bi/domain.py）。
+    domain: str
     semantic_context: str
     semantic_provider: str
     semantic_version: str
@@ -173,6 +183,30 @@ class AgentOutcome:
         }[self.intent]
 
 
+def _domain_intent_words() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """从各业务域的语义定义里收集业务词和指标名。
+
+    M1 的 `_DATA_WORDS` / `_METRIC_WORDS` 是手写的销售词表。加 CRM 时它们全都不认
+    ——"赢率是多少"里没有一个销售业务词，会被判成 general，永远到不了取数。
+    再手写一份 CRM 词表就是给同一件事开第二处定义：语义层里已经有
+    `routing_keywords` 和每个指标的 `name`，改了那边忘了改这边就会静默失效。
+
+    所以这里从定义文件里合并。**只做追加**，销售域原有的词一个不动，
+    保证 M1 的 76 题意图判定完全不变。
+    """
+    data_words: set[str] = set()
+    metric_words: set[str] = set()
+    for domain in KNOWN_DOMAINS:
+        layer = SemanticLayer.load(domain)
+        data_words.update(layer.routing_keywords)
+        metric_words.update(
+            metric["name"] for metric in layer.metric_definitions.values()
+        )
+    return tuple(sorted(data_words)), tuple(sorted(metric_words))
+
+
+_DOMAIN_DATA_WORDS, _DOMAIN_METRIC_WORDS = _domain_intent_words()
+
 _DATA_WORDS = (
     "销售", "订单", "客户", "产品", "商品", "销量", "业绩", "收入", "交付",
     "发货", "开票", "报价", "成交", "销售员",
@@ -181,6 +215,7 @@ _DATA_WORDS = (
     "费用",
     "库存价值", "业务员", "排行榜", "趋势", "同比",
     "环比", "本月", "上月", "本年", "今年", "去年", "采购", "库存", "odoo", "sql",
+    *_DOMAIN_DATA_WORDS,
 )
 _SEMANTIC_WORDS = (
     "口径", "定义", "怎么算", "怎么计算", "什么意思", "包括什么", "是什么", "含义",    "怎么核算",
@@ -189,6 +224,7 @@ _SEMANTIC_WORDS = (
 )
 _METRIC_WORDS = (
     "销售额", "含税销售额", "订单数", "平均订单额", "销量", "销售数量", "交付数量", "开票数量",
+    *_DOMAIN_METRIC_WORDS,
 )
 _TECHNICAL_WORDS = (
     "qty_to_invoice", "qty_delivered", "qty_invoiced", "sale.order", "sale.order.line",
@@ -209,9 +245,30 @@ _KNOWLEDGE_STRUCTURE_WORDS = (
 _HYBRID_EXPLANATION_WORDS = (
     "为什么", "原因", "怎么来的", "怎么生成", "怎么产生", "如何工作", "如何生成", "如何产生",
 )
+# 本身就含解释线索词、但实际是**维度名**的短语。
+#
+# 实测缺陷：CRM 有一个维度就叫"输单原因"，于是"输单原因分布"里的"原因"命中
+# `_HYBRID_EXPLANATION_WORDS`，整题被判成 hybrid——去检索 Wiki、多花一次模型调用，
+# 而用户要的只是一个按维度的分布。
+#
+# 判定线索前先把这些短语剔掉，所以"为什么输单原因这么集中"仍然是 hybrid
+# （"为什么"还在），而"输单原因分布"是纯取数。
+_DIMENSION_PHRASES_WITH_CUES = ("输单原因", "失单原因", "丢单原因")
+
+
+def _intent_cue_text(normalized: str) -> str:
+    for phrase in _DIMENSION_PHRASES_WITH_CUES:
+        normalized = normalized.replace(phrase, "")
+    return normalized
 _DATA_REQUEST_WORDS = (
     "多少", "最高", "最低", "排名", "趋势", "同比", "环比", "本月", "上月", "今年", "去年",
     "哪些", "列出", "明细", "每月", "每天", "每周", "汇总", "统计",
+    # "分布"：实测缺陷。"输单原因分布是什么样的？"里的"是什么"命中知识线索词，
+    # 整题被判成 knowledge，去查 Wiki 而不是查库。"分布"只可能是要按维度聚合的数据，
+    # 不可能是要一段解释，所以它是一个可靠的取数请求信号。
+    # 修法沿用 M1 的做法：收紧判据、一个词修一个 case，并在黄金集里留一题钉住它
+    # （crm-ranking-lost-reason）。
+    "分布",
 )
 _FOLLOW_UP_WORDS = ("那", "再", "呢", "上个月", "去年", "同比", "环比", "换成")
 _UNRESOLVED_CUSTOMER_MARKERS = ("那个客户", "这个客户", "该客户", "那位客户")
@@ -234,9 +291,11 @@ _CUSTOMER_NAME_HINT = re.compile(
 
 def classify_intent(question: str, history: list[dict[str, str]]) -> Intent:
     normalized = question.lower().strip()
+    # 解释类线索只在剔掉维度名之后判定，见 `_DIMENSION_PHRASES_WITH_CUES`。
+    cue_text = _intent_cue_text(normalized)
     has_business_term = any(word in normalized for word in _DATA_WORDS)
     has_technical_term = any(word in normalized for word in _TECHNICAL_WORDS)
-    has_knowledge_cue = any(word in normalized for word in _KNOWLEDGE_WORDS) or (
+    has_knowledge_cue = any(word in cue_text for word in _KNOWLEDGE_WORDS) or (
         has_technical_term and any(word in normalized for word in _SEMANTIC_WORDS)
     )
     has_data_request = any(word in normalized for word in _DATA_REQUEST_WORDS)
@@ -253,7 +312,7 @@ def classify_intent(question: str, history: list[dict[str, str]]) -> Intent:
     ):
         return "knowledge"
     if (has_business_term or has_technical_term) and has_data_request and any(
-        word in normalized for word in _HYBRID_EXPLANATION_WORDS
+        word in cue_text for word in _HYBRID_EXPLANATION_WORDS
     ):
         return "hybrid"
     if (has_business_term or has_technical_term) and has_knowledge_cue and not has_data_request:
@@ -906,6 +965,7 @@ class SalesAgent:
         state_store: Any | None = None,
         semantic_config: SemanticConfig | None = None,
         semantic_provider: SemanticContextProvider | None = None,
+        domain_registry: DomainRegistry | None = None,
         wiki_config: WikiConfig | None = None,
         wiki_service: WikiKnowledgeService | None = None,
     ) -> None:
@@ -920,15 +980,29 @@ class SalesAgent:
         self._state_store = state_store
         self._gateway = LLMGateway(provider)
         self._database = OdooDatabase(database)
-        self._semantics = semantic_provider or build_semantic_provider(semantic_config)
-        self._wiki = wiki_service or (get_wiki_service(wiki_config) if wiki_config else None)
-        self._guard = ReadOnlySqlGuard(
-            table_columns=self._semantics.table_columns,
-            company_id=database.company_id,
-            max_rows=database.max_rows,
+        # 语义层和 SQL 守卫按业务域成对注入（见 bi/domain.py）。当前只注册销售域，
+        # 行为与 M1 完全一致；加 CRM 只需在注册表里追加一个包。
+        self._domains = domain_registry or build_domain_registry(
+            database=database,
+            semantic_config=semantic_config,
+            semantic_provider=semantic_provider,
         )
+        self._wiki = wiki_service or (get_wiki_service(wiki_config) if wiki_config else None)
         self._checkpointer = checkpointer or get_state_store().checkpointer
         self._graph = self._build_graph()
+
+    @property
+    def _default_pack(self) -> DomainPack:
+        """没有 state 可依据时（初始状态、结果元数据）用默认域包。"""
+        return self._domains.default
+
+    def _pack(self, state: AgentState) -> DomainPack:
+        """按本轮判定的业务域取包。
+
+        未知或缺失的域回落到默认域——回落逻辑在 `DomainRegistry.pack` 里，
+        这里不重复判断。
+        """
+        return self._domains.pack(state.get("domain"))
 
     def _build_graph(self):
         builder = StateGraph(AgentState)
@@ -962,7 +1036,9 @@ class SalesAgent:
                 "general": "answer_general",
                 "knowledge": "retrieve_wiki_context",
                 "source": "retrieve_wiki_context",
-                "semantic": "explain_metric",
+                # 指标口径问题也先查一遍 Wiki：口径本身由语义层给（权威），
+                # Wiki 负责把它讲成业务语言并提供出处。见 _explain_metric。
+                "semantic": "retrieve_wiki_context",
                 "data": "detect_data_ambiguity",
                 "hybrid": "retrieve_wiki_context",
             },
@@ -970,8 +1046,16 @@ class SalesAgent:
         builder.add_edge("answer_general", "finalize_turn")
         builder.add_conditional_edges(
             "retrieve_wiki_context",
-            lambda state: "data" if state["intent"] == "hybrid" else "answer",
-            {"data": "detect_data_ambiguity", "answer": "answer_knowledge"},
+            lambda state: (
+                "data"
+                if state["intent"] == "hybrid"
+                else "metric" if state["intent"] == "semantic" else "answer"
+            ),
+            {
+                "data": "detect_data_ambiguity",
+                "metric": "explain_metric",
+                "answer": "answer_knowledge",
+            },
         )
         builder.add_edge("answer_knowledge", "finalize_turn")
         builder.add_edge("explain_metric", "finalize_turn")
@@ -1091,9 +1175,10 @@ class SalesAgent:
             "model": self._routing.general.model,
             "model_roles": {},
             "role_usage": {},
+            "domain": self._default_pack.domain,
             "semantic_context": "",
-            "semantic_provider": self._semantics.name,
-            "semantic_version": self._semantics.version,
+            "semantic_provider": self._default_pack.semantics.name,
+            "semantic_version": self._default_pack.semantics.version,
             "knowledge_context": "",
             "knowledge_citations": [],
             "knowledge_index_fingerprint": "",
@@ -1187,7 +1272,7 @@ class SalesAgent:
             answer_mode=state.get("answer_mode", "llm"),
             model_roles=state.get("model_roles", {}),
             role_usage=state.get("role_usage", {}),
-            semantic_provider=state.get("semantic_provider", self._semantics.name),
+            semantic_provider=state.get("semantic_provider", self._pack(state).semantics.name),
             repair_count=state.get("repair_count", 0),
             interrupted=interrupted,
             interrupt_payload=interrupt_payload,
@@ -1346,8 +1431,12 @@ class SalesAgent:
         _emit_stage("classify", "正在判断问题类型")
         question = state["question"]
         intent = classify_intent(question, state.get("history", []))
+        # 业务域和意图是两个独立判定：意图决定走不走取数，域决定用哪套语义层和
+        # 哪份守卫白名单。两个都不调模型。
+        domain, domain_scores = classify_domain(question, self._domains)
         # 路由不调模型，所以它本来不会出现在任何 trace 里——可线上排查时
-        # "这题为什么没走取数"恰恰是最常问的。把判定和命中的词一起记下来。
+        # "这题为什么没走取数"和"这题为什么走错了域"恰恰是最常问的两个。
+        # 把判定、命中的词和各域得分一起记下来。
         with trace_tool(
             name="classify-question-intent",
             input_data={"question": question},
@@ -1356,10 +1445,12 @@ class SalesAgent:
                 observation,
                 output={
                     "intent": intent,
+                    "domain": domain,
+                    "domain_scores": domain_scores,
                     "matched": _classification_evidence(question),
                 },
             )
-        return {"intent": intent}
+        return {"intent": intent, "domain": domain}
 
     async def _answer_general(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("general", "正在组织普通回答")
@@ -1461,17 +1552,54 @@ class SalesAgent:
             **_usage_fields(state, result, role="answer"),
         }
 
-    def _explain_metric(self, state: AgentState) -> dict[str, Any]:
+    async def _explain_metric(self, state: AgentState) -> dict[str, Any]:
         _emit_stage("semantic", "正在读取销售指标口径")
-        explanation = self._semantics.metric_explanation(state["question"])
+        explanation = self._pack(state).semantics.metric_explanation(state["question"])
         if explanation is None:
             explanation = "当前销售语义层已定义销售额、含税销售额、订单数、平均订单额、销售数量、交付数量和开票数量。"
-        return {"answer": explanation, "answer_mode": "semantic", "data_accessed": False}
+
+        # 口径本身是权威的，但只回吐一行 `SUM(...)` 对业务同事没有意义。
+        # 有 Wiki 依据时，让模型用业务语言重讲一遍并带上出处；没有就退回确定性文本，
+        # 行为与改动前一致（离线、零成本、不会因为 Wiki 未配置而失败）。
+        context = state.get("knowledge_context", "")
+        if not context:
+            return {"answer": explanation, "answer_mode": "semantic", "data_accessed": False}
+
+        _emit_stage("semantic-grounding", "正在结合 Odoo Wiki 解释口径")
+        result = await self._gateway.complete(
+            messages=[
+                {
+                    "role": "user",
+                    "content": metric_explanation_prompt(
+                        question=state["question"],
+                        history=state.get("history", []),
+                        metric_definition=explanation,
+                        knowledge_context=context,
+                    ),
+                }
+            ],
+            generation_name="explain-metric-with-wiki",
+            generation_role="answer",
+            metadata={
+                "feature": "metric-explanation",
+                "intent": state["intent"],
+                "citation_count": len(state.get("knowledge_citations", [])),
+                "knowledge_index_fingerprint": state.get("knowledge_index_fingerprint", ""),
+                "data_accessed": False,
+            },
+            config=self._routing.answer,
+        )
+        return {
+            "answer": result.content,
+            "answer_mode": "semantic",
+            "data_accessed": False,
+            **_usage_fields(state, result, role="answer"),
+        }
 
     def _detect_data_ambiguity(self, state: AgentState) -> dict[str, Any]:
         unsupported_region = _unsupported_business_region(
             state["question"],
-            self._semantics.table_columns,
+            self._pack(state).table_columns,
         )
         if unsupported_region:
             _emit_stage("ambiguity-detection", "检测到未配置的业务区域口径")
@@ -1545,18 +1673,20 @@ class SalesAgent:
                 "warnings": ["Odoo 只读数据库当前不可用，请到设置页检查数据库连接。"],
             }
 
+        pack = self._pack(state)
         _emit_stage("semantic-retrieval", "正在检索销售语义与字段")
         with trace_retrieval(
             name="retrieve-sales-semantic-context",
             input_data={
                 "question": state["question"],
-                "semantic_version": self._semantics.version,
-                "semantic_provider": self._semantics.name,
+                "domain": pack.domain,
+                "semantic_version": pack.semantics.version,
+                "semantic_provider": pack.semantics.name,
                 "company_id": self._database_config.company_id,
             },
         ) as observation:
-            discovered = await self._database.discover_columns(self._semantics.table_columns)
-            context = await self._semantics.retrieve(
+            discovered = await self._database.discover_columns(pack.table_columns)
+            context = await pack.semantics.retrieve(
                 state["question"],
                 company_id=self._database_config.company_id,
                 discovered_columns=discovered,
@@ -1596,8 +1726,13 @@ class SalesAgent:
             generation_role="sql",
             metadata={
                 "feature": "text2sql",
-                "semantic_version": state.get("semantic_version", self._semantics.version),
-                "semantic_provider": state.get("semantic_provider", self._semantics.name),
+                "domain": self._pack(state).domain,
+                "semantic_version": state.get(
+                    "semantic_version", self._pack(state).semantics.version
+                ),
+                "semantic_provider": state.get(
+                    "semantic_provider", self._pack(state).semantics.name
+                ),
             },
             json_mode=True,
             config=self._routing.sql,
@@ -1677,7 +1812,8 @@ class SalesAgent:
         }
 
     async def _compile_semantic_sql(self, state: AgentState) -> dict[str, Any]:
-        provider_name = state.get("semantic_provider", self._semantics.name)
+        pack = self._pack(state)
+        provider_name = state.get("semantic_provider", pack.semantics.name)
         _emit_stage(
             "semantic-compile",
             "正在用 Wren MDL 编译语义 SQL"
@@ -1707,7 +1843,7 @@ class SalesAgent:
             },
         ) as observation:
             try:
-                planned_sql = await self._semantics.plan_sql(logical_sql)
+                planned_sql = await pack.semantics.plan_sql(logical_sql)
                 errors: list[str] = []
             except Exception as exc:
                 planned_sql = ""
@@ -1752,7 +1888,7 @@ class SalesAgent:
                     if state.get("query_plan")
                     else None
                 )
-                validation = self._guard.validate(
+                validation = self._pack(state).guard.validate(
                     sql,
                     plan=plan,
                     question=state.get("question", ""),
@@ -1991,8 +2127,9 @@ class SalesAgent:
         """执行模型声明的补充查询，给"为什么"类问题提供下钻证据。
 
         三条硬规则：
-          1. **同一套守卫**。每条补充查询带自己的 QueryPlan，走 self._guard.validate，
-             和主查询一字不差。没有任何"补充查询所以放宽一点"的余地。
+          1. **同一套守卫**。每条补充查询带自己的 QueryPlan，走**本域包同一个**
+             guard 实例，和主查询一字不差。没有任何"补充查询所以放宽一点"的余地，
+             也不存在跨到别的域去取证据的余地。
           2. **失败不影响主答案**。主查询已经成功了，补充数据只是锦上添花；这里出错
              记一条 warning 继续走，绝不把整轮拖进修复循环。
           3. **不参与画图**。图表只反映主查询，否则用户看不出图上是哪份数据。
@@ -2017,7 +2154,7 @@ class SalesAgent:
             # 主问题问"下降最大的三个月"，但补充查询要的是那几个月的**完整**客户构成，
             # 拿主问题去判会要求它声明 row_limit，直接把它挡在门外。
             # 表/字段白名单、company_id、禁写这些安全检查与主查询完全一致，不受影响。
-            validation = self._guard.validate(
+            validation = self._pack(state).guard.validate(
                 followup.sql,
                 plan=followup.plan,
                 question=followup.purpose,

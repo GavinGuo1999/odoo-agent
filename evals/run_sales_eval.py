@@ -22,6 +22,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.bi import SalesAgent, classify_intent  # noqa: E402
+from app.bi.domain import build_domain_registry, classify_domain  # noqa: E402
 from app.bi.semantic import SalesSemanticLayer  # noqa: E402
 from app.bi.time_series import complete_year_months  # noqa: E402
 from app.config import get_settings  # noqa: E402
@@ -54,6 +55,9 @@ class GoldenExpected(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     intent: Literal["general", "knowledge", "source", "semantic", "data", "hybrid"]
+    # 业务域。默认 sales，所以既有 76 题一个字都不用改——它们本来就全是销售域，
+    # 而且域路由对不含域关键词的问题会回落到默认域。
+    domain: Literal["sales", "crm"] = "sales"
     query_type: QueryType | None = None
     metric_ids: list[str] = Field(default_factory=list)
     dimensions: list[str] = Field(default_factory=list)
@@ -114,17 +118,30 @@ def load_result_assertions(path: Path) -> dict[str, GoldenResultAssertion]:
 
 
 def validate_static(items: list[GoldenItem]) -> list[dict[str, object]]:
+    """静态校验：意图和业务域两个确定性判定。
+
+    域路由和意图路由一样不调模型，所以它能进静态门禁——不花额度、不碰数据库，
+    每次提交都能跑。域判错的后果比意图判错更隐蔽：意图错了通常答不出来，
+    域错了会拿另一个业务域的语义层去答，给出一个像样但答非所问的结果。
+    """
+    registry = build_domain_registry(database=get_settings().database())
     results = []
     for item in items:
         actual_intent = classify_intent(item.input.question, item.input.history)
-        passed = actual_intent == item.expected_output.intent
+        actual_domain, domain_scores = classify_domain(item.input.question, registry)
+        intent_ok = actual_intent == item.expected_output.intent
+        domain_ok = actual_domain == item.expected_output.domain
         results.append(
             {
                 "id": item.id,
                 "category": case_category(item),
-                "passed": passed,
-                "checks": {"intent": passed},
-                "actual": {"intent": actual_intent},
+                "passed": intent_ok and domain_ok,
+                "checks": {"intent": intent_ok, "domain": domain_ok},
+                "actual": {
+                    "intent": actual_intent,
+                    "domain": actual_domain,
+                    "domain_scores": domain_scores,
+                },
             }
         )
     return results

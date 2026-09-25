@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any
 
 from sqlglot import exp, parse
@@ -35,6 +37,51 @@ class SqlComplexityLimits:
     require_detail_time_range: bool = True
 
 
+@dataclass(frozen=True, slots=True)
+class SqlDomainProfile:
+    """守卫里那些**因业务域而异**的判据。
+
+    M1 只有销售域，所以这些值直接写死在检查逻辑里：指标口径字段是
+    `{state, display_type}`、时间字段是 `date_order`、译名回退只认 `product` 维度。
+    加 CRM 时这三处全都不对——CRM 的口径字段是 `type` / `won_status`，
+    时间字段有三个（`create_date` / `date_closed` / `date_deadline`），
+    译名维度是阶段、输单原因、团队、标签。
+
+    所以把它们抽成域档案，由域包注入。默认值保持销售域原样，
+    这样 M1 的所有构造点（含单测里那 7 处）行为一个字不变。
+
+    - `metric_rule_fields`：允许标记 `source="metric_rule"` 的字段，
+      也就是"这个域的默认口径由哪些列表达"。
+    - `time_fields`：声明了时间范围之后，WHERE 里允许出现的时间列。
+    - `scope_required_metrics`：**R1**。某指标一旦出现在 QueryPlan.metric_ids 里，
+      就必须同时声明这些过滤字段。它挡的是"口径被静默放宽"——
+      问赢率却不声明 won_status，算出来的东西不是赢率。
+    - `forbidden_filter_fields`：**R2**。这些列不得作为过滤条件，声明了也不行。
+      CRM 的 `active` 是唯一一个：输单记录 active = false，
+      按 active 过滤会把全部输单抹掉、让赢率变成 100%，而且不报错。
+    - `translated_name_dimensions`：这些维度的展示名来自 JSONB 译名列，
+      必须 `COALESCE(x.name->>'zh_CN', x.name->>'en_US')`。
+    - `company_scoped_tables`：必须带 `company_id = N` 的表。M1 把它写死成
+      `{sale_order, sale_order_line}`，于是 CRM 查询**完全不受公司隔离约束**——
+      单公司环境下看不出来，但这是隔离边界上的真实漏洞。
+    - `metric_expression_fields`：每个指标的计算式自己引用了哪些列。
+      只用于放行聚合 `FILTER (WHERE ...)` 里的列，不放行顶层 WHERE
+      （见 `_validate_declared_filters`）。
+    """
+
+    metric_rule_fields: frozenset[str] = frozenset({"state", "display_type"})
+    time_fields: frozenset[str] = frozenset({"date_order"})
+    scope_required_metrics: Mapping[str, frozenset[str]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    forbidden_filter_fields: frozenset[str] = frozenset()
+    translated_name_dimensions: frozenset[str] = frozenset({"product"})
+    company_scoped_tables: frozenset[str] = frozenset({"sale_order", "sale_order_line"})
+    metric_expression_fields: Mapping[str, frozenset[str]] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+
 # 拒绝理由的分类码。错误消息是给用户看的中文；要回答"哪类问题在失败、占多少"，
 # 需要的是可聚合的标签。
 #
@@ -61,10 +108,14 @@ _ERROR_CODES: tuple[tuple[str, str], ...] = (
     ("最终输出列与 QueryPlan.select_columns 不一致", "select_columns_mismatch"),
     ("ORDER BY 与 QueryPlan.sort 不一致", "sort_mismatch"),
     ("产品名称必须优先使用 zh_CN", "product_name_locale"),
+    ("名称必须优先使用 zh_CN", "translated_name_locale"),
     ("不能标记为 system_required", "filter_source_system"),
     ("不是已登记的指标口径规则", "filter_source_metric"),
     ("用户问题没有授权过滤字段", "filter_unauthorized"),
     ("未声明的过滤字段", "filter_undeclared"),
+    # R1/R2：CRM 口径的两条结构性规则。见 docs/23 §2.4。
+    ("必须显式声明记录范围", "missing_scope_declaration"),
+    ("不得作为过滤条件", "forbidden_scope_filter"),
     ("超过", "complexity_budget"),
     ("嵌套", "complexity_budget"),
 )
@@ -99,6 +150,7 @@ class ReadOnlySqlGuard:
         company_id: int,
         max_rows: int,
         complexity: SqlComplexityLimits | None = None,
+        profile: SqlDomainProfile | None = None,
     ) -> None:
         self._table_columns = {
             table: set(columns) for table, columns in table_columns.items()
@@ -106,6 +158,8 @@ class ReadOnlySqlGuard:
         self._company_id = company_id
         self._max_rows = max_rows
         self._complexity = complexity or SqlComplexityLimits()
+        # 不传就是销售域的原判据，M1 的构造点因此完全不用改。
+        self._profile = profile or SqlDomainProfile()
 
     def validate(
         self,
@@ -270,7 +324,8 @@ class ReadOnlySqlGuard:
                 )
             )
 
-        if {"sale_order", "sale_order_line"} & real_tables:
+        scoped_tables = set(self._profile.company_scoped_tables)
+        if scoped_tables & real_tables:
             company_filter_found = False
             for equality in statement.find_all(exp.EQ):
                 left, right = equality.this, equality.expression
@@ -291,15 +346,14 @@ class ReadOnlySqlGuard:
                             ) or aliases.get(qualifier)
                         else:
                             qualified_table = None
-                        if qualified_table in {"sale_order", "sale_order_line"}:
+                        if qualified_table in scoped_tables:
                             company_filter_found = True
-                        elif not qualifier and len(
-                            {"sale_order", "sale_order_line"} & real_tables
-                        ) == 1:
+                        elif not qualifier and len(scoped_tables & real_tables) == 1:
                             company_filter_found = True
             if not company_filter_found:
+                tables = "/".join(sorted(scoped_tables & real_tables))
                 errors.append(
-                    f"销售查询必须包含 company_id = {self._company_id}。"
+                    f"查询 {tables} 必须包含 company_id = {self._company_id}。"
                 )
 
         if errors:
@@ -425,8 +479,9 @@ class ReadOnlySqlGuard:
         if plan.query_type == "detail" and self._complexity.require_detail_time_range:
             if not (plan.time_range.start and plan.time_range.end):
                 errors.append("明细查询需要用户补充明确的开始和结束时间范围。")
-            elif not self._has_sql_time_bounds(statement):
-                errors.append("明细 SQL 必须包含 date_order 的开始和结束边界。")
+            elif not self._has_sql_time_bounds(statement, self._profile.time_fields):
+                fields = "/".join(sorted(self._profile.time_fields))
+                errors.append(f"明细 SQL 必须包含 {fields} 的开始和结束边界。")
         final_select = statement if isinstance(statement, exp.Select) else statement.find(exp.Select)
         if final_select is not None and plan.select_columns:
             actual_columns = [
@@ -440,14 +495,19 @@ class ReadOnlySqlGuard:
                     "SQL 最终输出列与 QueryPlan.select_columns 不一致："
                     f"期望 {expected_columns}，实际 {actual_columns}。"
                 )
-        if (
-            final_select is not None
-            and "product" in {item.casefold() for item in plan.dimensions}
-            and not self._has_product_name_fallback(final_select)
-        ):
-            errors.append(
-                "QueryPlan 产品名称必须优先使用 zh_CN，并以 en_US 回退。"
-            )
+        if final_select is not None:
+            declared_dimensions = {item.casefold() for item in plan.dimensions}
+            for dimension in sorted(
+                declared_dimensions & self._profile.translated_name_dimensions
+            ):
+                if self._has_translated_name_fallback(final_select, dimension):
+                    continue
+                # 销售域只有 product 一个译名维度，所以 M1 的消息里写的是"产品名称"；
+                # 保留它是为了不动 test_sql_error_codes 的分类码断言。
+                label = "产品名称" if dimension == "product" else f"{dimension} 名称"
+                errors.append(
+                    f"QueryPlan {label}必须优先使用 zh_CN，并以 en_US 回退。"
+                )
 
         if (
             plan.query_type == "ranking"
@@ -518,7 +578,7 @@ class ReadOnlySqlGuard:
 
         errors: list[str] = []
         system_fields = {"company_id"}
-        metric_fields = {"state", "display_type"}
+        metric_fields = set(self._profile.metric_rule_fields)
         question_fields = self._question_filter_fields(question)
         has_declared_time_range = bool(
             plan.time_range.label
@@ -530,7 +590,13 @@ class ReadOnlySqlGuard:
         for query_filter in plan.filters:
             field = self._field_name(query_filter.field)
             declared_fields.add(field)
-            if query_filter.source == "system_required" and field not in system_fields:
+            if field in self._profile.forbidden_filter_fields:
+                # R2。声明了也不放行——这条列不是"需要授权"，是"这个域里用它就是错的"。
+                errors.append(
+                    f"字段 {field} 不得作为过滤条件：本域中它会静默改变记录范围，"
+                    "请改用该域声明的口径字段。"
+                )
+            elif query_filter.source == "system_required" and field not in system_fields:
                 errors.append(f"过滤字段 {field} 不能标记为 system_required。")
             elif query_filter.source == "metric_rule" and field not in metric_fields:
                 errors.append(f"过滤字段 {field} 不是已登记的指标口径规则。")
@@ -542,9 +608,23 @@ class ReadOnlySqlGuard:
             ):
                 errors.append(f"用户问题没有授权过滤字段 {field}。")
 
+        # R1：指标声明了口径字段，计划里就必须真的声明它。
+        # 问赢率却不声明 won_status，算出来的东西不是赢率——而且不会报错。
+        for metric_id in plan.metric_ids:
+            required = self._profile.scope_required_metrics.get(metric_id)
+            if not required:
+                continue
+            missing = sorted(field for field in required if field not in declared_fields)
+            if missing:
+                errors.append(
+                    f"指标 {metric_id} 必须显式声明记录范围：QueryPlan.filters "
+                    f"缺少 {', '.join(missing)}。"
+                )
+
         allowed_where_fields = system_fields | metric_fields | declared_fields
+        allowed_where_fields -= set(self._profile.forbidden_filter_fields)
         if has_declared_time_range:
-            allowed_where_fields.add("date_order")
+            allowed_where_fields |= set(self._profile.time_fields)
         # 对聚合结果的别名做筛选（HAVING sales_amount > 0）不是"隐藏的物理列过滤"，
         # 它筛的是算出来的值；别名背后的真实列已经被字段白名单查过了。
         allowed_where_fields |= {
@@ -553,10 +633,35 @@ class ReadOnlySqlGuard:
             for projection in select.expressions
             if projection.alias
         }
+        # 聚合里的 FILTER (WHERE ...) 不是查询级的范围过滤，它只决定哪些行参与
+        # **这一个**聚合值——`COUNT(*) FILTER (WHERE date_conversion IS NOT NULL)`
+        # 就是转化率的计算式本身，不是偷偷缩小了结果集。
+        #
+        # 但不能因此放行任意列：`COUNT(*) FILTER (WHERE partner_id = 5)` 照样是
+        # 把指标限定到了某个客户。判据收紧到"该列出现在本轮声明的某个指标的计算式里"
+        # ——指标定义授权它自己公式用到的列，别的列一概不认。
+        aggregate_filter_fields: set[str] = set()
+        for metric_id in plan.metric_ids:
+            aggregate_filter_fields |= set(
+                self._profile.metric_expression_fields.get(metric_id, ())
+            )
+        aggregate_filter_fields -= set(self._profile.forbidden_filter_fields)
+
+        aggregate_wheres = {
+            id(where)
+            for aggregate in statement.find_all(exp.Filter)
+            for where in aggregate.find_all(exp.Where)
+        }
         for where in statement.find_all(exp.Where):
+            in_aggregate = id(where) in aggregate_wheres
+            permitted = (
+                allowed_where_fields | aggregate_filter_fields
+                if in_aggregate
+                else allowed_where_fields
+            )
             for column in where.find_all(exp.Column):
                 field = column.name.casefold()
-                if field not in allowed_where_fields:
+                if field not in permitted:
                     errors.append(f"SQL 包含 QueryPlan 未声明的过滤字段：{field}。")
         return errors
 
@@ -588,12 +693,18 @@ class ReadOnlySqlGuard:
         return names
 
     @staticmethod
-    def _has_product_name_fallback(final_select: exp.Select) -> bool:
+    def _has_translated_name_fallback(final_select: exp.Select, dimension: str) -> bool:
+        """某个译名维度的输出列是否写成了 COALESCE(name->>'zh_CN', name->>'en_US')。
+
+        M1 里这个方法只认 `product`。CRM 的阶段、输单原因、团队、标签同样是
+        Odoo 的 JSONB 译名列，少了回退就会在中文环境下拿到空值或英文名，
+        所以判据按维度名参数化，不再写死。
+        """
         projection = next(
             (
                 item
                 for item in final_select.expressions
-                if item.alias_or_name.casefold() == "product"
+                if item.alias_or_name.casefold() == dimension
             ),
             None,
         )
@@ -631,25 +742,33 @@ class ReadOnlySqlGuard:
         return column.sql(dialect="postgres").casefold(), str(keys[0].this).casefold()
 
     @staticmethod
-    def _has_sql_time_bounds(statement: exp.Query) -> bool:
+    def _has_sql_time_bounds(
+        statement: exp.Query, time_fields: frozenset[str] = frozenset({"date_order"})
+    ) -> bool:
+        """明细查询是否给时间列同时划了上下界。
+
+        时间列名按域传入：销售域只有 `date_order`，CRM 域有 `create_date`、
+        `date_closed`、`date_deadline` 三个，写死成 date_order 会让 CRM 的
+        明细查询永远判定为"没有时间边界"。
+        """
         lower_bound = False
         upper_bound = False
         for comparison in statement.find_all((exp.GT, exp.GTE, exp.LT, exp.LTE)):
             left = comparison.this
             right = comparison.expression
-            if isinstance(left, exp.Column) and left.name.casefold() == "date_order":
+            if isinstance(left, exp.Column) and left.name.casefold() in time_fields:
                 if isinstance(comparison, (exp.GT, exp.GTE)):
                     lower_bound = True
                 else:
                     upper_bound = True
-            elif isinstance(right, exp.Column) and right.name.casefold() == "date_order":
+            elif isinstance(right, exp.Column) and right.name.casefold() in time_fields:
                 if isinstance(comparison, (exp.LT, exp.LTE)):
                     lower_bound = True
                 else:
                     upper_bound = True
         if any(
             isinstance(between.this, exp.Column)
-            and between.this.name.casefold() == "date_order"
+            and between.this.name.casefold() in time_fields
             for between in statement.find_all(exp.Between)
         ):
             return True

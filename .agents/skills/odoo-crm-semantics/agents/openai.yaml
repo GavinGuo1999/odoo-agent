@@ -1,0 +1,4 @@
+interface:
+  display_name: "Odoo Agent CRM 口径"
+  short_description: "实现或评审 CRM 语义层、指标口径与 CRM SQL 守卫规则"
+  default_prompt: "Use $odoo-crm-semantics to change or review the CRM semantic layer, metric definitions, or CRM SQL guard rules."

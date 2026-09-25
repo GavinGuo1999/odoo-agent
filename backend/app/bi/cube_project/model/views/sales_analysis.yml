@@ -1,0 +1,94 @@
+# SQL API 用的视图。
+#
+# Cube 的 SQL API 把每个 cube 暴露成一张表，跨 cube 的连接靠视图预先声明，
+# 这样模型写 SQL 时不用自己拼 JOIN——这正是语义层要买到的东西，
+# 也是和 Wren「对 MDL 模型名写 SQL」可比的形态。
+#
+# 维度前缀用 `prefix: true`，于是客户名是 `res_partner_name`、
+# 产品名是 `product_template_name`。列名带来源，避免同名维度撞车。
+
+views:
+  - name: sales_analysis
+    description: 订单级销售分析。金额与订单数指标，可按客户、销售员、公司、币种、时间下钻。
+    cubes:
+      - join_path: sale_order
+        includes:
+          - sales_amount
+          - tax_included_sales
+          - order_count
+          - average_order_value
+          - id
+          - name
+          - state
+          - company_id
+          - date_order
+          - commitment_date
+          - effective_date
+          - delivery_status
+          - invoice_status
+
+      - join_path: sale_order.res_partner
+        prefix: true
+        includes:
+          - name
+          - customer_rank
+          - is_company
+
+      - join_path: sale_order.res_users
+        prefix: true
+        includes:
+          - id
+          - active
+          - share
+
+      # 销售员姓名。Odoo 里它挂在 res_users.partner_id -> res_partner.name，
+      # 和客户名是同一张表，所以必须显式改名，否则前缀撞上客户的 res_partner_name。
+      # 不加这一项的话，"销售额最高的销售员"这类问题在本模型里根本无法表达。
+      - join_path: sale_order.res_users.res_partner
+        prefix: true
+        alias: salesperson
+        includes:
+          - name
+
+      - join_path: sale_order.res_company
+        prefix: true
+        includes:
+          - name
+
+      - join_path: sale_order.res_currency
+        prefix: true
+        includes:
+          - name
+          - symbol
+
+  - name: sales_line_analysis
+    description: 订单行级销售分析。数量类指标，可按产品、计量单位、客户、时间下钻。
+    cubes:
+      - join_path: sale_order_line
+        includes:
+          - sales_quantity
+          - delivered_quantity
+          - invoiced_quantity
+          - uninvoiced_quantity
+          - id
+          - display_type
+
+      # sale_order 的字段**不加前缀**，与 sales_analysis 保持同名。
+      # 之前这里加了 prefix，于是同一个字段在两个视图里叫两个名字
+      # （date_order / sale_order_date_order），模型会猜错并写出 Cube 拒绝编译的 SQL。
+      # 行级的 company_id 一并去掉：公司范围以订单为准，留两个同义字段只会再制造歧义。
+      - join_path: sale_order_line.sale_order
+        includes:
+          - state
+          - company_id
+          - date_order
+
+      - join_path: sale_order_line.product_product.product_template
+        prefix: true
+        includes:
+          - name
+
+      - join_path: sale_order_line.uom_uom
+        prefix: true
+        includes:
+          - name

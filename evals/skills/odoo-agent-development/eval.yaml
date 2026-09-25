@@ -12,7 +12,7 @@ config:
   parallel: false
   inject_skill_body: true
   skill_directories:
-    - .agents/skills/odoo-agent-development
+    - ../../../.agents/skills/odoo-agent-development
   required_skills:
     - odoo-agent-development
 metrics:

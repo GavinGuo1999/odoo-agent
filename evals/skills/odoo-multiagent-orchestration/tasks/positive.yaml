@@ -1,0 +1,15 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/microsoft/waza/main/schemas/task.schema.json
+id: multiagent-positive
+name: Domain routing and supervisor work should trigger
+description: Domain pack, supervisor and cross-domain merge work belongs to odoo-multiagent-orchestration.
+inputs:
+  prompt: Add a supervisor node that routes between the sales and crm domain packs and merges cross-domain results under a turn budget.
+expected:
+  should_trigger: true
+graders:
+  - type: trigger
+    name: multiagent_positive_trigger
+    config:
+      skill_path: .agents/skills/odoo-multiagent-orchestration/SKILL.md
+      mode: positive
+      threshold: 0.55

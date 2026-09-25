@@ -1,0 +1,13 @@
+{
+  "name": "odoo-agent-cube-project",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cube 语义层，用于与自研语义层和 Wren 做三方对照（docs/26）。只读、不落盘、不建预聚合。",
+  "scripts": {
+    "dev": "cubejs-server"
+  },
+  "dependencies": {
+    "@cubejs-backend/postgres-driver": "1.7.40",
+    "@cubejs-backend/server": "1.7.40"
+  }
+}

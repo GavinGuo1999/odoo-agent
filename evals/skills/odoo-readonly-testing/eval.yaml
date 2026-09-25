@@ -12,7 +12,7 @@ config:
   parallel: false
   inject_skill_body: true
   skill_directories:
-    - .agents/skills/odoo-readonly-testing
+    - ../../../.agents/skills/odoo-readonly-testing
   required_skills:
     - odoo-readonly-testing
 metrics:

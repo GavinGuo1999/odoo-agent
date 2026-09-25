@@ -1,0 +1,4 @@
+interface:
+  display_name: "Odoo Agent 多 Agent 编排"
+  short_description: "实现或评审域包、域路由、每域守卫、Supervisor 拓扑、轮次预算与跨域合并"
+  default_prompt: "Use $odoo-multiagent-orchestration to change or review domain packs, domain routing, supervisor topology, turn budgets, or cross-domain merging."
